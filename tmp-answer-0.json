@@ -1,0 +1,1 @@
+{"question_index":0,"answer":"HashMap 在 JDK8 中基于数组加链表和红黑树，负载因子默认 0.75，元素数量超过阈值时扩容为 2 倍。put 时先根据 hash 定位桶位，冲突时插入链表或树。扩容会重新分配桶并迁移元素。HashMap 本身不保证线程安全，多线程下应该用 ConcurrentHashMap 或加锁。"}

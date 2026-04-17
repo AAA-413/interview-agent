@@ -1,0 +1,59 @@
+[project]
+name = "ai-interview-platform"
+version = "0.1.0"
+description = "智能 AI 面试官平台 - 基于大语言模型的简历分析和模拟面试系统"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    "redis[hiredis]>=5.2.0",
+    "langchain>=0.3.0",
+    "langchain-openai>=0.2.0",
+    "langchain-community>=0.3.0",
+    "openai>=1.58.0",
+    "httpx>=0.28.0",
+    "python-multipart>=0.0.18",
+    "python-jose[cryptography]>=3.3.0",
+    "slowapi>=0.1.9",
+    "jinja2>=3.1.0",
+    "pyyaml>=6.0.0",
+    "unstructured[pdf,docx]>=0.16.0",
+    "pymupdf>=1.25.0",
+    "python-docx>=1.1.0",
+    "boto3>=1.35.0",
+    "weasyprint>=63.0",
+    "apscheduler>=3.10.0",
+    "arq>=0.26.0",
+    "websockets>=14.0",
+    "numpy>=1.26.0",
+    "pgvector>=0.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.28.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
