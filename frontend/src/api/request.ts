@@ -26,11 +26,23 @@ instance.interceptors.response.use(
   },
   (error) => {
     if (error.response) {
-      const { data } = error.response;
+      const { data, status } = error.response;
       if (data && typeof data === 'object' && 'code' in data && 'message' in data) {
         const result = data as Result;
         return Promise.reject(new Error(result.message || '请求失败'));
       }
+
+      // HTTP 状态码友好提示
+      if (status === 404) {
+        return Promise.reject(new Error('请求的资源不存在'));
+      }
+      if (status === 500) {
+        return Promise.reject(new Error('服务器错误，请稍后重试'));
+      }
+      if (status === 503) {
+        return Promise.reject(new Error('服务暂时不可用，请稍后重试'));
+      }
+
       return Promise.reject(new Error('请求失败，请重试'));
     }
 
@@ -40,10 +52,20 @@ instance.interceptors.response.use(
       config.headers?.['Content-Type']?.toString().includes('multipart')
     );
 
-    if (isUpload) {
-      return Promise.reject(new Error('上传失败，可能是网络超时或连接中断，请重试'));
+    // 超时错误
+    if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+      if (isUpload) {
+        return Promise.reject(new Error('上传超时（5分钟），文件可能过大或网络较慢，请重试'));
+      }
+      return Promise.reject(new Error('请求超时（60秒），请检查网络或稍后重试'));
     }
 
+    // 上传错误
+    if (isUpload) {
+      return Promise.reject(new Error('上传失败，可能是网络中断或文件过大，请重试'));
+    }
+
+    // 网络错误
     return Promise.reject(new Error('网络连接失败，请检查网络'));
   }
 );

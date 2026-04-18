@@ -30,15 +30,17 @@ if _db_available:
     engine = create_async_engine(
         settings.database.dsn,
         echo=settings.debug,
-        pool_size=10,
-        max_overflow=20,
-        pool_pre_ping=True,
-        pool_recycle=3600,
+        pool_size=20,              # 常驻连接数（从 10 增加到 20）
+        max_overflow=10,           # 最大溢出连接数（从 20 减少到 10，总连接数 30）
+        pool_timeout=30,           # 获取连接超时（秒）
+        pool_recycle=3600,         # 连接回收时间（秒）
+        pool_pre_ping=True,        # 连接前检测是否有效
         connect_args={
             "timeout": 5,
             "command_timeout": 5,
         },
     )
+    logger.info("数据库连接池配置: pool_size=20, max_overflow=10, 总连接数=30")
     async_session_factory = async_sessionmaker(
         engine,
         class_=AsyncSession,

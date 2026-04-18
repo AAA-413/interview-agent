@@ -14,6 +14,12 @@ from app.modules.knowledge_base.models import KnowledgeChunkEntity
 from app.modules.knowledge_base.persistence_service import knowledge_base_persistence_service
 from app.modules.knowledge_base.schemas import RagAnswerDTO, RagReferenceDTO
 from app.modules.knowledge_base.vector_service import knowledge_base_vector_service
+from app.modules.knowledge_base.search_channel import (
+    SearchContext,
+    VectorSearchChannel,
+    MultiChannelRetrievalEngine,
+)
+from app.modules.knowledge_base.rerank_service import get_rerank_service
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +36,16 @@ ANSWER_SYSTEM_PROMPT = (
 
 
 class KnowledgeBaseRagService:
+    def __init__(self):
+        # 多路检索引擎将在运行时初始化（需要 db session）
+        self.retrieval_engine = None
+        # 重排序服务
+        self.rerank_service = get_rerank_service()
+        logger.info(
+            "RAG 服务初始化完成: rerank_enabled=%s",
+            self.rerank_service.enabled
+        )
+
     async def ask(
         self,
         db: AsyncSession,
@@ -54,7 +70,26 @@ class KnowledgeBaseRagService:
         )
 
         try:
-            references = self._search_chunks(kb.chunks, rewritten_query, top_k)
+            # 初始化多路检索引擎（如果尚未初始化）
+            if self.retrieval_engine is None:
+                vector_channel = VectorSearchChannel(self, knowledge_base_vector_service, db)
+                self.retrieval_engine = MultiChannelRetrievalEngine([vector_channel])
+                logger.info("多路检索引擎初始化: channels=1")
+
+            # 使用多路检索引擎
+            query_embedding = knowledge_base_vector_service.embed_text(rewritten_query)
+            context = SearchContext(
+                question=question,
+                kb_id=kb_id,
+                top_k=top_k * 2,  # 召回更多候选，用于重排序
+                query_embedding=query_embedding,
+                rewritten_query=rewritten_query
+            )
+            candidates = await self.retrieval_engine.retrieve(context)
+
+            # 重排序（如果启用）
+            references = await self.rerank_service.rerank(question, candidates, top_k)
+
             answer = await self._generate_answer(question, rewritten_query, references)
             reference_payload = [reference.model_dump() for reference in references]
             await knowledge_base_persistence_service.complete_chat(
