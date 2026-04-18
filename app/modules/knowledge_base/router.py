@@ -1,3 +1,62 @@
-from fastapi import APIRouter
+import logging
+
+from fastapi import APIRouter, Depends, File, Form, UploadFile
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.common.result import Result
+from app.database import get_db
+from app.modules.knowledge_base.history_service import knowledge_base_delete_service, knowledge_base_history_service
+from app.modules.knowledge_base.schemas import (
+    KnowledgeBaseDetailDTO,
+    KnowledgeBaseListItemDTO,
+    KnowledgeBaseReindexResponse,
+)
+from app.modules.knowledge_base.upload_service import knowledge_base_upload_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.get("", response_model=Result[list[KnowledgeBaseListItemDTO]])
+async def list_knowledge_bases(db: AsyncSession = Depends(get_db)):
+    items = await knowledge_base_history_service.get_list(db)
+    return Result.success(items)
+
+
+@router.get("/{kb_id}", response_model=Result[KnowledgeBaseDetailDTO])
+async def get_knowledge_base(kb_id: int, db: AsyncSession = Depends(get_db)):
+    detail = await knowledge_base_history_service.get_detail(db, kb_id)
+    return Result.success(detail)
+
+
+@router.post("", response_model=Result[KnowledgeBaseDetailDTO])
+async def create_knowledge_base(
+    file: UploadFile = File(...),
+    name: str | None = Form(default=None),
+    description: str | None = Form(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    file_bytes = await file.read()
+    entity = await knowledge_base_upload_service.upload(
+        db,
+        file_bytes=file_bytes,
+        filename=file.filename or "unknown",
+        content_type=file.content_type,
+        name=name,
+        description=description,
+    )
+    detail = await knowledge_base_history_service.get_detail(db, entity.id)
+    return Result.success(detail)
+
+
+@router.post("/{kb_id}/reindex", response_model=Result[KnowledgeBaseReindexResponse])
+async def reindex_knowledge_base(kb_id: int, db: AsyncSession = Depends(get_db)):
+    entity = await knowledge_base_upload_service.reindex(db, kb_id)
+    return Result.success(KnowledgeBaseReindexResponse(id=entity.id, index_status=entity.index_status, index_error=entity.index_error))
+
+
+@router.delete("/{kb_id}", response_model=Result[None])
+async def delete_knowledge_base(kb_id: int, db: AsyncSession = Depends(get_db)):
+    await knowledge_base_delete_service.delete(db, kb_id)
+    return Result.success(None)

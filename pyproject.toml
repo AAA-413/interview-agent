@@ -54,6 +54,6 @@ line-length = 120
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
 
-[tool.mypy]
-python_version = "3.11"
-strict = true
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+

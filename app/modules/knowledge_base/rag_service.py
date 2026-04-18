@@ -1,0 +1,210 @@
+import json
+import logging
+import uuid
+from collections.abc import AsyncIterator
+
+from langchain_core.messages import HumanMessage, SystemMessage
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.common.ai.llm_provider import llm_registry
+from app.common.error_code import ErrorCode
+from app.common.exception import BusinessException
+from app.common.model import AsyncTaskStatus
+from app.modules.knowledge_base.models import KnowledgeChunkEntity
+from app.modules.knowledge_base.persistence_service import knowledge_base_persistence_service
+from app.modules.knowledge_base.schemas import RagAnswerDTO, RagReferenceDTO
+from app.modules.knowledge_base.vector_service import knowledge_base_vector_service
+
+logger = logging.getLogger(__name__)
+
+REWRITE_SYSTEM_PROMPT = (
+    "你是检索查询改写助手。请将用户问题改写为更适合知识库检索的简洁查询，"
+    "保留核心实体、名词和约束，不要扩展无关内容。只输出改写后的查询文本。"
+)
+
+ANSWER_SYSTEM_PROMPT = (
+    "你是知识库问答助手。请严格基于给定参考片段回答。"
+    "如果参考内容不足，请明确说明依据不足，不要编造。"
+    "回答使用中文，尽量结构化，必要时引用片段编号。"
+)
+
+
+class KnowledgeBaseRagService:
+    async def ask(
+        self,
+        db: AsyncSession,
+        *,
+        kb_id: int,
+        question: str,
+        session_id: str | None = None,
+        top_k: int = 4,
+    ) -> RagAnswerDTO:
+        kb = await knowledge_base_persistence_service.find_by_id_or_throw(db, kb_id)
+        if kb.index_status != AsyncTaskStatus.COMPLETED:
+            raise BusinessException(ErrorCode.KNOWLEDGE_BASE_QUERY_FAILED, "知识库尚未完成索引，暂时无法问答")
+
+        resolved_session_id = session_id or uuid.uuid4().hex
+        rewritten_query = await self._rewrite_query(question)
+        chat = await knowledge_base_persistence_service.create_chat(
+            db,
+            kb_id=kb_id,
+            session_id=resolved_session_id,
+            question=question,
+            rewritten_query=rewritten_query,
+        )
+
+        try:
+            references = self._search_chunks(kb.chunks, rewritten_query, top_k)
+            answer = await self._generate_answer(question, rewritten_query, references)
+            reference_payload = [reference.model_dump() for reference in references]
+            await knowledge_base_persistence_service.complete_chat(
+                db,
+                chat_id=chat.id,
+                rewritten_query=rewritten_query,
+                answer=answer,
+                references=reference_payload,
+            )
+            await db.flush()
+            return RagAnswerDTO(
+                session_id=resolved_session_id,
+                rewritten_query=rewritten_query,
+                answer=answer,
+                references=references,
+            )
+        except Exception as e:
+            await knowledge_base_persistence_service.fail_chat(db, chat_id=chat.id, error_message=str(e))
+            raise
+
+    async def stream_answer(
+        self,
+        db: AsyncSession,
+        *,
+        kb_id: int,
+        question: str,
+        session_id: str | None = None,
+        top_k: int = 4,
+    ) -> AsyncIterator[str]:
+        result = await self.ask(db, kb_id=kb_id, question=question, session_id=session_id, top_k=top_k)
+        yield self._sse_event("meta", {"session_id": result.session_id, "rewritten_query": result.rewritten_query})
+        for part in self._split_answer(result.answer):
+            yield self._sse_event("chunk", {"content": part})
+        yield self._sse_event("references", {"items": [item.model_dump() for item in result.references]})
+        yield self._sse_event("done", {"answer": result.answer})
+
+    async def list_chats(self, db: AsyncSession, kb_id: int):
+        await knowledge_base_persistence_service.find_by_id_or_throw(db, kb_id)
+        chats = await knowledge_base_persistence_service.find_recent_chats(db, kb_id)
+        return [knowledge_base_persistence_service.to_chat_list_item(item) for item in chats]
+
+    async def _rewrite_query(self, question: str) -> str:
+        try:
+            response = await llm_registry.default.ainvoke(
+                [
+                    SystemMessage(content=REWRITE_SYSTEM_PROMPT),
+                    HumanMessage(content=question),
+                ]
+            )
+            text = (response.content or "").strip() if hasattr(response, "content") else ""
+            return text or question
+        except Exception as e:
+            logger.warning("查询改写失败，回退原问题: %s", e)
+            return question
+
+    async def _generate_answer(
+        self,
+        question: str,
+        rewritten_query: str,
+        references: list[RagReferenceDTO],
+    ) -> str:
+        if not references:
+            return "未在知识库中检索到足够相关的内容，当前无法给出可靠答案。"
+
+        context_parts = []
+        for index, item in enumerate(references, start=1):
+            context_parts.append(
+                f"[片段{index}] 标题: {item.title or '未命名'}\n"
+                f"相关度: {item.score:.4f}\n"
+                f"内容: {item.content_preview}"
+            )
+        prompt = (
+            f"用户问题：{question}\n"
+            f"检索查询：{rewritten_query}\n\n"
+            f"参考片段：\n{chr(10).join(context_parts)}\n\n"
+            "请基于这些片段回答，并在结尾简短说明依据来自哪些片段。"
+        )
+        try:
+            response = await llm_registry.default.ainvoke(
+                [
+                    SystemMessage(content=ANSWER_SYSTEM_PROMPT),
+                    HumanMessage(content=prompt),
+                ]
+            )
+            text = (response.content or "").strip() if hasattr(response, "content") else ""
+            if text:
+                return text
+        except Exception as e:
+            logger.warning("LLM 生成问答失败，回退为模板答案: %s", e)
+
+        summary_lines = [f"- {item.content_preview}" for item in references]
+        return "根据知识库检索结果，相关内容包括：\n" + "\n".join(summary_lines)
+
+    def _search_chunks(
+        self,
+        chunks: list[KnowledgeChunkEntity],
+        query: str,
+        top_k: int,
+    ) -> list[RagReferenceDTO]:
+        query_embedding = knowledge_base_vector_service.embed_text(query)
+        scored: list[tuple[float, KnowledgeChunkEntity]] = []
+        for chunk in chunks:
+            embedding = self._parse_embedding(chunk.embedding_json)
+            score = knowledge_base_vector_service.cosine_similarity(query_embedding, embedding)
+            scored.append((score, chunk))
+        scored.sort(key=lambda item: item[0], reverse=True)
+
+        references: list[RagReferenceDTO] = []
+        for score, chunk in scored[: max(1, top_k)]:
+            metadata = self._parse_metadata(chunk.metadata_json)
+            references.append(
+                RagReferenceDTO(
+                    chunk_id=chunk.id,
+                    chunk_index=chunk.chunk_index,
+                    title=chunk.title,
+                    content_preview=chunk.content_preview or chunk.content[:180],
+                    score=round(score, 4),
+                    metadata=metadata,
+                )
+            )
+        return references
+
+    @staticmethod
+    def _parse_embedding(payload: str | None) -> list[float]:
+        if not payload:
+            return []
+        try:
+            data = json.loads(payload)
+            return [float(item) for item in data]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+
+    @staticmethod
+    def _parse_metadata(payload: str | None) -> dict:
+        if not payload:
+            return {}
+        try:
+            return json.loads(payload)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+
+    @staticmethod
+    def _sse_event(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    @staticmethod
+    def _split_answer(answer: str, chunk_size: int = 120) -> list[str]:
+        if not answer:
+            return []
+        return [answer[index : index + chunk_size] for index in range(0, len(answer), chunk_size)]
+
+
+knowledge_base_rag_service = KnowledgeBaseRagService()

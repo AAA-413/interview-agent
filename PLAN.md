@@ -55,10 +55,10 @@
 
 | # | 任务 | 状态 |
 |---|------|------|
-| 4.1 | ORM 模型：KnowledgeBase + RagChat | ⬜ 未开始 |
-| 4.2 | 文档上传 + 分块 + 异步向量化 | ⬜ 未开始 |
-| 4.3 | RAG 查询服务（Query Rewrite + 向量检索 + SSE 流式） | ⬜ 未开始 |
-| 4.4 | 知识库 CRUD API | ⬜ 未开始 |
+| 4.1 | ORM 模型：KnowledgeBase + RagChat | ✅ 已完成 |
+| 4.2 | 文档上传 + 分块 + 异步向量化 | ✅ 已完成 |
+| 4.3 | RAG 查询服务（Query Rewrite + 向量检索 + SSE 流式） | ✅ 已完成 |
+| 4.4 | 知识库 CRUD API | ✅ 已完成 |
 
 ## Phase 5 — 面试安排模块
 

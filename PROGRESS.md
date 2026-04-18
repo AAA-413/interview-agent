@@ -48,6 +48,18 @@ D:\develop\nodejs\node.exe node_modules\vite\bin\vite.js
 - 前端地址：`http://localhost:5173`
 - Vite 代理：`/api` → `http://localhost:8001`
 
+### 2.4 测试环境（pytest）
+
+```bash
+cd d:\work\xiaofuge\111\python
+.venv\Scripts\python.exe -m pip install -e .[dev]
+.venv\Scripts\python.exe -m pytest --version
+.venv\Scripts\python.exe -m pytest tests/test_knowledge_base_services.py -q
+```
+
+- 当前已验证 `pytest 9.0.3`
+- 当前知识库最小化测试结果：`4 passed`
+
 ---
 
 ## 三、已完成模块
@@ -69,6 +81,16 @@ D:\develop\nodejs\node.exe node_modules\vite\bin\vite.js
 - 统一评估引擎、面试 CRUD API、面试报告 PDF 导出
 - 10 个预设 Skill 加载成功，26 个 API 路由注册成功
 
+### Phase 4 — 知识库管理模块 ✅ 前后端已打通
+- 新增知识库 ORM：`KnowledgeBaseEntity`、`KnowledgeChunkEntity`、`RagChatEntity`
+- 新增知识库上传、列表、详情、删除、重建索引 API
+- 新增 Redis Stream 异步索引链路：上传后进入 `PENDING`，worker 消费后推进到 `PROCESSING / COMPLETED / FAILED`
+- 新增 RAG 问答服务：支持非流式回答、SSE 流式输出、历史问答列表
+- 新增最小化测试文件：`tests/test_knowledge_base_services.py`
+- 新增问题记录文档：`docs/knowledge-base-phase4-debugging.md`
+- 新增前端知识库页面：列表页、上传页、详情页、问答面板、SSE 流式展示、索引状态轮询
+- 新增前端 API 与类型：`frontend/src/api/knowledgeBase.ts`、`frontend/src/types/knowledgeBase.ts`
+
 ### 前端页面 ✅
 - React + TypeScript + Vite + Tailwind CSS v4
 - 简历管理页（列表/详情/上传）
@@ -76,8 +98,10 @@ D:\develop\nodejs\node.exe node_modules\vite\bin\vite.js
 - Axios 请求封装 + Vite 代理配置
 - React Router v6 嵌套路由 + Layout + Outlet
 
-### Phase 4-6 — 未开始
-- 知识库管理、面试安排、语音面试
+### Phase 4-6
+- Phase 4（知识库管理）：**前后端已完成，支持上传 / 列表 / 详情 / 重建索引 / 普通问答 / SSE 流式问答**
+- Phase 5（面试安排）：未开始
+- Phase 6（语音面试）：未开始
 
 ---
 
@@ -178,6 +202,41 @@ REDIS_PORT=6379
 - `ResumeDetailPage.tsx`：`detail.file_size` 可能为 null，改为 `(detail.file_size || 0)`
 - `ResumeListPage.tsx`：`resume.file_size` 可能为 null，改为 `(resume.file_size || 0)`
 
+### 5.11 pytest 环境未安装且打包配置阻塞 editable 安装 ✅
+
+**问题**：
+- 最初执行 `.venv\Scripts\python.exe -m pytest --version` 提示 `No module named pytest`
+- 随后执行 `.venv\Scripts\python.exe -m pip install -e .[dev]` 时，又因 Hatch 默认打包文件选择失败而中断
+
+**根因**：
+- 当前 `.venv` 尚未安装 `dev` 依赖
+- `pyproject.toml` 使用 `hatchling` 构建，但缺少 `tool.hatch.build.targets.wheel.packages`，导致 editable 安装时无法自动判断应打包的包目录
+
+**解决**：
+- 在 `pyproject.toml` 中补充：
+  - `[tool.hatch.build.targets.wheel]`
+  - `packages = ["app"]`
+- 然后重新执行：
+  - `.venv\Scripts\python.exe -m pip install -e .[dev]`
+- 最终验证：
+  - `pytest 9.0.3`
+  - `.venv\Scripts\python.exe -m pytest tests/test_knowledge_base_services.py -q` → `4 passed`
+
+### 5.12 现有 async 测试未声明 pytest asyncio 标记 ✅
+
+**问题**：
+知识库测试文件中 3 个 `async def test_*` 用例在 pytest 下直接失败，提示 async functions are not natively supported。
+
+**根因**：
+虽然环境已安装 `pytest-asyncio`，但测试函数本身没有声明 `@pytest.mark.asyncio`，pytest 不会自动以 asyncio 事件循环执行这些用例。
+
+**解决**：
+- 在 `tests/test_knowledge_base_services.py` 中为 3 个异步测试补上 `@pytest.mark.asyncio`
+- 保留现有同步包装测试 `test_async_knowledge_base_suite()`，用于兼容原先的 `asyncio.run(...)` 验证方式
+
+**结果**：
+知识库测试文件现已可直接通过 pytest 执行，并得到 `4 passed`。
+
 ---
 
 ## 六、前端架构
@@ -188,6 +247,7 @@ REDIS_PORT=6379
 - React Router v7（嵌套路由 + Outlet）
 - Axios（请求拦截 + 统一响应解包）
 - Lucide React（图标库）
+- 新增知识库页面：列表 / 上传 / 详情 / 问答（含 SSE 流式展示）
 
 ### 目录结构
 ```
@@ -305,6 +365,7 @@ curl -X POST -F "file=@resume.txt" http://localhost:8001/api/resumes
 3. ~~实现简历同步分析~~ ✅
 4. ~~开发前端页面并完成前后端联调~~ ✅
 5. ~~修复前端路由和类型错误~~ ✅
-6. 继续 Phase 4 — 知识库管理模块开发
+6. 继续 Phase 4 — 知识库管理模块开发（当前已完成后端骨架，待补前端页面与真实联调）
 7. 前端优化：上传简历后自动刷新列表、面试进行中实时状态轮询
-8. 考虑将简历分析改为后台任务（FastAPI BackgroundTask）避免上传接口超时
+8. 安装 `pytest` / `pytest-asyncio` 等 dev 依赖并正式跑知识库测试
+9. 考虑将简历分析改为后台任务（FastAPI BackgroundTask）避免上传接口超时

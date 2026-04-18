@@ -75,6 +75,7 @@ async def init_db() -> None:
     from app.models.base import Base
     from app.modules.resume.models import ResumeAnalysisEntity, ResumeEntity  # noqa: F401
     from app.modules.interview.models import InterviewAnswerEntity, InterviewSessionEntity  # noqa: F401
+    from app.modules.knowledge_base.models import KnowledgeBaseEntity, KnowledgeChunkEntity, RagChatEntity  # noqa: F401
 
     try:
         await asyncio.wait_for(

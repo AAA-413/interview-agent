@@ -40,10 +40,31 @@
 
 ### 知识库管理模块
 
-- **文档智能处理**：支持 PDF、DOCX、Markdown 等多种格式文档的自动上传、分块与异步向量化。
-- **RAG 检索增强**：集成向量数据库，通过检索增强生成（RAG）提升 AI 问答的准确性与专业度。
-- **流式响应交互**：基于 SSE（Server-Sent Events）技术实现打字机式流式响应。
-- **智能问答对话**：支持基于知识库内容的智能问答，并提供直观的知识库统计信息。
+- **文档上传入库**：支持上传 PDF、DOCX、TXT、Markdown 等文档，自动抽取文本并保存文件元信息。
+- **异步索引状态流转**：上传后先返回 `PENDING`，后台通过 Redis Stream worker 完成分块和索引，状态推进到 `PROCESSING / COMPLETED / FAILED`。
+- **RAG 问答接口**：提供普通问答接口与 SSE 流式问答接口，并保留历史问答列表。
+- **前端联调已完成**：提供知识库列表页、上传页、详情页、命中片段展示、历史问答展示与索引状态自动轮询。
+- **轻量向量化实现**：当前版本先使用稳定的文本分块 + 本地 embedding 占位实现，便于本地联调；后续可平滑切换到 pgvector 真正落库。
+- **可观测排障记录**：实现过程中的问题与修复记录见 `docs/knowledge-base-phase4-debugging.md`。
+
+### 开发依赖与测试
+
+- 开发依赖统一声明在 `pyproject.toml` 的 `dev` 组中，包含 `pytest`、`pytest-asyncio`、`ruff`、`mypy` 等工具。
+- 推荐在项目根目录执行以下命令安装：
+
+```bash
+.venv\Scripts\python.exe -m pip install -e .[dev]
+```
+
+- 当前知识库最小化测试文件：`tests/test_knowledge_base_services.py`
+- 运行知识库测试：
+
+```bash
+.venv\Scripts\python.exe -m pytest tests/test_knowledge_base_services.py -q
+```
+
+- 本地验证结果（2026-04-17）：知识库测试 `4 passed`
+- 若 Windows 控制台出现中文乱码，优先以 pytest 退出码和结构化结果为准，不要仅凭终端中文显示判断失败。
 
 
 

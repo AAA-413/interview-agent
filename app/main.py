@@ -37,6 +37,10 @@ async def lifespan(app: FastAPI):
                 EVALUATE_STREAM_KEY,
                 InterviewEvaluateTaskHandler,
             )
+            from app.modules.knowledge_base.async_tasks import (
+                KNOWLEDGE_BASE_INDEX_STREAM_KEY,
+                KnowledgeBaseIndexTaskHandler,
+            )
             from app.modules.resume.async_tasks import (
                 RESUME_ANALYZE_STREAM_KEY,
                 ResumeAnalyzeTaskHandler,
@@ -56,12 +60,19 @@ async def lifespan(app: FastAPI):
                 stream_key=EVALUATE_STREAM_KEY,
                 handler=InterviewEvaluateTaskHandler(async_session_factory).handle,
             )
+            knowledge_base_worker = StreamWorker(
+                name="knowledge-base-index-worker",
+                redis_service=redis_service,
+                stream_key=KNOWLEDGE_BASE_INDEX_STREAM_KEY,
+                handler=KnowledgeBaseIndexTaskHandler(async_session_factory).handle,
+            )
 
-            workers.extend([resume_worker, interview_worker])
+            workers.extend([resume_worker, interview_worker, knowledge_base_worker])
             worker_tasks.extend(
                 [
                     asyncio.create_task(resume_worker.run_forever(), name="resume-analyze-worker"),
                     asyncio.create_task(interview_worker.run_forever(), name="interview-evaluate-worker"),
+                    asyncio.create_task(knowledge_base_worker.run_forever(), name="knowledge-base-index-worker"),
                 ]
             )
             logger.info("异步任务 worker 已启动: %d 个", len(worker_tasks))

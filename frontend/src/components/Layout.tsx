@@ -1,10 +1,11 @@
-import { useState } from 'react';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
-import { LayoutDashboard, FileText, MessageSquare, BarChart3, Upload } from 'lucide-react';
+import { LayoutDashboard, FileText, MessageSquare, BarChart3, Upload, BookOpen, Database } from 'lucide-react';
 
 const navItems = [
   { path: '/resumes', label: '简历管理', icon: FileText },
   { path: '/upload', label: '上传简历', icon: Upload },
+  { path: '/knowledgebases', label: '知识库管理', icon: Database },
+  { path: '/knowledgebases/upload', label: '上传知识库', icon: BookOpen },
   { path: '/interviews', label: '面试记录', icon: MessageSquare },
   { path: '/interview-hub', label: '开始面试', icon: BarChart3 },
 ];
