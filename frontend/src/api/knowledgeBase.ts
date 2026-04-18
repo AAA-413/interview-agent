@@ -29,6 +29,10 @@ export const knowledgeBaseApi = {
     return request.upload<KnowledgeBaseDetailDTO>('/api/knowledgebase', formData);
   },
 
+  async fetchFromUrl(payload: { url: string; name?: string; description?: string; max_length?: number }): Promise<KnowledgeBaseDetailDTO> {
+    return request.post<KnowledgeBaseDetailDTO>('/api/knowledgebase/fetch', payload);
+  },
+
   async reindexKnowledgeBase(id: number): Promise<KnowledgeBaseReindexResponse> {
     return request.post<KnowledgeBaseReindexResponse>(`/api/knowledgebase/${id}/reindex`);
   },

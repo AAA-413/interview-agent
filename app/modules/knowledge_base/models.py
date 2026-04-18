@@ -1,6 +1,7 @@
 import enum
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -67,6 +68,7 @@ class KnowledgeChunkEntity(Base):
     content_preview: Mapped[str | None] = mapped_column(String(500))
     metadata_json: Mapped[str | None] = mapped_column(Text)
     embedding_json: Mapped[str | None] = mapped_column(Text)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
     knowledge_base: Mapped["KnowledgeBaseEntity"] = relationship(back_populates="chunks")

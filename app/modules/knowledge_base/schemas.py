@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl
 
 from app.common.model import AsyncTaskStatus
 from app.modules.knowledge_base.models import RagChatStatus
@@ -90,6 +90,13 @@ class KnowledgeBaseDetailDTO(BaseModel):
 class CreateKnowledgeBaseRequest(BaseModel):
     name: str | None = None
     description: str | None = None
+
+
+class FetchDocumentRequest(BaseModel):
+    url: HttpUrl
+    name: str | None = None
+    description: str | None = None
+    max_length: int = Field(default=50000, ge=1000, le=100000)
 
 
 class AskKnowledgeBaseRequest(BaseModel):

@@ -1,5 +1,7 @@
 import logging
 from pathlib import Path
+import asyncio
+from asyncio import Semaphore
 
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
@@ -55,6 +57,7 @@ class UnifiedEvaluationService:
         self._summary_system_prompt = self._load_prompt("interview-evaluation-summary-system.md")
         self._summary_user_prompt = self._load_prompt("interview-evaluation-summary-user.md")
         self._batch_size = 8
+        self._max_concurrent_batches = 3  # 最多 3 个批次并行执行
 
     @staticmethod
     def _load_prompt(filename: str) -> str:
@@ -100,12 +103,44 @@ class UnifiedEvaluationService:
         self, chat_model: ChatOpenAI, session_id: str, resume_context: str,
         qa_records: list[QaRecord], reference_context: str,
     ) -> list[_BatchReportDTO | None]:
-        results = []
+        """并行执行批次评估，使用 Semaphore 限流"""
+        semaphore = Semaphore(self._max_concurrent_batches)
+
+        async def evaluate_with_limit(batch_index: int, batch: list[QaRecord]):
+            async with semaphore:
+                logger.info("开始评估批次 %d/%d: sessionId=%s",
+                           batch_index + 1,
+                           (len(qa_records) + self._batch_size - 1) // self._batch_size,
+                           session_id)
+                return await self._evaluate_batch(chat_model, session_id, resume_context, reference_context, batch)
+
+        # 创建所有批次任务
+        tasks = []
         for start in range(0, len(qa_records), self._batch_size):
             batch = qa_records[start : start + self._batch_size]
-            report = await self._evaluate_batch(chat_model, session_id, resume_context, reference_context, batch)
-            results.append(report)
-        return results
+            batch_index = start // self._batch_size
+            tasks.append(evaluate_with_limit(batch_index, batch))
+
+        # 并行执行所有批次
+        logger.info("开始并行评估 %d 个批次: sessionId=%s, max_concurrent=%d",
+                   len(tasks), session_id, self._max_concurrent_batches)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 处理异常
+        valid_results = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error("批次 %d 评估失败: sessionId=%s, error=%s", i, session_id, result)
+                valid_results.append(None)
+            else:
+                valid_results.append(result)
+
+        logger.info("批次评估完成: sessionId=%s, 成功=%d, 失败=%d",
+                   session_id,
+                   sum(1 for r in valid_results if r is not None),
+                   sum(1 for r in valid_results if r is None))
+
+        return valid_results
 
     async def _evaluate_batch(
         self, chat_model: ChatOpenAI, session_id: str, resume_context: str,

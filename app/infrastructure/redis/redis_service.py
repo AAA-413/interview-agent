@@ -10,7 +10,8 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS = 5
-REDIS_SOCKET_TIMEOUT_SECONDS = 30
+REDIS_SOCKET_TIMEOUT_SECONDS = 5  # 从 30 秒减少到 5 秒
+REDIS_MAX_CONNECTIONS = 50  # 连接池大小
 
 _redis: aioredis.Redis | None = None
 
@@ -41,10 +42,12 @@ async def init_redis() -> aioredis.Redis | None:
             _redis = aioredis.from_url(
                 settings.redis.dsn,
                 decode_responses=True,
-                max_connections=64,
+                max_connections=REDIS_MAX_CONNECTIONS,
                 socket_connect_timeout=REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS,
                 socket_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
             )
+            logger.info("Redis 连接池配置: max_connections=%d, socket_timeout=%ds",
+                       REDIS_MAX_CONNECTIONS, REDIS_SOCKET_TIMEOUT_SECONDS)
         await asyncio.wait_for(_redis.ping(), timeout=5)
         return _redis
     except (asyncio.TimeoutError, Exception) as e:
@@ -61,7 +64,7 @@ async def get_redis() -> aioredis.Redis:
         _redis = aioredis.from_url(
             settings.redis.dsn,
             decode_responses=True,
-            max_connections=64,
+            max_connections=REDIS_MAX_CONNECTIONS,
             socket_connect_timeout=REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS,
             socket_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
         )

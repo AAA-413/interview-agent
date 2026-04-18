@@ -7,11 +7,13 @@ from app.common.result import Result
 from app.database import get_db
 from app.modules.knowledge_base.history_service import knowledge_base_delete_service, knowledge_base_history_service
 from app.modules.knowledge_base.schemas import (
+    FetchDocumentRequest,
     KnowledgeBaseDetailDTO,
     KnowledgeBaseListItemDTO,
     KnowledgeBaseReindexResponse,
 )
 from app.modules.knowledge_base.upload_service import knowledge_base_upload_service
+from app.modules.knowledge_base.fetch_service import knowledge_base_fetch_service
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,24 @@ async def create_knowledge_base(
         content_type=file.content_type,
         name=name,
         description=description,
+    )
+    detail = await knowledge_base_history_service.get_detail(db, entity.id)
+    return Result.success(detail)
+
+
+@router.post("/fetch", response_model=Result[KnowledgeBaseDetailDTO])
+async def fetch_document(
+    request: FetchDocumentRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """从 URL 抓取文档并创建知识库"""
+    logger.info(f"收到文档抓取请求: url={request.url}")
+    entity = await knowledge_base_fetch_service.fetch_and_create(
+        db,
+        url=str(request.url),
+        name=request.name,
+        description=request.description,
+        max_length=request.max_length,
     )
     detail = await knowledge_base_history_service.get_detail(db, entity.id)
     return Result.success(detail)
