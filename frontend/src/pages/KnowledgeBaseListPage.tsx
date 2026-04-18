@@ -116,16 +116,28 @@ export default function KnowledgeBaseListPage() {
             </div>
           </div>
         </div>
-        <button
-          onClick={() => navigate('/knowledgebases/upload')}
-          className="group relative px-6 py-3 bg-gradient-to-r from-primary-600 via-primary-500 to-indigo-500 text-white rounded-xl font-medium shadow-lg shadow-primary-500/30 hover:shadow-xl hover:shadow-primary-500/40 transition-all duration-300 hover:scale-105"
-        >
-          <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-xl opacity-0 group-hover:opacity-100 transition-opacity" />
-          <div className="relative flex items-center gap-2">
-            <Upload className="w-4 h-4" />
-            上传文档
-          </div>
-        </button>
+        <div className="flex gap-3">
+          <button
+            onClick={() => navigate('/knowledgebases/smart-download')}
+            className="group relative px-6 py-3 bg-gradient-to-r from-purple-600 via-purple-500 to-indigo-500 text-white rounded-xl font-medium shadow-lg shadow-purple-500/30 hover:shadow-xl hover:shadow-purple-500/40 transition-all duration-300 hover:scale-105"
+          >
+            <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-xl opacity-0 group-hover:opacity-100 transition-opacity" />
+            <div className="relative flex items-center gap-2">
+              <Sparkles className="w-4 h-4" />
+              智能下载
+            </div>
+          </button>
+          <button
+            onClick={() => navigate('/knowledgebases/upload')}
+            className="group relative px-6 py-3 bg-gradient-to-r from-primary-600 via-primary-500 to-indigo-500 text-white rounded-xl font-medium shadow-lg shadow-primary-500/30 hover:shadow-xl hover:shadow-primary-500/40 transition-all duration-300 hover:scale-105"
+          >
+            <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-xl opacity-0 group-hover:opacity-100 transition-opacity" />
+            <div className="relative flex items-center gap-2">
+              <Upload className="w-4 h-4" />
+              上传文档
+            </div>
+          </button>
+        </div>
       </div>
 
       {error && (

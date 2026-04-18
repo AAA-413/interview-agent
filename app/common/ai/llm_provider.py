@@ -31,8 +31,8 @@ class LlmProviderRegistry:
         key = provider or "dashscope"
         if key in self._providers:
             model = self._providers[key]
-            # 包装调用，添加监控
-            return self._wrap_with_monitoring(model, key)
+            # 直接返回模型，不包装（避免 Pydantic 限制）
+            return model
         raise ValueError(f"未找到 LLM Provider: {key}")
 
     def _wrap_with_monitoring(self, model: ChatOpenAI, provider: str) -> ChatOpenAI:

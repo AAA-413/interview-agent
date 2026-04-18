@@ -10,6 +10,21 @@ const instance: AxiosInstance = axios.create({
   timeout: 60000,
 });
 
+// 请求拦截器：添加 token
+instance.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('access_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+// 响应拦截器：处理 401 未授权
 instance.interceptors.response.use(
   (response) => {
     const result = response.data as Result;
@@ -33,6 +48,12 @@ instance.interceptors.response.use(
       }
 
       // HTTP 状态码友好提示
+      if (status === 401) {
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('token_type');
+        window.location.href = '/login';
+        return Promise.reject(new Error('登录已过期，请重新登录'));
+      }
       if (status === 404) {
         return Promise.reject(new Error('请求的资源不存在'));
       }

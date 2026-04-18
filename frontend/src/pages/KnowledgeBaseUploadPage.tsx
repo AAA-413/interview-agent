@@ -71,7 +71,7 @@ export default function KnowledgeBaseUploadPage() {
     if (!url) return;
 
     setUploading(true);
-    setError(null);
+    setError('');
     setResult(null);
 
     try {

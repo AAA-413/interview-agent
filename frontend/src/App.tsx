@@ -1,18 +1,21 @@
+import React, { lazy } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Suspense } from 'react';
 import { Loader2 } from 'lucide-react';
 import Layout from './components/Layout';
 
-const ResumeListPage = () => import('./pages/ResumeListPage').then(m => m.default);
-const ResumeDetailPage = () => import('./pages/ResumeDetailPage').then(m => m.default);
-const UploadPage = () => import('./pages/UploadPage').then(m => m.default);
-const InterviewHistoryPage = () => import('./pages/InterviewHistoryPage').then(m => m.default);
-const InterviewDetailPage = () => import('./pages/InterviewDetailPage').then(m => m.default);
-const InterviewHubPage = () => import('./pages/InterviewHubPage').then(m => m.default);
-const InterviewPage = () => import('./pages/InterviewPage').then(m => m.default);
-const KnowledgeBaseListPage = () => import('./pages/KnowledgeBaseListPage').then(m => m.default);
-const KnowledgeBaseDetailPage = () => import('./pages/KnowledgeBaseDetailPage').then(m => m.default);
-const KnowledgeBaseUploadPage = () => import('./pages/KnowledgeBaseUploadPage').then(m => m.default);
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const ResumeListPage = lazy(() => import('./pages/ResumeListPage'));
+const ResumeDetailPage = lazy(() => import('./pages/ResumeDetailPage'));
+const UploadPage = lazy(() => import('./pages/UploadPage'));
+const InterviewHistoryPage = lazy(() => import('./pages/InterviewHistoryPage'));
+const InterviewDetailPage = lazy(() => import('./pages/InterviewDetailPage'));
+const InterviewHubPage = lazy(() => import('./pages/InterviewHubPage'));
+const InterviewPage = lazy(() => import('./pages/InterviewPage'));
+const KnowledgeBaseListPage = lazy(() => import('./pages/KnowledgeBaseListPage'));
+const KnowledgeBaseDetailPage = lazy(() => import('./pages/KnowledgeBaseDetailPage'));
+const KnowledgeBaseUploadPage = lazy(() => import('./pages/KnowledgeBaseUploadPage'));
+const SmartDownloadPage = lazy(() => import('./pages/SmartDownloadPage'));
 
 const Loading = () => (
   <div className="flex items-center justify-center min-h-[50vh]">
@@ -20,33 +23,25 @@ const Loading = () => (
   </div>
 );
 
-function LazyPage({ loader }: { loader: () => Promise<any> }) {
-  const [Component, setComponent] = React.useState<any>(null);
-  React.useEffect(() => {
-    loader().then(mod => setComponent(() => mod));
-  }, [loader]);
-  return Component ? <Component /> : <Loading />;
-}
-
-import React from 'react';
-
 export default function App() {
   return (
     <BrowserRouter>
       <Suspense fallback={<Loading />}>
         <Routes>
+          <Route path="/login" element={<LoginPage />} />
           <Route path="/" element={<Layout />}>
             <Route index element={<Navigate to="/resumes" replace />} />
-            <Route path="resumes" element={<LazyPage loader={ResumeListPage} />} />
-            <Route path="resumes/:resumeId" element={<LazyPage loader={ResumeDetailPage} />} />
-            <Route path="upload" element={<LazyPage loader={UploadPage} />} />
-            <Route path="knowledgebases" element={<LazyPage loader={KnowledgeBaseListPage} />} />
-            <Route path="knowledgebases/upload" element={<LazyPage loader={KnowledgeBaseUploadPage} />} />
-            <Route path="knowledgebases/:kbId" element={<LazyPage loader={KnowledgeBaseDetailPage} />} />
-            <Route path="interviews" element={<LazyPage loader={InterviewHistoryPage} />} />
-            <Route path="interviews/:sessionId" element={<LazyPage loader={InterviewDetailPage} />} />
-            <Route path="interview-hub" element={<LazyPage loader={InterviewHubPage} />} />
-            <Route path="interview" element={<LazyPage loader={InterviewPage} />} />
+            <Route path="resumes" element={<ResumeListPage />} />
+            <Route path="resumes/:resumeId" element={<ResumeDetailPage />} />
+            <Route path="upload" element={<UploadPage />} />
+            <Route path="knowledgebases" element={<KnowledgeBaseListPage />} />
+            <Route path="knowledgebases/upload" element={<KnowledgeBaseUploadPage />} />
+            <Route path="knowledgebases/smart-download" element={<SmartDownloadPage />} />
+            <Route path="knowledgebases/:kbId" element={<KnowledgeBaseDetailPage />} />
+            <Route path="interviews" element={<InterviewHistoryPage />} />
+            <Route path="interviews/:sessionId" element={<InterviewDetailPage />} />
+            <Route path="interview-hub" element={<InterviewHubPage />} />
+            <Route path="interview" element={<InterviewPage />} />
           </Route>
         </Routes>
       </Suspense>
