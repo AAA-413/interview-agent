@@ -1,6 +1,39 @@
+# 智能 AI 面试官平台
 
+基于大语言模型的简历分析和模拟面试系统
 
-**智能 AI 面试官平台** - 基于大语言模型的简历分析和模拟面试系统
+---
+
+## 快速启动
+
+### 后端启动
+
+```bash
+# 1. 清理 Python 字节码缓存
+Get-ChildItem -Path . -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
+
+# 2. 启动后端服务（禁用字节码缓存）
+.venv\Scripts\python.exe -B -m uvicorn app.main:app --host 0.0.0.0 --port 8002
+```
+
+### 前端启动
+
+```bash
+# 启动前端服务
+cd frontend && npm run dev
+```
+
+### 服务地址
+
+- 后端 API：http://localhost:8002
+- 前端页面：http://localhost:5173
+- API 文档：http://localhost:8002/docs
+
+**详细启动流程请参考：** [服务启动指南](docs/01-项目管理/服务启动指南.md)
+
+---
+
+## 功能模块
 
 ### 简历管理模块
 
