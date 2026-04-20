@@ -1,0 +1,431 @@
+---
+skill: git-workflow
+description: Git 代码提交和推送的标准工作流程
+tags: [git, workflow, version-control]
+---
+
+# Git 工作流程 Skill
+
+规范化的 Git 代码提交和推送流程，确保代码质量和提交历史清晰。
+
+## 使用场景
+
+- 完成功能开发需要提交代码
+- 修复 bug 需要推送到远程仓库
+- 文档更新需要版本管理
+- 多人协作需要同步代码
+
+## 标准工作流程
+
+### 1. 查看当前状态
+
+```bash
+# 查看修改文件
+git status
+
+# 查看具体修改内容
+git diff
+
+# 查看最近提交记录
+git log --oneline -5
+```
+
+### 2. 暂存文件
+
+**选择性暂存（推荐）：**
+```bash
+# 暂存特定文件
+git add <file1> <file2> <file3>
+
+# 暂存特定目录
+git add <directory>/
+
+# 示例：暂存文档更新
+git add README.md docs/01-项目管理/服务启动指南.md
+```
+
+**全部暂存（谨慎使用）：**
+```bash
+# 暂存所有修改（不推荐，可能包含敏感文件）
+git add -A
+
+# 暂存当前目录所有修改
+git add .
+```
+
+### 3. 提交代码
+
+**标准提交格式：**
+```bash
+git commit -m "$(cat <<'EOF'
+<type>: <subject>
+
+<body>
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+EOF
+)"
+```
+
+**提交类型（type）：**
+- `feat`: 新功能
+- `fix`: Bug 修复
+- `docs`: 文档更新
+- `refactor`: 代码重构
+- `perf`: 性能优化
+- `test`: 测试相关
+- `chore`: 构建/工具链更新
+- `style`: 代码格式调整
+
+**提交示例：**
+
+```bash
+# 功能开发
+git commit -m "$(cat <<'EOF'
+feat: 实现智能下载知识库功能
+
+- 新增 GitHub 仓库抓取服务
+- 新增搜索引擎集成（Tavily）
+- 实现 Agent 编排框架
+- 前端页面完整实现
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+EOF
+)"
+
+# Bug 修复
+git commit -m "$(cat <<'EOF'
+fix: 修复简历删除功能报错
+
+- 清理 Python 字节码缓存
+- 添加 delete_resume 方法
+- 更新错误处理逻辑
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+EOF
+)"
+
+# 文档更新
+git commit -m "$(cat <<'EOF'
+docs: 规范前后端服务启动流程
+
+- 新增《服务启动指南》文档
+- 更新 README.md 快速启动命令
+- 提供一键启动脚本
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+EOF
+)"
+```
+
+### 4. 推送到远程
+
+```bash
+# 推送到主分支
+git push origin main
+
+# 推送到其他分支
+git push origin <branch-name>
+
+# 强制推送（谨慎使用）
+git push origin main --force
+```
+
+### 5. 验证推送结果
+
+```bash
+# 查看远程状态
+git remote -v
+
+# 查看远程分支
+git branch -r
+
+# 查看提交历史
+git log --oneline --graph -10
+```
+
+## 常见场景处理
+
+### 场景 1：修改上次提交
+
+```bash
+# 修改提交信息
+git commit --amend -m "新的提交信息"
+
+# 添加遗漏文件到上次提交
+git add <forgotten-file>
+git commit --amend --no-edit
+```
+
+### 场景 2：撤销暂存
+
+```bash
+# 撤销所有暂存
+git reset HEAD
+
+# 撤销特定文件暂存
+git reset HEAD <file>
+```
+
+### 场景 3：撤销修改
+
+```bash
+# 撤销工作区修改（危险操作）
+git checkout -- <file>
+
+# 撤销所有工作区修改（危险操作）
+git checkout -- .
+```
+
+### 场景 4：回退提交
+
+```bash
+# 回退到上一个提交（保留修改）
+git reset --soft HEAD~1
+
+# 回退到上一个提交（丢弃修改，危险操作）
+git reset --hard HEAD~1
+
+# 回退到指定提交
+git reset --soft <commit-hash>
+```
+
+### 场景 5：解决冲突
+
+```bash
+# 拉取远程更新
+git pull origin main
+
+# 如果有冲突，手动解决后
+git add <resolved-files>
+git commit -m "merge: 解决合并冲突"
+git push origin main
+```
+
+### 场景 6：暂存当前工作
+
+```bash
+# 暂存当前修改
+git stash
+
+# 查看暂存列表
+git stash list
+
+# 恢复暂存
+git stash pop
+
+# 删除暂存
+git stash drop
+```
+
+## 最佳实践
+
+### 1. 提交前检查
+
+```bash
+# 检查修改内容
+git diff
+
+# 检查暂存内容
+git diff --cached
+
+# 检查提交历史
+git log --oneline -5
+```
+
+### 2. 提交粒度
+
+- **单一职责**：每次提交只做一件事
+- **原子性**：提交应该是完整的、可运行的
+- **可回滚**：每次提交都应该可以独立回滚
+
+### 3. 提交信息规范
+
+- **标题**：简洁明了，不超过 50 字符
+- **正文**：详细说明修改内容和原因
+- **引用**：关联 Issue 或 PR 编号
+
+### 4. 敏感信息检查
+
+**禁止提交：**
+- `.env` 文件（包含 API Key）
+- `credentials.json`（认证信息）
+- `*.pem`、`*.key`（私钥文件）
+- `node_modules/`（依赖目录）
+- `__pycache__/`（Python 缓存）
+- `*.log`（日志文件）
+
+**检查方法：**
+```bash
+# 查看即将提交的文件
+git status
+
+# 检查 .gitignore 配置
+cat .gitignore
+```
+
+### 5. 推送前验证
+
+```bash
+# 运行测试
+pytest tests/
+
+# 检查代码格式
+ruff check .
+
+# 类型检查
+mypy app/
+```
+
+## 常见错误处理
+
+### 错误 1：推送被拒绝
+
+```bash
+# 错误信息
+! [rejected] main -> main (fetch first)
+
+# 解决方案
+git pull origin main --rebase
+git push origin main
+```
+
+### 错误 2：提交了敏感文件
+
+```bash
+# 从历史中删除文件
+git filter-branch --force --index-filter \
+  "git rm --cached --ignore-unmatch <file>" \
+  --prune-empty --tag-name-filter cat -- --all
+
+# 强制推送（危险操作）
+git push origin main --force
+```
+
+### 错误 3：提交信息写错
+
+```bash
+# 修改最近一次提交信息
+git commit --amend -m "正确的提交信息"
+
+# 如果已推送，需要强制推送
+git push origin main --force
+```
+
+### 错误 4：推送到错误分支
+
+```bash
+# 删除远程错误分支
+git push origin --delete <wrong-branch>
+
+# 推送到正确分支
+git push origin <correct-branch>
+```
+
+## 分支管理
+
+### 创建分支
+
+```bash
+# 创建并切换到新分支
+git checkout -b <branch-name>
+
+# 或使用新语法
+git switch -c <branch-name>
+```
+
+### 切换分支
+
+```bash
+# 切换到已存在分支
+git checkout <branch-name>
+
+# 或使用新语法
+git switch <branch-name>
+```
+
+### 合并分支
+
+```bash
+# 切换到目标分支
+git checkout main
+
+# 合并源分支
+git merge <source-branch>
+
+# 推送合并结果
+git push origin main
+```
+
+### 删除分支
+
+```bash
+# 删除本地分支
+git branch -d <branch-name>
+
+# 强制删除本地分支
+git branch -D <branch-name>
+
+# 删除远程分支
+git push origin --delete <branch-name>
+```
+
+## 快速参考
+
+### 常用命令速查
+
+```bash
+# 查看状态
+git status
+
+# 查看修改
+git diff
+
+# 暂存文件
+git add <file>
+
+# 提交代码
+git commit -m "message"
+
+# 推送代码
+git push origin main
+
+# 拉取更新
+git pull origin main
+
+# 查看日志
+git log --oneline -10
+
+# 查看分支
+git branch -a
+```
+
+### 提交模板
+
+```bash
+git commit -m "$(cat <<'EOF'
+<type>: <简短描述>
+
+<详细说明>
+- 修改点 1
+- 修改点 2
+- 修改点 3
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+EOF
+)"
+```
+
+## 注意事项
+
+1. **推送前必须测试**：确保代码可运行
+2. **避免强制推送**：除非确实需要重写历史
+3. **保护主分支**：重要修改应通过 PR 合并
+4. **定期同步**：及时拉取远程更新避免冲突
+5. **清晰的提交信息**：方便后续追溯和回滚
+
+## 相关文档
+
+- [服务启动指南](../../docs/01-项目管理/服务启动指南.md)
+- [下次会话快速启动指南](../../docs/01-项目管理/下次会话快速启动指南.md)
+- [Git 官方文档](https://git-scm.com/doc)
