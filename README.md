@@ -1,6 +1,13 @@
+
 # 智能 AI 面试官平台
 
 基于大语言模型的简历分析和模拟面试系统
+前端页面展示
+<img width="1517" height="927" alt="回答分析" src="https://github.com/user-attachments/assets/feccdaaa-9a57-4199-824e-6111e413af12" />
+<img width="1896" height="1003" alt="知识库管理" src="https://github.com/user-attachments/assets/42611b51-78d2-4f00-82b6-ce42cb023610" />
+<img width="1835" height="761" alt="模拟面试" src="https://github.com/user-attachments/assets/f6d69b6e-8903-4645-8c64-b0326663d78d" />
+<img width="1884" height="825" alt="面试记录" src="https://github.com/user-attachments/assets/296c9ee4-f0d9-4981-bb4e-160b547e0eb0" />
+<img width="1804" height="878" alt="简历管理" src="https://github.com/user-attachments/assets/580a696b-a31d-4fd4-9e53-b3764d3fa7ad" />
 
 ---
 
