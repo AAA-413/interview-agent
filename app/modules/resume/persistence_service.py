@@ -32,8 +32,11 @@ class ResumePersistenceService(BasePersistenceService[ResumeEntity]):
         result = await db.execute(select(ResumeEntity.id).where(ResumeEntity.file_hash == file_hash))
         return result.scalar_one_or_none() is not None
 
-    async def find_all(self, db: AsyncSession) -> list[ResumeEntity]:
-        result = await db.execute(select(ResumeEntity).order_by(ResumeEntity.uploaded_at.desc()))
+    async def find_all(self, db: AsyncSession, user_id: int | None = None) -> list[ResumeEntity]:
+        query = select(ResumeEntity).order_by(ResumeEntity.uploaded_at.desc())
+        if user_id is not None:
+            query = query.where(ResumeEntity.user_id == user_id)
+        result = await db.execute(query)
         return list(result.scalars().all())
 
     async def save_resume(self, db: AsyncSession, entity: ResumeEntity) -> ResumeEntity:

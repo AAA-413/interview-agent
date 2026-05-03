@@ -115,5 +115,25 @@ class RedisService:
     async def xread(self, streams: dict[str, str], count: int | None = None, block: int | None = None):
         return await self._redis.xread(streams, count=count, block=block)
 
+    async def xreadgroup(
+        self, groupname: str, consumername: str, streams: dict[str, str],
+        count: int | None = None, block: int | None = None, noack: bool = False,
+    ):
+        return await self._redis.xreadgroup(
+            groupname, consumername, streams, count=count, block=block, noack=noack,
+        )
+
+    async def xgroup_create(self, stream: str, groupname: str, id: str = "$", mkstream: bool = False) -> bool:
+        try:
+            await self._redis.xgroup_create(stream, groupname, id=id, mkstream=mkstream)
+            return True
+        except Exception as e:
+            if "BUSYGROUP" in str(e):
+                return False
+            raise
+
+    async def xack(self, stream: str, groupname: str, *message_ids: str) -> int:
+        return await self._redis.xack(stream, groupname, *message_ids)
+
     async def xdel(self, stream: str, *message_ids: str) -> int:
         return await self._redis.xdel(stream, *message_ids)

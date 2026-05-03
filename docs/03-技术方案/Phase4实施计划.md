@@ -185,7 +185,7 @@ class AgentWebSocket {
   private ws: WebSocket | null = null;
   
   connect(sessionId: string, onMessage: (event: any) => void) {
-    this.ws = new WebSocket(`ws://localhost:8001/api/agent/ws/${sessionId}`);
+    this.ws = new WebSocket(`ws://localhost:8002/api/agent/ws/${sessionId}`);
     
     this.ws.onmessage = (event) => {
       const data = JSON.parse(event.data);

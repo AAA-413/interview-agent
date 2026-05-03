@@ -25,12 +25,15 @@ class BasePersistenceService(Generic[T]):
     model: type[T]
     not_found_error: ErrorCode = ErrorCode.INTERNAL_ERROR
 
-    async def find_by_id(self, db: AsyncSession, entity_id: int) -> T | None:
-        result = await db.execute(select(self.model).where(self.model.id == entity_id))
+    async def find_by_id(self, db: AsyncSession, entity_id: int, user_id: int | None = None) -> T | None:
+        stmt = select(self.model).where(self.model.id == entity_id)
+        if user_id is not None and hasattr(self.model, "user_id"):
+            stmt = stmt.where(self.model.user_id == user_id)
+        result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def find_by_id_or_throw(self, db: AsyncSession, entity_id: int) -> T:
-        entity = await self.find_by_id(db, entity_id)
+    async def find_by_id_or_throw(self, db: AsyncSession, entity_id: int, user_id: int | None = None) -> T:
+        entity = await self.find_by_id(db, entity_id, user_id)
         if entity is None:
             raise BusinessException(self.not_found_error)
         return entity
@@ -40,8 +43,11 @@ class BasePersistenceService(Generic[T]):
         db: AsyncSession,
         order_by=None,
         limit: int | None = None,
+        user_id: int | None = None,
     ) -> list[T]:
         query = select(self.model)
+        if user_id is not None and hasattr(self.model, "user_id"):
+            query = query.where(self.model.user_id == user_id)
         if order_by is not None:
             query = query.order_by(order_by)
         else:

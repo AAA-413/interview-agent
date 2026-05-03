@@ -13,9 +13,11 @@
 
 - **后端**：FastAPI + SQLAlchemy + PostgreSQL + Redis + LangChain
 - **前端**：React 18 + TypeScript + Ant Design
-- **AI**：通义千问（qwen-plus）+ LangChain Structured Output
-- **异步任务**：Redis Stream 消费者组模式
+- **AI**：DeepSeek（deepseek-chat）+ LangChain Structured Output
+- **Embedding**：阿里云百炼 text-embedding-v2（1536 维）/ 哈希降级
+- **异步任务**：Redis Stream 消费者组模式（xreadgroup + xack）
 - **向量检索**：pgvector + Rerank 重排序
+- **部署**：Docker Compose + Nginx + gunicorn/uvicorn
 
 ## 快速启动
 
@@ -98,8 +100,24 @@ python/
 └── requirements.txt         # Python 依赖
 ```
 
+## 安全与优化
+
+- **用户级数据隔离**：所有业务表 `user_id` 外键，查询带用户过滤（IDOR 修复）
+- **JWT 认证链路**：全局中间件解析 token → `request.state` → `Depends` 注入
+- **输入校验**：Pydantic Field 约束（范围、长度）
+- **文件上传安全**：文件名清理 + PDF 魔术字节检测
+- **SSE 真流式输出**：LangChain `astream()` token-by-token 推送
+- **异步任务超时**：`asyncio.wait_for` 5 分钟兜底
+- **LLM 监控**：装饰器模式记录 token 消耗和调用时长
+
 ## Docker 部署
 
 ```bash
+# 开发环境
 docker-compose up -d
+
+# 生产环境
+cp .env.prod.example .env.prod
+# 编辑 .env.prod 填入真实密钥
+docker-compose -f docker-compose.prod.yml up -d
 ```

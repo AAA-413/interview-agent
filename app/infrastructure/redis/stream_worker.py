@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
@@ -11,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 MessageHandler = Callable[[dict[str, str]], Awaitable[None]]
+
+CONSUMER_GROUP = "default-workers"
 
 
 class StreamWorker:
@@ -34,18 +37,22 @@ class StreamWorker:
         self._read_count = read_count
         self._idle_sleep_seconds = idle_sleep_seconds
         self._error_sleep_seconds = error_sleep_seconds
-        self._last_id = "$"
+        self._consumer_name = f"{name}-{uuid.uuid4().hex[:8]}"
         self._stopped = False
 
     def stop(self) -> None:
         self._stopped = True
 
     async def run_forever(self) -> None:
-        logger.info("Starting async worker: %s (stream=%s)", self._name, self._stream_key)
+        await self._redis.xgroup_create(self._stream_key, CONSUMER_GROUP, id="0", mkstream=True)
+        logger.info("Starting async worker: %s (stream=%s, consumer=%s)", self._name, self._stream_key, self._consumer_name)
+
         while not self._stopped:
             try:
-                results = await self._redis.xread(
-                    {self._stream_key: self._last_id},
+                results = await self._redis.xreadgroup(
+                    CONSUMER_GROUP,
+                    self._consumer_name,
+                    {self._stream_key: ">"},
                     count=self._read_count,
                     block=self._block_ms,
                 )
@@ -55,10 +62,9 @@ class StreamWorker:
 
                 for _stream_name, stream_messages in results:
                     for msg_id, fields in stream_messages:
-                        self._last_id = msg_id
                         try:
                             await self._handler(fields)
-                            await self._redis.xdel(self._stream_key, msg_id)
+                            await self._redis.xack(self._stream_key, CONSUMER_GROUP, msg_id)
                         except Exception:
                             logger.exception("worker %s 处理消息失败: stream=%s, msg_id=%s", self._name, self._stream_key, msg_id)
             except asyncio.CancelledError:
@@ -67,9 +73,7 @@ class StreamWorker:
             except TimeoutError:
                 logger.warning(
                     "Async worker Redis Stream read timeout, will retry: %s (stream=%s, block_ms=%s)",
-                    self._name,
-                    self._stream_key,
-                    self._block_ms,
+                    self._name, self._stream_key, self._block_ms,
                 )
                 await asyncio.sleep(self._error_sleep_seconds)
             except Exception:

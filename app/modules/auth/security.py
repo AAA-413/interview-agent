@@ -6,8 +6,11 @@ import os
 from datetime import datetime, timedelta
 from typing import Optional
 
+from dotenv import load_dotenv
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+
+load_dotenv()
 
 # 密码哈希上下文
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")

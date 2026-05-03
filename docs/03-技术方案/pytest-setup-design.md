@@ -318,7 +318,7 @@ cd d:\work\xiaofuge\111\python
 ### 启动后端
 
 ```bash
-.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8001
+.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8002
 ```
 
 ### 启动前端

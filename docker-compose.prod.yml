@@ -1,59 +1,87 @@
 version: '3.8'
 
 services:
-  # PostgreSQL 数据库
+  # PostgreSQL + pgvector
   postgres:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg16
     container_name: interview_postgres
     environment:
       POSTGRES_DB: interview_guide
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请设置 POSTGRES_PASSWORD 环境变量}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # 生产环境不暴露数据库端口到宿主机
+    # ports:
+    #   - "5432:5432"
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - backend
 
-  # Redis
+  # Redis（带密码认证）
   redis:
     image: redis:7-alpine
     container_name: interview_redis
-    ports:
-      - "6379:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD:?请设置 REDIS_PASSWORD 环境变量}
     volumes:
       - redis_data:/data
+    # 生产环境不暴露 Redis 端口
+    # ports:
+    #   - "6379:6379"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - backend
 
   # MinIO 对象存储
   minio:
     image: minio/minio:latest
     container_name: interview_minio
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin123
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?请设置 MINIO_ROOT_PASSWORD 环境变量}
     volumes:
       - minio_data:/data
+    # 只暴露 API 端口，Console 可通过 Nginx 代理或内网访问
     ports:
       - "9000:9000"
-      - "9001:9001"
-    command: server /data --console-address ":9001"
+    command: server /data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
       timeout: 20s
       retries: 3
+    networks:
+      - backend
+
+  # MinIO 初始化（创建 Bucket）
+  minio-init:
+    image: minio/mc:latest
+    container_name: interview_minio_init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set myminio http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
+      mc mb myminio/${MINIO_BUCKET:-interview-guide} --ignore-existing;
+      echo 'Bucket created successfully';
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?请设置 MINIO_ROOT_PASSWORD 环境变量}
+    networks:
+      - backend
 
   # 后端服务
   backend:
@@ -62,27 +90,38 @@ services:
       dockerfile: Dockerfile
     container_name: interview_backend
     environment:
+      # AI 服务
       - AI_BAILIAN_API_KEY=${AI_BAILIAN_API_KEY}
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+      - AI_MODEL=${AI_MODEL:-qwen-plus}
+      - AI_BASE_URL=${AI_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      # 搜索服务
       - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - SEARCH_ENGINE=${SEARCH_ENGINE:-tavily}
+      # 数据库
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=interview_guide
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      # Redis
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - AI_MODEL=qwen-plus
-      - AI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      # 对象存储
       - APP_STORAGE_ENDPOINT=http://minio:9000
-      - APP_STORAGE_ACCESS_KEY=minioadmin
-      - APP_STORAGE_SECRET_KEY=minioadmin123
-      - APP_STORAGE_BUCKET=interview-guide
-      - CORS_ALLOWED_ORIGINS=http://124.222.16.188:8080
-      - SEARCH_ENGINE=tavily
-      - APP_INTERVIEW_FOLLOW_UP_COUNT=0
+      - APP_STORAGE_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - APP_STORAGE_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - APP_STORAGE_BUCKET=${MINIO_BUCKET:-interview-guide}
+      # JWT
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?请设置 JWT_SECRET_KEY 环境变量}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      # CORS
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:8080}
+      # 应用配置
+      - APP_INTERVIEW_FOLLOW_UP_COUNT=${APP_INTERVIEW_FOLLOW_UP_COUNT:-0}
     ports:
-      - "8002:8002"
+      - "${APP_PORT:-8002}:8002"
     depends_on:
       postgres:
         condition: service_healthy
@@ -93,19 +132,27 @@ services:
     restart: unless-stopped
     volumes:
       - ./logs:/app/logs
+    networks:
+      - backend
 
   # Nginx 前端服务
   nginx:
     image: nginx:alpine
     container_name: interview_nginx
     ports:
-      - "8080:80"
+      - "${NGINX_PORT:-80}:80"
     volumes:
-      - ./frontend/dist:/usr/share/nginx/html
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - backend
     restart: unless-stopped
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
 
 volumes:
   postgres_data:

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.result import Result
 from app.database import get_db
+from app.modules.auth.dependencies import get_current_user_id
 from app.modules.interview.history_service import interview_history_service
 from app.modules.interview.persistence_service import interview_persistence_service
 from app.modules.interview.schemas import (
@@ -26,58 +27,95 @@ router = APIRouter()
 
 
 @router.get("/sessions", response_model=Result[list[SessionListItemDTO]])
-async def list_sessions(db: AsyncSession = Depends(get_db)):
-    entities = await interview_persistence_service.find_all(db)
+async def list_sessions(
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    entities = await interview_persistence_service.find_all(db, user_id=user_id)
     items = [interview_persistence_service.to_session_list_item(e) for e in entities]
     return Result.success(items)
 
 
 @router.post("/sessions", response_model=Result[InterviewSessionDTO])
-async def create_session(request: CreateInterviewRequest, db: AsyncSession = Depends(get_db)):
+async def create_session(
+    request: CreateInterviewRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
     logger.info("收到创建面试会话请求: skill_id=%s, difficulty=%s, question_count=%d", request.skill_id, request.difficulty, request.question_count)
-    session = await interview_session_service.create_session(db, request)
+    session = await interview_session_service.create_session(db, request, user_id)
     return Result.success(session)
 
 
 @router.get("/sessions/{session_id}", response_model=Result[InterviewSessionDTO])
-async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
-    session = await interview_session_service.get_session(db, session_id)
+async def get_session(
+    session_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    session = await interview_session_service.get_session(db, session_id, user_id)
     return Result.success(session)
 
 
 @router.get("/sessions/{session_id}/question", response_model=Result[dict])
-async def get_current_question(session_id: str, db: AsyncSession = Depends(get_db)):
-    result = await interview_session_service.get_current_question(db, session_id)
+async def get_current_question(
+    session_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await interview_session_service.get_current_question(db, session_id, user_id)
     return Result.success(result)
 
 
 @router.post("/sessions/{session_id}/answers", response_model=Result[SubmitAnswerResponse])
-async def submit_answer(session_id: str, request: SubmitAnswerRequest, db: AsyncSession = Depends(get_db)):
-    response = await interview_session_service.submit_answer(db, session_id, request)
+async def submit_answer(
+    session_id: str,
+    request: SubmitAnswerRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    response = await interview_session_service.submit_answer(db, session_id, request, user_id)
     return Result.success(response)
 
 
 @router.put("/sessions/{session_id}/answers", response_model=Result[None])
-async def save_answer(session_id: str, request: SubmitAnswerRequest, db: AsyncSession = Depends(get_db)):
-    await interview_session_service.save_answer(db, session_id, request)
+async def save_answer(
+    session_id: str,
+    request: SubmitAnswerRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    await interview_session_service.save_answer(db, session_id, request, user_id)
     return Result.success(None)
 
 
 @router.post("/sessions/{session_id}/complete", response_model=Result[None])
-async def complete_interview(session_id: str, db: AsyncSession = Depends(get_db)):
-    await interview_session_service.complete_interview(db, session_id)
+async def complete_interview(
+    session_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    await interview_session_service.complete_interview(db, session_id, user_id)
     return Result.success(None)
 
 
 @router.get("/sessions/{session_id}/report", response_model=Result[InterviewReportDTO])
-async def get_report(session_id: str, db: AsyncSession = Depends(get_db)):
-    report = await interview_session_service.generate_report(db, session_id)
+async def get_report(
+    session_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    report = await interview_session_service.generate_report(db, session_id, user_id)
     return Result.success(report)
 
 
 @router.get("/sessions/unfinished/{resume_id}", response_model=Result[InterviewSessionDTO])
-async def find_unfinished_session(resume_id: int, db: AsyncSession = Depends(get_db)):
-    session = await interview_session_service._find_unfinished_session(db, resume_id)
+async def find_unfinished_session(
+    resume_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    session = await interview_session_service._find_unfinished_session(db, resume_id, user_id)
     if session is None:
         from app.common.error_code import ErrorCode
         from app.common.exception import BusinessException
@@ -87,14 +125,22 @@ async def find_unfinished_session(resume_id: int, db: AsyncSession = Depends(get
 
 
 @router.get("/sessions/{session_id}/details", response_model=Result[InterviewDetailDTO])
-async def get_interview_detail(session_id: str, db: AsyncSession = Depends(get_db)):
-    detail = await interview_history_service.get_interview_detail(db, session_id)
+async def get_interview_detail(
+    session_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    detail = await interview_history_service.get_interview_detail(db, session_id, user_id)
     return Result.success(detail)
 
 
 @router.get("/sessions/{session_id}/export")
-async def export_interview_pdf(session_id: str, db: AsyncSession = Depends(get_db)):
-    pdf_bytes = await interview_history_service.export_interview_pdf(db, session_id)
+async def export_interview_pdf(
+    session_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    pdf_bytes = await interview_history_service.export_interview_pdf(db, session_id, user_id)
     filename = f"interview-report-{session_id}-{datetime.now().strftime('%Y%m%d%H%M%S')}.pdf"
     return Response(
         content=pdf_bytes,
@@ -104,6 +150,10 @@ async def export_interview_pdf(session_id: str, db: AsyncSession = Depends(get_d
 
 
 @router.delete("/sessions/{session_id}", response_model=Result[None])
-async def delete_session(session_id: str, db: AsyncSession = Depends(get_db)):
-    await interview_persistence_service.delete_session(db, session_id)
+async def delete_session(
+    session_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    await interview_persistence_service.delete_session(db, session_id, user_id)
     return Result.success(None)

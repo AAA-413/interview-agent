@@ -61,15 +61,26 @@ export const knowledgeBaseApi = {
       onDone?: (data: Record<string, unknown>) => void;
     },
   ): Promise<void> {
+    const token = localStorage.getItem('access_token');
     const response = await fetch(`/api/knowledgebase/${id}/chat/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(payload),
     });
 
-    if (!response.ok || !response.body) {
+    if (!response.ok) {
+      if (response.status === 401) {
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('token_type');
+        window.location.href = '/login';
+        throw new Error('登录已过期，请重新登录');
+      }
+      throw new Error('流式问答连接失败');
+    }
+    if (!response.body) {
       throw new Error('流式问答连接失败');
     }
 
@@ -91,10 +102,10 @@ export const knowledgeBaseApi = {
           handlers.onMeta?.(data);
           break;
         case 'chunk':
-          handlers.onChunk?.(typeof data.chunk === 'string' ? data.chunk : '');
+          handlers.onChunk?.(typeof data.content === 'string' ? data.content : '');
           break;
         case 'references':
-          handlers.onReferences?.(Array.isArray(data.references) ? data.references : []);
+          handlers.onReferences?.(Array.isArray(data.items) ? data.items : []);
           break;
         case 'done':
           handlers.onDone?.(data);

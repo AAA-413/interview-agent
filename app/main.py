@@ -7,7 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.database import async_session_factory, close_db, init_db, init_engine
+import app.database as db_module
+from app.database import close_db, init_db, init_engine
 from app.common.exception_handlers import register_exception_handlers
 from app.infrastructure.redis.redis_service import RedisService, close_redis, init_redis
 from app.infrastructure.redis.stream_worker import StreamWorker
@@ -45,7 +46,7 @@ async def lifespan(app: FastAPI):
         app.state.redis = redis
         logger.info("Redis 连接成功，redis对象: %s", redis)
 
-        if redis is not None and async_session_factory is not None:
+        if redis is not None and db_module.async_session_factory is not None:
             from app.modules.interview.async_tasks import (
                 EVALUATE_STREAM_KEY,
                 InterviewEvaluateTaskHandler,
@@ -65,19 +66,19 @@ async def lifespan(app: FastAPI):
                 name="resume-analyze-worker",
                 redis_service=redis_service,
                 stream_key=RESUME_ANALYZE_STREAM_KEY,
-                handler=ResumeAnalyzeTaskHandler(async_session_factory).handle,
+                handler=ResumeAnalyzeTaskHandler(db_module.async_session_factory).handle,
             )
             interview_worker = StreamWorker(
                 name="interview-evaluate-worker",
                 redis_service=redis_service,
                 stream_key=EVALUATE_STREAM_KEY,
-                handler=InterviewEvaluateTaskHandler(async_session_factory).handle,
+                handler=InterviewEvaluateTaskHandler(db_module.async_session_factory).handle,
             )
             knowledge_base_worker = StreamWorker(
                 name="knowledge-base-index-worker",
                 redis_service=redis_service,
                 stream_key=KNOWLEDGE_BASE_INDEX_STREAM_KEY,
-                handler=KnowledgeBaseIndexTaskHandler(async_session_factory).handle,
+                handler=KnowledgeBaseIndexTaskHandler(db_module.async_session_factory).handle,
             )
 
             workers.extend([resume_worker, interview_worker, knowledge_base_worker])

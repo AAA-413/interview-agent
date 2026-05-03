@@ -22,6 +22,7 @@ class InterviewSessionEntity(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     session_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
     skill_id: Mapped[str] = mapped_column(String(64), default="java-backend")
     difficulty: Mapped[str] = mapped_column(String(16), default="mid")

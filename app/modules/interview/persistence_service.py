@@ -32,8 +32,10 @@ class InterviewPersistenceService:
         llm_provider: str,
         skill_id: str,
         difficulty: str,
+        user_id: int = 0,
     ) -> InterviewSessionEntity:
         entity = InterviewSessionEntity(
+            user_id=user_id,
             session_id=session_id,
             resume_id=resume_id,
             total_questions=total_questions,
@@ -48,22 +50,28 @@ class InterviewPersistenceService:
         await db.flush()
         return entity
 
-    async def find_by_session_id(self, db: AsyncSession, session_id: str) -> InterviewSessionEntity | None:
-        result = await db.execute(select(InterviewSessionEntity).where(InterviewSessionEntity.session_id == session_id))
+    async def find_by_session_id(self, db: AsyncSession, session_id: str, user_id: int | None = None) -> InterviewSessionEntity | None:
+        stmt = select(InterviewSessionEntity).where(InterviewSessionEntity.session_id == session_id)
+        if user_id is not None:
+            stmt = stmt.where(InterviewSessionEntity.user_id == user_id)
+        result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def find_by_session_id_or_throw(self, db: AsyncSession, session_id: str) -> InterviewSessionEntity:
-        entity = await self.find_by_session_id(db, session_id)
+    async def find_by_session_id_or_throw(self, db: AsyncSession, session_id: str, user_id: int | None = None) -> InterviewSessionEntity:
+        entity = await self.find_by_session_id(db, session_id, user_id)
         if entity is None:
             raise BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND)
         return entity
 
-    async def find_all(self, db: AsyncSession) -> list[InterviewSessionEntity]:
-        result = await db.execute(select(InterviewSessionEntity).order_by(InterviewSessionEntity.created_at.desc()))
+    async def find_all(self, db: AsyncSession, user_id: int | None = None) -> list[InterviewSessionEntity]:
+        query = select(InterviewSessionEntity).order_by(InterviewSessionEntity.created_at.desc())
+        if user_id is not None:
+            query = query.where(InterviewSessionEntity.user_id == user_id)
+        result = await db.execute(query)
         return list(result.scalars().all())
 
-    async def find_unfinished_session(self, db: AsyncSession, resume_id: int) -> InterviewSessionEntity | None:
-        result = await db.execute(
+    async def find_unfinished_session(self, db: AsyncSession, resume_id: int, user_id: int | None = None) -> InterviewSessionEntity | None:
+        query = (
             select(InterviewSessionEntity)
             .where(
                 InterviewSessionEntity.resume_id == resume_id,
@@ -72,6 +80,9 @@ class InterviewPersistenceService:
             .order_by(InterviewSessionEntity.created_at.desc())
             .limit(1)
         )
+        if user_id is not None:
+            query = query.where(InterviewSessionEntity.user_id == user_id)
+        result = await db.execute(query)
         return result.scalar_one_or_none()
 
     async def update_session_status(self, db: AsyncSession, session_id: str, status: SessionStatus) -> None:
@@ -174,14 +185,14 @@ class InterviewPersistenceService:
 
         await db.flush()
 
-    async def delete_session(self, db: AsyncSession, session_id: str) -> None:
-        entity = await self.find_by_session_id_or_throw(db, session_id)
+    async def delete_session(self, db: AsyncSession, session_id: str, user_id: int | None = None) -> None:
+        entity = await self.find_by_session_id_or_throw(db, session_id, user_id)
         await db.execute(delete(InterviewAnswerEntity).where(InterviewAnswerEntity.session_id == entity.id))
         await db.delete(entity)
         await db.flush()
 
     async def get_historical_questions(
-        self, db: AsyncSession, skill_id: str, resume_id: int | None = None
+        self, db: AsyncSession, skill_id: str, resume_id: int | None = None, user_id: int | None = None
     ) -> list[HistoricalQuestion]:
         query = (
             select(InterviewSessionEntity)
@@ -191,6 +202,8 @@ class InterviewPersistenceService:
         )
         if resume_id is not None:
             query = query.where(InterviewSessionEntity.resume_id == resume_id)
+        if user_id is not None:
+            query = query.where(InterviewSessionEntity.user_id == user_id)
 
         result = await db.execute(query)
         sessions = list(result.scalars().all())

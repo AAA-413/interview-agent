@@ -49,11 +49,16 @@ ERROR_MESSAGES = {
     ErrorCode.KNOWLEDGE_BASE_EMPTY: "知识库为空，请先上传文档",
     ErrorCode.KNOWLEDGE_BASE_INDEX_FAILED: "知识库索引失败，请重新上传或联系管理员",
     ErrorCode.KNOWLEDGE_BASE_FETCH_FAILED: "文档抓取失败，请检查 URL 是否有效",
+    ErrorCode.RESUME_NOT_FOUND: "简历不存在或已被删除",
     ErrorCode.RESUME_FILE_TOO_LARGE: "简历文件过大（最大 10MB），请压缩后重试",
     ErrorCode.RESUME_FORMAT_UNSUPPORTED: "不支持的文件格式，请上传 PDF、DOC 或 DOCX 文件",
+    ErrorCode.RESUME_PARSE_FAILED: "简历解析失败，请检查文件内容或更换格式",
+    ErrorCode.INTERVIEW_SESSION_NOT_FOUND: "面试会话不存在或已被删除",
     ErrorCode.INTERVIEW_REPORT_GENERATING: "面试报告生成中，请稍后刷新页面查看",
     ErrorCode.INTERVIEW_NOT_COMPLETED: "面试尚未完成，请先完成所有题目",
     ErrorCode.INTERVIEW_ALREADY_COMPLETED: "该面试已完成，无法继续答题",
+    ErrorCode.INTERVIEW_REPORT_GENERATION_FAILED: "面试报告生成失败，请稍后重试",
+    ErrorCode.KNOWLEDGE_BASE_NOT_FOUND: "知识库不存在或已被删除",
 }
 
 

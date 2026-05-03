@@ -45,6 +45,18 @@ export interface DownloadProgress {
     size: number;
   }>;
   quality_score?: number;
+  integrated_doc?: {
+    title: string;
+    summary: string;
+    source_count: number;
+    total_length: number;
+    sources: string[];
+  };
+  kb_info?: {
+    kb_id: number;
+    kb_name: string;
+    doc_id: number;
+  };
 }
 
 /**
@@ -70,30 +82,22 @@ export interface ExecuteDownloadRequest {
  * 生成下载计划（阶段1）
  */
 export const generateDownloadPlan = (data: PlanDownloadRequest) => {
-  return request<DownloadPlan>({
-    url: '/api/agent/smart-download/plan',
-    method: 'POST',
-    data,
-  });
+  return request.post<DownloadPlan>('/api/agent/smart-download/plan', data);
 };
 
 /**
  * 执行下载计划（阶段2）
  */
 export const executeDownloadPlan = (data: ExecuteDownloadRequest) => {
-  return request<{ task_id: string; message: string; plan_id: string }>({
-    url: '/api/agent/smart-download/execute',
-    method: 'POST',
-    data,
-  });
+  return request.post<{ task_id: string; message: string; plan_id: string }>(
+    '/api/agent/smart-download/execute',
+    data
+  );
 };
 
 /**
  * 查询下载进度
  */
 export const getDownloadProgress = (taskId: string) => {
-  return request<DownloadProgress>({
-    url: `/api/agent/smart-download/progress/${taskId}`,
-    method: 'GET',
-  });
+  return request.get<DownloadProgress>(`/api/agent/smart-download/progress/${taskId}`);
 };

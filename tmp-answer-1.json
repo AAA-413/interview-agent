@@ -1,1 +1,0 @@
-{"question_index":1,"answer":"ConcurrentHashMap 在 JDK8 通过 CAS 加 synchronized 的方式控制桶级并发，扩容时使用 ForwardingNode 和 sizeCtl 协调多线程迁移，避免 JDK7 分段迁移导致的链表反转和死循环问题。多个线程会协助迁移不同区间，而不是重复搬运同一桶。"}

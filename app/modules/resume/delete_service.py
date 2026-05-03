@@ -9,10 +9,10 @@ logger = logging.getLogger(__name__)
 
 
 class ResumeDeleteService:
-    async def delete_resume(self, db: AsyncSession, resume_id: int) -> None:
+    async def delete_resume(self, db: AsyncSession, resume_id: int, user_id: int = 0) -> None:
         logger.info("收到删除简历请求: id=%d", resume_id)
 
-        entity = await resume_persistence_service.find_by_id_or_throw(db, resume_id)
+        entity = await resume_persistence_service.find_by_id_or_throw(db, resume_id, user_id)
 
         if entity.storage_key:
             try:

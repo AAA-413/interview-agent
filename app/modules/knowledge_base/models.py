@@ -24,6 +24,7 @@ class KnowledgeBaseEntity(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(String(1000))
     file_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)

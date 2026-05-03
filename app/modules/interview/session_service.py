@@ -26,9 +26,9 @@ logger = logging.getLogger(__name__)
 
 
 class InterviewSessionService:
-    async def create_session(self, db: AsyncSession, request: CreateInterviewRequest) -> InterviewSessionDTO:
+    async def create_session(self, db: AsyncSession, request: CreateInterviewRequest, user_id: int = 0) -> InterviewSessionDTO:
         if request.resume_id and not request.force_create:
-            unfinished = await self._find_unfinished_session(db, request.resume_id)
+            unfinished = await self._find_unfinished_session(db, request.resume_id, user_id)
             if unfinished:
                 logger.info("检测到未完成的面试会话: resumeId=%d, sessionId=%s", request.resume_id, unfinished.session_id)
                 return unfinished
@@ -39,7 +39,7 @@ class InterviewSessionService:
 
         logger.info("创建新面试会话: %s, skill: %s, difficulty: %s, questionCount: %d", session_id, skill_id, difficulty, request.question_count)
 
-        historical_questions = await interview_persistence_service.get_historical_questions(db, skill_id, request.resume_id)
+        historical_questions = await interview_persistence_service.get_historical_questions(db, skill_id, request.resume_id, user_id)
 
         chat_model = llm_registry.get_chat_model(request.llm_provider)
 
@@ -63,6 +63,7 @@ class InterviewSessionService:
             llm_provider=request.llm_provider or "dashscope",
             skill_id=skill_id,
             difficulty=difficulty,
+            user_id=user_id,
         )
 
         return InterviewSessionDTO(
@@ -76,8 +77,8 @@ class InterviewSessionService:
             evaluate_error=None,
         )
 
-    async def get_session(self, db: AsyncSession, session_id: str) -> InterviewSessionDTO:
-        entity = await interview_persistence_service.find_by_session_id_or_throw(db, session_id)
+    async def get_session(self, db: AsyncSession, session_id: str, user_id: int = 0) -> InterviewSessionDTO:
+        entity = await interview_persistence_service.find_by_session_id_or_throw(db, session_id, user_id)
         questions = interview_persistence_service.parse_questions_json(entity.questions_json)
 
         for answer in entity.answers:
@@ -95,21 +96,21 @@ class InterviewSessionService:
             evaluate_error=entity.evaluate_error,
         )
 
-    async def get_current_question(self, db: AsyncSession, session_id: str) -> dict:
-        session_dto = await self.get_session(db, session_id)
+    async def get_current_question(self, db: AsyncSession, session_id: str, user_id: int = 0) -> dict:
+        session_dto = await self.get_session(db, session_id, user_id)
 
         if session_dto.current_question_index >= len(session_dto.questions):
             return {"completed": True, "message": "所有问题已回答完毕"}
 
-        entity = await interview_persistence_service.find_by_session_id_or_throw(db, session_id)
+        entity = await interview_persistence_service.find_by_session_id_or_throw(db, session_id, user_id)
         if entity.status == SessionStatus.CREATED:
             await interview_persistence_service.update_session_status(db, session_id, SessionStatus.IN_PROGRESS)
 
         question = session_dto.questions[session_dto.current_question_index]
         return {"completed": False, "question": question.model_dump()}
 
-    async def submit_answer(self, db: AsyncSession, session_id: str, request: SubmitAnswerRequest) -> SubmitAnswerResponse:
-        entity = await interview_persistence_service.find_by_session_id_or_throw(db, session_id)
+    async def submit_answer(self, db: AsyncSession, session_id: str, request: SubmitAnswerRequest, user_id: int = 0) -> SubmitAnswerResponse:
+        entity = await interview_persistence_service.find_by_session_id_or_throw(db, session_id, user_id)
         questions = interview_persistence_service.parse_questions_json(entity.questions_json)
 
         index = request.question_index
@@ -148,8 +149,8 @@ class InterviewSessionService:
             total_questions=len(questions),
         )
 
-    async def save_answer(self, db: AsyncSession, session_id: str, request: SubmitAnswerRequest) -> None:
-        entity = await interview_persistence_service.find_by_session_id_or_throw(db, session_id)
+    async def save_answer(self, db: AsyncSession, session_id: str, request: SubmitAnswerRequest, user_id: int = 0) -> None:
+        entity = await interview_persistence_service.find_by_session_id_or_throw(db, session_id, user_id)
         questions = interview_persistence_service.parse_questions_json(entity.questions_json)
 
         index = request.question_index
@@ -172,8 +173,8 @@ class InterviewSessionService:
 
         logger.info("会话 %s 暂存答案: 问题%d", session_id, index)
 
-    async def complete_interview(self, db: AsyncSession, session_id: str) -> None:
-        entity = await interview_persistence_service.find_by_session_id_or_throw(db, session_id)
+    async def complete_interview(self, db: AsyncSession, session_id: str, user_id: int = 0) -> None:
+        entity = await interview_persistence_service.find_by_session_id_or_throw(db, session_id, user_id)
 
         if entity.status in (SessionStatus.COMPLETED, SessionStatus.EVALUATED):
             raise BusinessException(ErrorCode.INTERVIEW_ALREADY_COMPLETED)
@@ -182,8 +183,8 @@ class InterviewSessionService:
         await self._enqueue_evaluation(db, session_id)
         logger.info("会话 %s 提前交卷，评估任务已入队", session_id)
 
-    async def generate_report(self, db: AsyncSession, session_id: str) -> InterviewReportDTO:
-        entity = await interview_persistence_service.find_by_session_id_or_throw(db, session_id)
+    async def generate_report(self, db: AsyncSession, session_id: str, user_id: int = 0) -> InterviewReportDTO:
+        entity = await interview_persistence_service.find_by_session_id_or_throw(db, session_id, user_id)
 
         if entity.status not in (SessionStatus.COMPLETED, SessionStatus.EVALUATED):
             raise BusinessException(ErrorCode.INTERVIEW_NOT_COMPLETED, "面试尚未完成，无法查看报告")
@@ -292,12 +293,12 @@ class InterviewSessionService:
                 f"评估任务入队失败: {e}",
             )
 
-    async def _find_unfinished_session(self, db: AsyncSession, resume_id: int) -> InterviewSessionDTO | None:
+    async def _find_unfinished_session(self, db: AsyncSession, resume_id: int, user_id: int = 0) -> InterviewSessionDTO | None:
         try:
-            entity = await interview_persistence_service.find_unfinished_session(db, resume_id)
+            entity = await interview_persistence_service.find_unfinished_session(db, resume_id, user_id)
             if entity is None:
                 return None
-            return await self.get_session(db, entity.session_id)
+            return await self.get_session(db, entity.session_id, user_id)
         except Exception as e:
             logger.error("恢复未完成会话失败: %s", e)
             return None

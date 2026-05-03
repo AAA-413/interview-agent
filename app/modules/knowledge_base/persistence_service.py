@@ -30,12 +30,15 @@ class KnowledgeBasePersistenceService(BasePersistenceService[KnowledgeBaseEntity
         result = await db.execute(select(KnowledgeBaseEntity).where(KnowledgeBaseEntity.file_hash == file_hash))
         return result.scalar_one_or_none()
 
-    async def find_all(self, db: AsyncSession) -> list[KnowledgeBaseEntity]:
-        result = await db.execute(select(KnowledgeBaseEntity).order_by(KnowledgeBaseEntity.created_at.desc()))
+    async def find_all(self, db: AsyncSession, user_id: int | None = None) -> list[KnowledgeBaseEntity]:
+        query = select(KnowledgeBaseEntity).order_by(KnowledgeBaseEntity.created_at.desc())
+        if user_id is not None:
+            query = query.where(KnowledgeBaseEntity.user_id == user_id)
+        result = await db.execute(query)
         return list(result.scalars().all())
 
-    async def delete(self, db: AsyncSession, kb_id: int) -> KnowledgeBaseEntity:
-        entity = await self.find_by_id_or_throw(db, kb_id)
+    async def delete(self, db: AsyncSession, kb_id: int, user_id: int | None = None) -> KnowledgeBaseEntity:
+        entity = await self.find_by_id_or_throw(db, kb_id, user_id)
         await db.delete(entity)
         await db.flush()
         return entity

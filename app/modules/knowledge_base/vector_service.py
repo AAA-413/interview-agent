@@ -201,7 +201,7 @@ class KnowledgeBaseVectorService:
             response = self._text_embedding.call(
                 model='text-embedding-v2',
                 input=text,
-                api_key=settings.ai.bailian_api_key
+                api_key=settings.ai.embedding_api_key or settings.ai.bailian_api_key
             )
 
             if response.status_code == 200:
@@ -220,14 +220,19 @@ class KnowledgeBaseVectorService:
             raise EmbeddingFailedException(f"向量化服务异常: {str(e)}")
 
     def _embed_with_hash(self, text: str) -> list[float]:
-        """降级方案：使用 SHA-256 哈希生成向量"""
-        digest = hashlib.sha256(text.encode("utf-8")).digest()
-        values = []
-        for index in range(16):  # 哈希向量固定 16 维
-            start = index * 2
-            segment = digest[start : start + 2]
-            number = int.from_bytes(segment, byteorder="big", signed=False)
-            values.append((number / 65535.0) * 2 - 1)
+        """降级方案：使用 SHA-256 哈希生成 1536 维向量（与 pgvector 列定义匹配）"""
+        values: list[float] = []
+        round_index = 0
+        while len(values) < EMBEDDING_DIMENSIONS:
+            seed = f"{text}:{round_index}".encode("utf-8")
+            digest = hashlib.sha256(seed).digest()
+            for i in range(0, len(digest) - 1, 2):
+                if len(values) >= EMBEDDING_DIMENSIONS:
+                    break
+                segment = digest[i : i + 2]
+                number = int.from_bytes(segment, byteorder="big", signed=False)
+                values.append((number / 65535.0) * 2 - 1)
+            round_index += 1
         return values
 
     def _build_chunk(self, chunk_index: int, content: str, start: int) -> ChunkBuildResult:

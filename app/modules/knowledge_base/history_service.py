@@ -10,20 +10,20 @@ logger = logging.getLogger(__name__)
 
 
 class KnowledgeBaseHistoryService:
-    async def get_list(self, db: AsyncSession) -> list[KnowledgeBaseListItemDTO]:
-        entities = await knowledge_base_persistence_service.find_all(db)
+    async def get_list(self, db: AsyncSession, user_id: int) -> list[KnowledgeBaseListItemDTO]:
+        entities = await knowledge_base_persistence_service.find_all(db, user_id=user_id)
         return [knowledge_base_persistence_service.to_list_item_dto(entity) for entity in entities]
 
-    async def get_detail(self, db: AsyncSession, kb_id: int) -> KnowledgeBaseDetailDTO:
-        entity = await knowledge_base_persistence_service.find_by_id_or_throw(db, kb_id)
+    async def get_detail(self, db: AsyncSession, kb_id: int, user_id: int) -> KnowledgeBaseDetailDTO:
+        entity = await knowledge_base_persistence_service.find_by_id_or_throw(db, kb_id, user_id)
         return knowledge_base_persistence_service.to_detail_dto(entity)
 
 
 class KnowledgeBaseDeleteService:
-    async def delete(self, db: AsyncSession, kb_id: int) -> None:
-        entity = await knowledge_base_persistence_service.find_by_id_or_throw(db, kb_id)
+    async def delete(self, db: AsyncSession, kb_id: int, user_id: int = 0) -> None:
+        entity = await knowledge_base_persistence_service.find_by_id_or_throw(db, kb_id, user_id)
         storage_key = entity.storage_key
-        await knowledge_base_persistence_service.delete(db, kb_id)
+        await knowledge_base_persistence_service.delete(db, kb_id, user_id)
         if storage_key:
             await file_storage_service.delete_file(storage_key)
 

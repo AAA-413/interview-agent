@@ -16,14 +16,14 @@ class InterviewQuestionDTO(BaseModel):
 
 class CreateInterviewRequest(BaseModel):
     resume_id: int | None = None
-    resume_text: str | None = None
+    resume_text: str | None = Field(default=None, max_length=50000)
     skill_id: str | None = None
     difficulty: str | None = None
-    question_count: int = 8
+    question_count: int = Field(default=8, ge=1, le=20)
     force_create: bool = False
     llm_provider: str | None = None
     custom_categories: list["CategoryDTO"] | None = None
-    jd_text: str | None = None
+    jd_text: str | None = Field(default=None, max_length=10000)
 
 
 class CategoryDTO(BaseModel):
@@ -66,7 +66,7 @@ class InterviewSessionDTO(BaseModel):
 
 class SubmitAnswerRequest(BaseModel):
     question_index: int
-    answer: str
+    answer: str = Field(..., min_length=1, max_length=10000)
 
 
 class SubmitAnswerResponse(BaseModel):

@@ -2,21 +2,28 @@
 智能下载知识库路由 - 两阶段流程
 """
 
+import json
 import logging
 import os
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from app.modules.auth.dependencies import get_current_user_id
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.common.ai.llm_provider import llm_registry
+from app.infrastructure.redis.redis_service import RedisService, get_redis
 from app.modules.agent_orchestration.orchestrator import AgentOrchestrator
 from app.modules.agent_orchestration.agents.planning_agent import PlanningAgent
 from app.modules.knowledge_base.rag_service import KnowledgeBaseRagService
 
 logger = logging.getLogger(__name__)
+
+REDIS_PLAN_PREFIX = "smart_download:plan:"
+REDIS_TASK_PREFIX = "smart_download:task:"
+STATE_TTL_SECONDS = 3600
 
 router = APIRouter(prefix="/api/agent/smart-download")
 
@@ -73,13 +80,31 @@ class DownloadProgress(BaseModel):
     kb_info: Optional[Dict[str, Any]] = None
 
 
-# ============ 全局状态管理 ============
+# ============ Redis 状态管理 ============
 
-# 存储下载计划（生产环境应使用Redis）
-_download_plans: Dict[str, Dict[str, Any]] = {}
+async def _save_plan(plan_id: str, plan_data: dict) -> None:
+    redis = await get_redis()
+    svc = RedisService(redis)
+    await svc.set(REDIS_PLAN_PREFIX + plan_id, json.dumps(plan_data, ensure_ascii=False), ex=STATE_TTL_SECONDS)
 
-# 存储下载任务进度
-_download_tasks: Dict[str, DownloadProgress] = {}
+async def _get_plan(plan_id: str) -> dict | None:
+    redis = await get_redis()
+    svc = RedisService(redis)
+    raw = await svc.get(REDIS_PLAN_PREFIX + plan_id)
+    return json.loads(raw) if raw else None
+
+async def _save_task_progress(task_id: str, progress: DownloadProgress) -> None:
+    redis = await get_redis()
+    svc = RedisService(redis)
+    await svc.set(REDIS_TASK_PREFIX + task_id, json.dumps(progress.model_dump(), ensure_ascii=False, default=str), ex=STATE_TTL_SECONDS)
+
+async def _get_task_progress(task_id: str) -> DownloadProgress | None:
+    redis = await get_redis()
+    svc = RedisService(redis)
+    raw = await svc.get(REDIS_TASK_PREFIX + task_id)
+    if not raw:
+        return None
+    return DownloadProgress(**json.loads(raw))
 
 
 # ============ API 端点 ============
@@ -87,6 +112,7 @@ _download_tasks: Dict[str, DownloadProgress] = {}
 @router.post("/plan", response_model=DownloadPlan)
 async def generate_download_plan(
     request: PlanDownloadRequest,
+    user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -148,7 +174,7 @@ async def generate_download_plan(
             total_steps=len(steps),
         )
 
-        _download_plans[plan_id] = plan.model_dump()
+        await _save_plan(plan_id, plan.model_dump())
 
         logger.info(f"Plan generated successfully: {len(steps)} steps")
         return plan
@@ -162,6 +188,7 @@ async def generate_download_plan(
 async def execute_download_plan(
     request: ExecuteDownloadRequest,
     background_tasks: BackgroundTasks,
+    user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -174,10 +201,9 @@ async def execute_download_plan(
     """
     try:
         # 检查计划是否存在
-        if request.plan_id not in _download_plans:
+        plan = await _get_plan(request.plan_id)
+        if plan is None:
             raise HTTPException(status_code=404, detail="计划不存在")
-
-        plan = _download_plans[request.plan_id]
 
         # 创建任务ID
         import uuid
@@ -194,7 +220,7 @@ async def execute_download_plan(
             retry_count=0,
             downloaded_files=[],
         )
-        _download_tasks[task_id] = progress
+        await _save_task_progress(task_id, progress)
 
         # 后台执行下载任务
         background_tasks.add_task(
@@ -204,6 +230,7 @@ async def execute_download_plan(
             kb_id=request.kb_id,
             kb_name=request.kb_name,
             kb_description=request.kb_description,
+            user_id=user_id,
         )
 
         logger.info(f"[START] Start download task: {task_id}")
@@ -228,10 +255,11 @@ async def get_download_progress(task_id: str):
 
     前端可以轮询此接口获取实时进度
     """
-    if task_id not in _download_tasks:
+    progress = await _get_task_progress(task_id)
+    if progress is None:
         raise HTTPException(status_code=404, detail="任务不存在")
 
-    return _download_tasks[task_id]
+    return progress
 
 
 # ============ 辅助函数 ============
@@ -294,6 +322,7 @@ async def _execute_download_with_retry(
     kb_name: Optional[str],
     kb_description: Optional[str],
     max_retries: int = 3,
+    user_id: int = 0,
 ):
     """
     Execute download task（支持重试和动态任务生成）
@@ -305,7 +334,10 @@ async def _execute_download_with_retry(
     4. Summary: 生成报告
     """
     logger.info("后台任务开始: task_id=%s", task_id)
-    progress = _download_tasks[task_id]
+    progress = await _get_task_progress(task_id)
+    if progress is None:
+        logger.error("任务进度不存在: task_id=%s", task_id)
+        return
 
     try:
         from app.common.mcp.mcp_service import MCPService
@@ -344,6 +376,7 @@ async def _execute_download_with_retry(
                     progress.current_step = i + 1
                     progress.progress_percent = int((i + 1) / len(all_steps) * 50)  # 前50%用于初始任务
                     progress.message = f"正在执行: {step['description']}"
+                    await _save_task_progress(task_id, progress)
 
                     # 根据任务类型选择Agent
                     if step.get("action") in ["search_github", "fetch_github_repo", "fetch_github_file"]:
@@ -440,6 +473,7 @@ async def _execute_download_with_retry(
 
                 logger.info("质量检查完成: task_id=%s, score=%.2f, passed=%s", task_id, quality_result['score'], quality_result['passed'])
                 progress.quality_score = quality_result["score"] / 100.0  # 转换为0-1范围
+                await _save_task_progress(task_id, progress)
 
                 # 如果质量合格，跳出重试循环
                 if quality_result["passed"]:
@@ -469,6 +503,7 @@ async def _execute_download_with_retry(
         progress.status = "summarizing"
         progress.progress_percent = 85
         progress.message = "正在整合内容..."
+        await _save_task_progress(task_id, progress)
 
         # 整合所有内容为一篇文档
         integrated_doc = None
@@ -523,6 +558,7 @@ async def _execute_download_with_retry(
         progress.status = "indexing"
         progress.progress_percent = 90
         progress.message = "正在添加到知识库..."
+        await _save_task_progress(task_id, progress)
 
         kb_result = None
         try:
@@ -535,6 +571,7 @@ async def _execute_download_with_retry(
                 kb_id=kb_id,
                 kb_name=kb_name,
                 kb_description=kb_description,
+                user_id=user_id,
             )
 
             logger.info(f"[KB] _add_to_knowledge_base returned: {kb_result}")
@@ -543,6 +580,7 @@ async def _execute_download_with_retry(
             logger.error(f"[ERROR] Failed to add to knowledge base: {e}", exc_info=True)
             progress.status = "failed"
             progress.message = f"Failed to add to knowledge base: {str(e)}"
+            await _save_task_progress(task_id, progress)
             return
 
         # 完成
@@ -581,11 +619,13 @@ async def _execute_download_with_retry(
         })
 
         logger.info("下载任务完成: task_id=%s", task_id)
+        await _save_task_progress(task_id, progress)
 
     except Exception as e:
         logger.error("下载任务失败: task_id=%s, error=%s", task_id, e, exc_info=True)
         progress.status = "failed"
         progress.message = f"下载失败: {str(e)}"
+        await _save_task_progress(task_id, progress)
 
 
 async def _check_download_quality(
@@ -637,6 +677,7 @@ async def _add_to_knowledge_base(
     kb_id: Optional[int],
     kb_name: Optional[str],
     kb_description: Optional[str],
+    user_id: int = 0,
 ) -> Dict[str, Any]:
     """
     将整合后的文档添加到知识库
@@ -666,6 +707,7 @@ async def _add_to_knowledge_base(
             file_hash = hashlib.sha256(content.encode()).hexdigest()
 
             kb = KnowledgeBaseEntity(
+                user_id=user_id,
                 name=kb_name,
                 description=kb_description,
                 file_hash=file_hash,

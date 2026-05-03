@@ -11,9 +11,11 @@ class ResumeEntity(Base):
     __tablename__ = "resumes"
     __table_args__ = (
         Index("idx_resume_hash", "file_hash", unique=True),
+        Index("idx_resume_user_id", "user_id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     file_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     original_filename: Mapped[str] = mapped_column(String(500), nullable=False)
     file_size: Mapped[int | None] = mapped_column(BigInteger)

@@ -23,6 +23,7 @@ class KnowledgeBaseFetchService:
         name: str | None = None,
         description: str | None = None,
         max_length: int = 50000,
+        user_id: int = 0,
     ) -> KnowledgeBaseEntity:
         """
         从 URL 抓取文档并创建知识库
@@ -51,6 +52,7 @@ class KnowledgeBaseFetchService:
 
         # 创建知识库实体
         entity = KnowledgeBaseEntity(
+            user_id=user_id,
             name=final_name,
             description=final_description,
             file_hash=url,  # 使用 URL 作为哈希

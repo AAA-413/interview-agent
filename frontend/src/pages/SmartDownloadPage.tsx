@@ -21,9 +21,11 @@ const SmartDownloadPage: React.FC = () => {
 
   // 阶段控制
   const [stage, setStage] = useState<'input' | 'plan' | 'executing'>('input');
+  const [inputMode, setInputMode] = useState<'description' | 'urls'>('description');
 
   // 阶段1：用户输入
   const [userInput, setUserInput] = useState('');
+  const [urlList, setUrlList] = useState('');
   const [maxDownloads, setMaxDownloads] = useState(10);
   const [kbId, setKbId] = useState<number | undefined>(undefined);
   const [loading, setLoading] = useState(false);
@@ -39,15 +41,20 @@ const SmartDownloadPage: React.FC = () => {
 
   // 生成下载计划
   const handleGeneratePlan = async () => {
-    if (!userInput.trim()) {
+    if (inputMode === 'description' && !userInput.trim()) {
       alert('请输入您的需求');
+      return;
+    }
+
+    if (inputMode === 'urls' && !urlList.trim()) {
+      alert('请输入URL列表');
       return;
     }
 
     setLoading(true);
     try {
       const result = await generateDownloadPlan({
-        user_input: userInput,
+        user_input: inputMode === 'description' ? userInput : `直接下载以下URL:\n${urlList}`,
         max_downloads: maxDownloads,
         kb_id: kbId,
       });
@@ -124,6 +131,7 @@ const SmartDownloadPage: React.FC = () => {
   const handleReset = () => {
     setStage('input');
     setUserInput('');
+    setUrlList('');
     setPlan(null);
     setTaskId(null);
     setProgress(null);
@@ -149,42 +157,86 @@ const SmartDownloadPage: React.FC = () => {
       <div className="bg-white rounded-lg shadow-md p-6">
         <h2 className="text-2xl font-bold mb-6">智能下载知识库</h2>
 
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            描述您的需求
-          </label>
-          <textarea
-            value={userInput}
-            onChange={(e) => setUserInput(e.target.value)}
-            placeholder="例如：我想学习 FastAPI 框架，帮我下载官方文档和优质教程"
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            rows={4}
-          />
-          <p className="mt-2 text-sm text-gray-500">
-            支持：官方文档、CSDN、掘金、知乎、Medium 等知名博客
-          </p>
+        {/* 输入模式切换 */}
+        <div className="mb-6 flex gap-4">
+          <button
+            onClick={() => setInputMode('description')}
+            className={`flex-1 py-2 px-4 rounded-lg transition-colors ${
+              inputMode === 'description'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            }`}
+          >
+            📝 描述需求（智能搜索）
+          </button>
+          <button
+            onClick={() => setInputMode('urls')}
+            className={`flex-1 py-2 px-4 rounded-lg transition-colors ${
+              inputMode === 'urls'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            }`}
+          >
+            🔗 直接输入URL
+          </button>
         </div>
 
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            最大下载数量
-          </label>
-          <input
-            type="number"
-            value={maxDownloads}
-            onChange={(e) => setMaxDownloads(Number(e.target.value))}
-            min={1}
-            max={20}
-            className="w-32 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-          />
-          <p className="mt-2 text-sm text-gray-500">
-            建议 5-10 个，避免下载过多
-          </p>
-        </div>
+        {inputMode === 'description' ? (
+          <>
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                描述您的需求
+              </label>
+              <textarea
+                value={userInput}
+                onChange={(e) => setUserInput(e.target.value)}
+                placeholder="例如：我想学习 FastAPI 框架，帮我下载官方文档和优质教程"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                rows={4}
+              />
+              <p className="mt-2 text-sm text-gray-500">
+                支持：官方文档、CSDN、掘金、知乎、Medium 等知名博客
+              </p>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                最大下载数量
+              </label>
+              <input
+                type="number"
+                value={maxDownloads}
+                onChange={(e) => setMaxDownloads(Number(e.target.value))}
+                min={1}
+                max={20}
+                className="w-32 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="mt-2 text-sm text-gray-500">
+                建议 5-10 个，避免下载过多
+              </p>
+            </div>
+          </>
+        ) : (
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              输入URL列表（每行一个）
+            </label>
+            <textarea
+              value={urlList}
+              onChange={(e) => setUrlList(e.target.value)}
+              placeholder="https://fastapi.tiangolo.com/&#10;https://docs.python.org/3/&#10;https://www.example.com/tutorial"
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm"
+              rows={8}
+            />
+            <p className="mt-2 text-sm text-gray-500">
+              💡 直接下载模式不依赖搜索引擎，适合已知资源地址的场景
+            </p>
+          </div>
+        )}
 
         <button
           onClick={handleGeneratePlan}
-          disabled={loading || !userInput.trim()}
+          disabled={loading || (inputMode === 'description' ? !userInput.trim() : !urlList.trim())}
           className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
         >
           {loading ? '正在生成计划...' : '生成下载计划'}
@@ -343,30 +395,47 @@ const SmartDownloadPage: React.FC = () => {
             )}
           </div>
 
-          {progress.downloaded_files.length > 0 && (
+          {progress.integrated_doc && (
             <div className="mb-6">
-              <h3 className="text-lg font-semibold mb-3">已下载文件</h3>
-              <div className="space-y-2">
-                {progress.downloaded_files.map((file, index) => (
-                  <div key={index} className="p-3 bg-gray-50 rounded-lg">
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-gray-700">{file.description}</span>
-                      <span className="text-xs text-gray-500">
-                        {(file.size / 1024).toFixed(1)} KB
-                      </span>
-                    </div>
-                  </div>
-                ))}
+              <h3 className="text-lg font-semibold mb-3">📄 整合文档</h3>
+              <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <h4 className="font-semibold text-blue-900 mb-2">
+                  {progress.integrated_doc.title}
+                </h4>
+                <p className="text-sm text-blue-800 mb-3">
+                  {progress.integrated_doc.summary}
+                </p>
+                <div className="flex gap-4 text-xs text-blue-700">
+                  <span>📚 来源: {progress.integrated_doc.source_count} 个</span>
+                  <span>📝 字数: {progress.integrated_doc.total_length.toLocaleString()}</span>
+                </div>
+                {progress.integrated_doc.sources && progress.integrated_doc.sources.length > 0 && (
+                  <details className="mt-3">
+                    <summary className="text-xs text-blue-600 cursor-pointer hover:underline">
+                      查看来源列表
+                    </summary>
+                    <ul className="mt-2 space-y-1 text-xs text-blue-700">
+                      {progress.integrated_doc.sources.map((source: string, idx: number) => (
+                        <li key={idx} className="truncate">• {source}</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
               </div>
             </div>
           )}
 
           {progress.status === 'completed' && (
             <div className="p-4 bg-green-50 border border-green-200 rounded-lg mb-4">
-              <p className="text-green-800 font-semibold">✅ 下载完成！</p>
+              <p className="text-green-800 font-semibold">✅ 整合完成！</p>
               <p className="text-sm text-green-700 mt-1">
-                成功下载 {progress.downloaded_files.length} 个文件
+                已将 {progress.integrated_doc?.source_count || 0} 个来源整合为知识文档
               </p>
+              {progress.kb_info && (
+                <p className="text-sm text-green-700 mt-1">
+                  💾 已保存到知识库: {progress.kb_info.kb_name}
+                </p>
+              )}
             </div>
           )}
 

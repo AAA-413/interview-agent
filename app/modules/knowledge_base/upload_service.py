@@ -28,8 +28,9 @@ class KnowledgeBaseUploadService:
         content_type: str | None,
         name: str | None,
         description: str | None,
+        user_id: int = 0,
     ) -> KnowledgeBaseEntity:
-        file_validation_service.validate_file(
+        safe_filename = file_validation_service.validate_file(
             file_bytes=file_bytes,
             filename=filename,
             content_type=content_type,
@@ -44,14 +45,15 @@ class KnowledgeBaseUploadService:
             logger.info("知识库文档已存在(哈希去重): id=%d", existing.id)
             return existing
 
-        storage_key, storage_url = await file_storage_service.upload_knowledge_base(file_bytes, filename, content_type)
+        storage_key, storage_url = await file_storage_service.upload_knowledge_base(file_bytes, safe_filename, content_type)
         source_text = await document_parse_service.parse_content(file_bytes, filename)
 
         entity = KnowledgeBaseEntity(
-            name=(name or filename).strip() or filename,
+            user_id=user_id,
+            name=(name or safe_filename).strip() or safe_filename,
             description=description,
             file_hash=file_hash,
-            original_filename=filename,
+            original_filename=safe_filename,
             file_size=len(file_bytes),
             content_type=content_type,
             storage_key=storage_key,
@@ -71,8 +73,8 @@ class KnowledgeBaseUploadService:
 
         return entity
 
-    async def reindex(self, db: AsyncSession, kb_id: int) -> KnowledgeBaseEntity:
-        entity = await knowledge_base_persistence_service.find_by_id_or_throw(db, kb_id)
+    async def reindex(self, db: AsyncSession, kb_id: int, user_id: int = 0) -> KnowledgeBaseEntity:
+        entity = await knowledge_base_persistence_service.find_by_id_or_throw(db, kb_id, user_id)
         if not entity.source_text:
             raise BusinessException(ErrorCode.KNOWLEDGE_BASE_UPLOAD_FAILED, "知识库文本为空，无法重新索引")
         await knowledge_base_persistence_service.update_index_status(db, kb_id, AsyncTaskStatus.PENDING, None)

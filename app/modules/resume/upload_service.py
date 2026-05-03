@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 
 class ResumeUploadService:
-    async def upload(self, db: AsyncSession, file_bytes: bytes, filename: str, content_type: str | None) -> ResumeEntity:
-        file_validation_service.validate_file(
+    async def upload(self, db: AsyncSession, file_bytes: bytes, filename: str, content_type: str | None, user_id: int = 0) -> ResumeEntity:
+        safe_filename = file_validation_service.validate_file(
             file_bytes=file_bytes,
             filename=filename,
             content_type=content_type,
@@ -38,12 +38,13 @@ class ResumeUploadService:
             logger.info("简历已存在(哈希去重): id=%d", existing.id)
             return existing
 
-        storage_key, storage_url = await file_storage_service.upload_resume(file_bytes, filename, content_type)
+        storage_key, storage_url = await file_storage_service.upload_resume(file_bytes, safe_filename, content_type)
         resume_text = await document_parse_service.parse_content(file_bytes, filename)
 
         entity = ResumeEntity(
+            user_id=user_id,
             file_hash=file_hash,
-            original_filename=filename,
+            original_filename=safe_filename,
             file_size=len(file_bytes),
             content_type=content_type,
             storage_key=storage_key,
@@ -61,8 +62,8 @@ class ResumeUploadService:
 
         return entity
 
-    async def reanalyze(self, db: AsyncSession, resume_id: int) -> None:
-        entity = await resume_persistence_service.find_by_id_or_throw(db, resume_id)
+    async def reanalyze(self, db: AsyncSession, resume_id: int, user_id: int = 0) -> None:
+        entity = await resume_persistence_service.find_by_id_or_throw(db, resume_id, user_id)
 
         if not entity.resume_text:
             raise BusinessException(ErrorCode.RESUME_PARSE_FAILED, "简历文本为空，无法重新分析")

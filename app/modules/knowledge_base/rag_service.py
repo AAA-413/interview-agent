@@ -119,12 +119,63 @@ class KnowledgeBaseRagService:
         session_id: str | None = None,
         top_k: int = 4,
     ) -> AsyncIterator[str]:
-        result = await self.ask(db, kb_id=kb_id, question=question, session_id=session_id, top_k=top_k)
-        yield self._sse_event("meta", {"session_id": result.session_id, "rewritten_query": result.rewritten_query})
-        for part in self._split_answer(result.answer):
-            yield self._sse_event("chunk", {"content": part})
-        yield self._sse_event("references", {"items": [item.model_dump() for item in result.references]})
-        yield self._sse_event("done", {"answer": result.answer})
+        kb = await knowledge_base_persistence_service.find_by_id_or_throw(db, kb_id)
+        if kb.index_status != AsyncTaskStatus.COMPLETED:
+            raise BusinessException(ErrorCode.KNOWLEDGE_BASE_QUERY_FAILED, "知识库尚未完成索引，暂时无法问答")
+
+        resolved_session_id = session_id or uuid.uuid4().hex
+        rewritten_query = await self._rewrite_query(question)
+        chat = await knowledge_base_persistence_service.create_chat(
+            db, kb_id=kb_id, session_id=resolved_session_id, question=question, rewritten_query=rewritten_query,
+        )
+
+        try:
+            if self.retrieval_engine is None:
+                vector_channel = VectorSearchChannel(self, knowledge_base_vector_service, db)
+                self.retrieval_engine = MultiChannelRetrievalEngine([vector_channel])
+
+            query_embedding = knowledge_base_vector_service.embed_text(rewritten_query)
+            context = SearchContext(
+                question=question, kb_id=kb_id, top_k=top_k * 2,
+                query_embedding=query_embedding, rewritten_query=rewritten_query,
+            )
+            candidates = await self.retrieval_engine.retrieve(context)
+            references = await self.rerank_service.rerank(question, candidates, top_k)
+
+            yield self._sse_event("meta", {"session_id": resolved_session_id, "rewritten_query": rewritten_query})
+            yield self._sse_event("references", {"items": [item.model_dump() for item in references]})
+
+            if not references:
+                answer = "未在知识库中检索到足够相关的内容，当前无法给出可靠答案。"
+                yield self._sse_event("chunk", {"content": answer})
+                yield self._sse_event("done", {"answer": answer})
+                await knowledge_base_persistence_service.complete_chat(
+                    db, chat_id=chat.id, rewritten_query=rewritten_query, answer=answer, references=[],
+                )
+                await db.flush()
+                return
+
+            prompt = self._build_answer_prompt(question, rewritten_query, references)
+            answer_parts: list[str] = []
+            async for token in llm_registry.default.astream(
+                [SystemMessage(content=ANSWER_SYSTEM_PROMPT), HumanMessage(content=prompt)]
+            ):
+                chunk_text = token.content if hasattr(token, "content") and token.content else ""
+                if chunk_text:
+                    answer_parts.append(chunk_text)
+                    yield self._sse_event("chunk", {"content": chunk_text})
+
+            answer = "".join(answer_parts).strip() or "未能生成回答。"
+            yield self._sse_event("done", {"answer": answer})
+
+            reference_payload = [ref.model_dump() for ref in references]
+            await knowledge_base_persistence_service.complete_chat(
+                db, chat_id=chat.id, rewritten_query=rewritten_query, answer=answer, references=reference_payload,
+            )
+            await db.flush()
+        except Exception as e:
+            await knowledge_base_persistence_service.fail_chat(db, chat_id=chat.id, error_message=str(e))
+            raise
 
     async def list_chats(self, db: AsyncSession, kb_id: int):
         await knowledge_base_persistence_service.find_by_id_or_throw(db, kb_id)
@@ -154,19 +205,7 @@ class KnowledgeBaseRagService:
         if not references:
             return "未在知识库中检索到足够相关的内容，当前无法给出可靠答案。"
 
-        context_parts = []
-        for index, item in enumerate(references, start=1):
-            context_parts.append(
-                f"[片段{index}] 标题: {item.title or '未命名'}\n"
-                f"相关度: {item.score:.4f}\n"
-                f"内容: {item.content_preview}"
-            )
-        prompt = (
-            f"用户问题：{question}\n"
-            f"检索查询：{rewritten_query}\n\n"
-            f"参考片段：\n{chr(10).join(context_parts)}\n\n"
-            "请基于这些片段回答，并在结尾简短说明依据来自哪些片段。"
-        )
+        prompt = self._build_answer_prompt(question, rewritten_query, references)
         try:
             response = await llm_registry.default.ainvoke(
                 [
@@ -182,6 +221,24 @@ class KnowledgeBaseRagService:
 
         summary_lines = [f"- {item.content_preview}" for item in references]
         return "根据知识库检索结果，相关内容包括：\n" + "\n".join(summary_lines)
+
+    @staticmethod
+    def _build_answer_prompt(
+        question: str, rewritten_query: str, references: list[RagReferenceDTO],
+    ) -> str:
+        context_parts = []
+        for index, item in enumerate(references, start=1):
+            context_parts.append(
+                f"[片段{index}] 标题: {item.title or '未命名'}\n"
+                f"相关度: {item.score:.4f}\n"
+                f"内容: {item.content_preview}"
+            )
+        return (
+            f"用户问题：{question}\n"
+            f"检索查询：{rewritten_query}\n\n"
+            f"参考片段：\n{chr(10).join(context_parts)}\n\n"
+            "请基于这些片段回答，并在结尾简短说明依据来自哪些片段。"
+        )
 
     def _search_chunks(
         self,

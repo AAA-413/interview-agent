@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 
@@ -7,6 +8,8 @@ from app.common.model import AsyncTaskStatus
 from app.infrastructure.redis.redis_service import RedisService
 
 logger = logging.getLogger(__name__)
+
+TASK_TIMEOUT_SECONDS = 300  # 5 分钟超时
 
 
 class StreamTaskProducer:
@@ -61,9 +64,16 @@ class StreamTaskHandler(ABC):
         async with self._session_factory() as db:
             try:
                 await self.update_status(db, raw, AsyncTaskStatus.PROCESSING)
-                await self.process(db, raw)
+                await asyncio.wait_for(self.process(db, raw), timeout=TASK_TIMEOUT_SECONDS)
                 await db.commit()
                 logger.info("任务处理完成: %s=%s", self.field_name, raw)
+            except asyncio.TimeoutError:
+                await db.rollback()
+                error_msg = f"任务处理超时（{TASK_TIMEOUT_SECONDS}秒）"
+                logger.error("任务超时: %s=%s", self.field_name, raw)
+                async with self._session_factory() as failed_db:
+                    await self.update_status(failed_db, raw, AsyncTaskStatus.FAILED, error_msg)
+                    await failed_db.commit()
             except Exception as e:
                 await db.rollback()
                 logger.error("任务处理失败: %s=%s, error=%s", self.field_name, raw, e)

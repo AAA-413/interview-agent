@@ -4,7 +4,7 @@
 
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,17 @@ from app.modules.auth.security import decode_access_token
 
 # HTTP Bearer Token 认证
 security = HTTPBearer()
+
+
+async def get_current_user_id(request: Request) -> int:
+    """从中间件解析的 request.state 中获取当前用户 ID（不查数据库）。"""
+    user_id = getattr(request.state, "user_id", None)
+    if user_id is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未提供认证凭证")
+    try:
+        return int(user_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的用户凭证")
 
 
 async def get_current_user(

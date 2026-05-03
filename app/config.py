@@ -34,13 +34,14 @@ class AiSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AI_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     bailian_api_key: str = ""
-    model: str = "qwen-plus"
-    base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model: str = "deepseek-chat"
+    base_url: str = "https://api.deepseek.com"
     temperature: float = 0.2
     structured_max_attempts: int = 2
     structured_include_last_error: bool = True
     structured_retry_use_repair_prompt: bool = True
-    embedding_model: str = "text-embedding-v3"
+    embedding_model: str = "text-embedding-v2"
+    embedding_api_key: str = ""  # Embedding API 单独配置（默认使用 bailian_api_key）
 
 
 class StorageSettings(BaseSettings):
