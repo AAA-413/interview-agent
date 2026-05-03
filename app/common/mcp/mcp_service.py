@@ -26,6 +26,10 @@ class MCPService:
             document_fetcher: 文档抓取器（已有的 DocumentFetcher）
         """
         self.document_fetcher = document_fetcher
+        if not self.document_fetcher:
+            # 使用全局实例
+            from app.common.tools.document_fetcher import document_fetcher as global_fetcher
+            self.document_fetcher = global_fetcher
 
     async def fetch_url(self, url: str, max_length: int = 10000) -> Dict[str, Any]:
         """
@@ -46,14 +50,21 @@ class MCPService:
 
         if self.document_fetcher:
             # 使用已有的 DocumentFetcher
-            content = await self.document_fetcher.fetch(url, max_length=max_length)
+            result = await self.document_fetcher.fetch(url, raw=False)
+
+            content = result.get("content", "")
+            if max_length and len(content) > max_length:
+                content = content[:max_length] + "\n\n[内容已截断...]"
+
             return {
                 "content": content,
+                "title": result.get("title", ""),
                 "file_path": None,
                 "metadata": {
                     "url": url,
                     "source": "web",
                     "max_length": max_length,
+                    "title": result.get("title", ""),
                 },
             }
         else:
@@ -78,15 +89,68 @@ class MCPService:
         """
         logger.info(f"🔍 搜索网页: {query}")
 
-        # TODO: 集成搜索引擎 API（Google, Bing, DuckDuckGo）
-        # 这里先返回模拟数据
+        try:
+            # 使用真实搜索服务
+            from app.common.tools.search_service import search_service
+            import os
+
+            # 从环境变量读取搜索引擎配置
+            engine = os.getenv("SEARCH_ENGINE", "tavily")
+
+            result = await search_service.search(
+                query=query,
+                num_results=num_results,
+                engine=engine,
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"搜索失败: {e}")
+            # 降级到模拟搜索
+            return await self._mock_search(query, num_results)
+
+    async def _mock_search(self, query: str, num_results: int) -> Dict[str, Any]:
+        """模拟搜索（降级方案）"""
+        logger.warning("⚠️ 使用模拟搜索结果")
+
+        mock_results = [
+            {
+                "title": f"{query} - 官方文档",
+                "url": f"https://example.com/{query.replace(' ', '-')}/docs",
+                "snippet": f"这是关于 {query} 的官方文档，包含详细的使用说明和API参考...",
+            },
+            {
+                "title": f"{query} 入门教程",
+                "url": f"https://example.com/tutorial/{query.replace(' ', '-')}",
+                "snippet": f"本教程将带你快速入门 {query}，从基础概念到实战应用...",
+            },
+            {
+                "title": f"{query} 最佳实践",
+                "url": f"https://example.com/best-practices/{query.replace(' ', '-')}",
+                "snippet": f"总结了 {query} 开发中的最佳实践和常见陷阱...",
+            },
+        ][:num_results]
+
+        # 合并搜索结果内容
+        content_parts = []
+        for i, result in enumerate(mock_results, 1):
+            content_parts.append(
+                f"## 结果 {i}: {result['title']}\n\n"
+                f"{result['snippet']}\n\n"
+                f"来源: {result['url']}"
+            )
+
+        content = "\n\n---\n\n".join(content_parts)
+
         return {
-            "content": f"搜索结果：{query}（待实现）",
-            "results": [],
+            "content": content,
+            "results": mock_results,
             "metadata": {
                 "query": query,
                 "num_results": num_results,
-                "source": "search",
+                "source": "mock",
+                "is_mock": True,
             },
         }
 
@@ -187,10 +251,14 @@ class MCPService:
 
         # 使用 DocumentFetcher 抓取（已支持通用网页）
         if self.document_fetcher:
-            content = await self.document_fetcher.fetch(url, max_length=max_length)
+            result = await self.document_fetcher.fetch(url, raw=False)
+
+            content = result.get("content", "")
+            if max_length and len(content) > max_length:
+                content = content[:max_length] + "\n\n[内容已截断...]"
 
             # 提取标题和作者（简单实现）
-            title = self._extract_title(content, blog_platform)
+            title = result.get("title", self._extract_title(content, blog_platform))
             author = self._extract_author(content, blog_platform)
 
             return {

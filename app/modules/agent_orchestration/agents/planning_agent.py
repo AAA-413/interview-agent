@@ -114,12 +114,12 @@ question（问答）、code_generation（代码生成）、analysis（分析）�
 
 只返回类别名称，不要其他内容。"""
 
-            response = await self.llm_provider.chat(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
+            from langchain_core.messages import HumanMessage
+            response = await self.llm_provider.ainvoke(
+                [HumanMessage(content=prompt)]
             )
 
-            intent = response.get("content", "other").strip().lower()
+            intent = response.content.strip().lower()
             if intent in ["question", "code_generation", "analysis", "debug", "design"]:
                 return intent
 
@@ -253,12 +253,12 @@ question（问答）、code_generation（代码生成）、analysis（分析）�
 
 只返回 JSON 数组，不要其他内容。"""
 
-            response = await self.llm_provider.chat(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
+            from langchain_core.messages import HumanMessage
+            response = await self.llm_provider.ainvoke(
+                [HumanMessage(content=prompt)]
             )
 
-            content = response.get("content", "[]")
+            content = response.content
 
             # 提取 JSON
             import json
@@ -382,3 +382,330 @@ question（问答）、code_generation（代码生成）、analysis（分析）�
             return "hybrid"  # 有依赖的并行执行
         else:
             return "parallel"  # 完全并行执行
+
+    async def plan_download(
+        self,
+        user_input: str,
+        max_downloads: int = 10,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        生成智能下载计划
+
+        Args:
+            user_input: 用户需求描述（如："我想学习FastAPI"）
+            max_downloads: 最大下载数量
+            context: 额外上下文
+
+        Returns:
+            下载计划，包含：
+            - intent: 意图分析（topic、resource_types、keywords）
+            - tasks: 下载任务列表
+            - estimated_time: 估算时间
+            - estimated_size: 估算大小
+        """
+        logger.info(f"📋 生成下载计划: {user_input}")
+
+        # 1. 分析用户意图
+        intent = await self._analyze_download_intent(user_input)
+        logger.info(f"  意图分析: {intent}")
+
+        # 2. 生成下载任务
+        tasks = await self._generate_download_tasks(intent, max_downloads)
+        logger.info(f"  生成任务: {len(tasks)} 个")
+
+        # 3. 估算时间和大小
+        estimated_time = f"{len(tasks) * 30}秒"
+        estimated_size = f"{len(tasks) * 500}KB"
+
+        return {
+            "intent": intent,
+            "tasks": tasks,
+            "estimated_time": estimated_time,
+            "estimated_size": estimated_size,
+        }
+
+    async def _analyze_download_intent(self, user_input: str) -> Dict[str, Any]:
+        """
+        分析下载意图
+
+        Returns:
+            {
+                "topic": "主题",
+                "resource_types": ["official", "blog", "tutorial"],
+                "keywords": ["关键词1", "关键词2"],
+                "target_resources": ["资源1", "资源2"]
+            }
+        """
+        try:
+            prompt = f"""请分析用户的下载需求，提取关键信息。
+
+用户输入：{user_input}
+
+请以 JSON 格式返回分析结果：
+{{
+  "topic": "主题（如：FastAPI、Python、机器学习）",
+  "resource_types": ["资源类型列表，可选：official（官方文档）、blog（博客文章）、tutorial（教程）、github（GitHub项目）、arxiv（学术论文）"],
+  "keywords": ["关键词列表，用于搜索"],
+  "target_resources": ["具体目标资源列表"]
+}}
+
+要求：
+1. topic 应该是简洁的主题名称
+2. resource_types 至少包含1个类型
+3. keywords 提取3-5个关键词
+4. target_resources 列出可能的具体资源
+
+只返回 JSON，不要其他内容。"""
+
+            from langchain_core.messages import HumanMessage
+            response = await self.llm_provider.ainvoke(
+                [HumanMessage(content=prompt)]
+            )
+
+            content = response.content or "{}"
+
+            # 提取 JSON
+            import json
+            import re
+
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                intent = json.loads(json_match.group())
+                return intent
+
+        except Exception as e:
+            logger.warning(f"LLM 意图分析失败: {e}")
+
+        # 降级方案：基于关键词的简单分析
+        return self._simple_intent_analysis(user_input)
+
+    def _simple_intent_analysis(self, user_input: str) -> Dict[str, Any]:
+        """简单的意图分析（降级方案）"""
+        # 提取主题（简单实现：取第一个名词）
+        words = user_input.split()
+        topic = words[0] if words else "未知主题"
+
+        # 检测资源类型
+        resource_types = []
+        if "官方" in user_input or "文档" in user_input:
+            resource_types.append("official")
+        if "博客" in user_input or "文章" in user_input:
+            resource_types.append("blog")
+        if "教程" in user_input:
+            resource_types.append("tutorial")
+        if "github" in user_input.lower():
+            resource_types.append("github")
+
+        if not resource_types:
+            resource_types = ["official", "blog"]  # 默认
+
+        # 提取关键词
+        keywords = [w for w in words if len(w) > 1][:5]
+
+        return {
+            "topic": topic,
+            "resource_types": resource_types,
+            "keywords": keywords,
+            "target_resources": [],
+        }
+
+    async def _generate_download_tasks(
+        self,
+        intent: Dict[str, Any],
+        max_downloads: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        生成下载任务列表
+
+        Returns:
+            任务列表，每个任务包含：
+            - id: 任务ID
+            - type: 任务类型（fetch_url/search_web/fetch_blog）
+            - description: 描述
+            - url: URL（如果有）
+            - query: 搜索关键词（如果是搜索任务）
+            - num_results: 结果数量
+        """
+        try:
+            topic = intent.get("topic", "")
+            resource_types = intent.get("resource_types", [])
+            keywords = intent.get("keywords", [])
+
+            prompt = f"""请为以下主题生成下载任务列表。
+
+主题：{topic}
+资源类型：{', '.join(resource_types)}
+关键词：{', '.join(keywords)}
+最大任务数：{max_downloads}
+
+请以 JSON 数组格式返回任务列表：
+[
+  {{
+    "id": "task_1",
+    "type": "fetch_url",
+    "description": "抓取 FastAPI 官方文档",
+    "url": "https://fastapi.tiangolo.com/"
+  }},
+  {{
+    "id": "task_2",
+    "type": "search_web",
+    "description": "搜索 FastAPI 入门教程",
+    "query": "FastAPI 入门教程",
+    "num_results": 3
+  }},
+  {{
+    "id": "task_3",
+    "type": "fetch_blog",
+    "description": "抓取 CSDN 上的 FastAPI 文章",
+    "url": "https://blog.csdn.net/xxx/article/xxx"
+  }}
+]
+
+要求：
+1. type 只能是：fetch_url（直接抓取URL）、search_web（搜索后抓取）、fetch_blog（抓取博客）
+2. 优先生成 official 类型的资源
+3. 任务数量不超过 {max_downloads} 个
+4. 每个任务都要有清晰的 description
+5. fetch_url 和 fetch_blog 必须有 url 字段
+6. search_web 必须有 query 和 num_results 字段
+
+只返回 JSON 数组，不要其他内容。"""
+
+            from langchain_core.messages import HumanMessage
+            response = await self.llm_provider.ainvoke(
+                [HumanMessage(content=prompt)]
+            )
+
+            content = response.content
+
+            # 提取 JSON
+            import json
+            import re
+
+            json_match = re.search(r'\[.*\]', content, re.DOTALL)
+            if json_match:
+                tasks = json.loads(json_match.group())
+
+                # 验证和限制数量
+                if isinstance(tasks, list) and len(tasks) > 0:
+                    # 验证和补全必需字段
+                    validated_tasks = []
+                    for task in tasks[:max_downloads]:
+                        task_type = task.get("type", "")
+
+                        # search_web 必须有 query 字段
+                        if task_type == "search_web" and "query" not in task:
+                            # 从 description 提取关键词作为 query
+                            task["query"] = task.get("description", topic)
+                            if "num_results" not in task:
+                                task["num_results"] = 3
+
+                        # fetch_url/fetch_blog 必须有 url 字段
+                        if task_type in ["fetch_url", "fetch_blog"] and "url" not in task:
+                            logger.warning(f"任务 {task.get('id')} 缺少 url 字段，跳过")
+                            continue
+
+                        validated_tasks.append(task)
+
+                    if validated_tasks:
+                        return validated_tasks
+
+        except Exception as e:
+            logger.warning(f"LLM 任务生成失败: {e}")
+
+        # 降级方案：生成默认任务
+        return self._generate_default_download_tasks(intent, max_downloads)
+
+    def _generate_default_download_tasks(
+        self,
+        intent: Dict[str, Any],
+        max_downloads: int,
+    ) -> List[Dict[str, Any]]:
+        """生成默认下载任务（降级方案）"""
+        topic = intent.get("topic", "")
+        resource_types = intent.get("resource_types", [])
+        keywords = intent.get("keywords", [])
+
+        tasks = []
+        task_id = 1
+
+        # 生成GitHub搜索任务
+        if "github" in resource_types and task_id <= max_downloads:
+            tasks.append({
+                "id": f"task_{task_id}",
+                "type": "search_github",
+                "description": f"搜索 {topic} 相关的GitHub项目",
+                "query": f"{topic} {' '.join(keywords[:2])}",
+                "language": self._detect_language(topic),
+                "num_results": 3,
+                "dynamic": True,  # 标记为动态任务
+                "max_repos_to_fetch": 2,  # 最多抓取2个仓库
+            })
+            task_id += 1
+
+        # 生成搜索任务
+        if "official" in resource_types and task_id <= max_downloads:
+            tasks.append({
+                "id": f"task_{task_id}",
+                "type": "search_web",
+                "description": f"搜索 {topic} 官方文档",
+                "query": f"{topic} 官方文档",
+                "num_results": 2,
+            })
+            task_id += 1
+
+        if "blog" in resource_types and task_id <= max_downloads:
+            tasks.append({
+                "id": f"task_{task_id}",
+                "type": "search_web",
+                "description": f"搜索 {topic} 博客文章",
+                "query": f"{topic} 教程 博客",
+                "num_results": 3,
+            })
+            task_id += 1
+
+        if "tutorial" in resource_types and task_id <= max_downloads:
+            tasks.append({
+                "id": f"task_{task_id}",
+                "type": "search_web",
+                "description": f"搜索 {topic} 入门教程",
+                "query": f"{topic} 入门教程",
+                "num_results": 2,
+            })
+            task_id += 1
+
+        # 如果没有生成任何任务，至少生成一个通用搜索
+        if not tasks:
+            tasks.append({
+                "id": "task_1",
+                "type": "search_web",
+                "description": f"搜索 {topic} 相关资料",
+                "query": topic,
+                "num_results": 5,
+            })
+
+        return tasks[:max_downloads]
+
+    def _detect_language(self, topic: str) -> str:
+        """检测编程语言"""
+        topic_lower = topic.lower()
+
+        language_keywords = {
+            "python": ["python", "django", "flask", "fastapi", "pytorch", "tensorflow"],
+            "javascript": ["javascript", "js", "react", "vue", "angular", "node", "nodejs"],
+            "typescript": ["typescript", "ts"],
+            "java": ["java", "spring", "springboot"],
+            "go": ["go", "golang"],
+            "rust": ["rust"],
+            "cpp": ["c++", "cpp"],
+            "csharp": ["c#", "csharp", ".net"],
+            "ruby": ["ruby", "rails"],
+            "php": ["php", "laravel"],
+        }
+
+        for lang, keywords in language_keywords.items():
+            if any(keyword in topic_lower for keyword in keywords):
+                return lang
+
+        return ""  # 未检测到特定语言

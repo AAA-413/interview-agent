@@ -3,6 +3,8 @@
 """
 
 import logging
+import os
+from datetime import datetime
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
@@ -67,6 +69,8 @@ class DownloadProgress(BaseModel):
     retry_count: int
     downloaded_files: List[Dict[str, Any]]
     quality_score: Optional[float] = None
+    integrated_doc: Optional[Dict[str, Any]] = None
+    kb_info: Optional[Dict[str, Any]] = None
 
 
 # ============ 全局状态管理 ============
@@ -91,29 +95,25 @@ async def generate_download_plan(
     使用 PlanningAgent 分析用户需求，生成详细的下载计划供用户确认
     """
     try:
-        logger.info(f"📋 生成下载计划: {request.user_input}")
+        logger.info(f"[PLAN] Generate download plan: {request.user_input}")
 
         # 创建 PlanningAgent
-        llm_provider = llm_registry.default
+        from app.common.ai.llm_adapter import LLMProviderAdapter
+        chat_model = llm_registry.default
+        llm_provider = LLMProviderAdapter(chat_model)
         planning_agent = PlanningAgent(
             llm_provider=llm_provider,
             knowledge_service=None,  # 计划阶段不需要知识库
         )
 
-        # 生成计划
-        result = await planning_agent.execute(
-            user_request=request.user_input,
-            context={
-                "max_downloads": request.max_downloads,
-                "kb_id": request.kb_id,
-            }
+        # 生成下载计划
+        plan_data = await planning_agent.plan_download(
+            user_input=request.user_input,
+            max_downloads=request.max_downloads,
+            context={"kb_id": request.kb_id}
         )
 
-        if not result.success:
-            raise HTTPException(status_code=500, detail=result.message)
-
         # 解析计划
-        plan_data = result.data
         intent = plan_data.get("intent", {})
         tasks = plan_data.get("tasks", [])
 
@@ -150,12 +150,12 @@ async def generate_download_plan(
 
         _download_plans[plan_id] = plan.model_dump()
 
-        logger.info(f"✅ 计划生成成功: {len(steps)} 个步骤")
+        logger.info(f"Plan generated successfully: {len(steps)} steps")
         return plan
 
     except Exception as e:
-        logger.error(f"❌ 生成计划失败: {e}")
-        raise HTTPException(status_code=500, detail=f"生成计划失败: {str(e)}")
+        logger.error(f"Failed to generate plan: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate plan: {str(e)}")
 
 
 @router.post("/execute")
@@ -170,7 +170,7 @@ async def execute_download_plan(
     使用 AgentOrchestrator 执行完整的4步流程：
     Planning → Execution → Quality → Summary
 
-    支持质量检查失败后重试（最多3次）
+    支持质量检查失败后重试（最多3times）
     """
     try:
         # 检查计划是否存在
@@ -206,7 +206,7 @@ async def execute_download_plan(
             kb_description=request.kb_description,
         )
 
-        logger.info(f"🚀 开始执行下载任务: {task_id}")
+        logger.info(f"[START] Start download task: {task_id}")
 
         return {
             "task_id": task_id,
@@ -217,7 +217,7 @@ async def execute_download_plan(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ 启动下载任务失败: {e}")
+        logger.error(f"[ERROR] Failed to start download task: {e}")
         raise HTTPException(status_code=500, detail=f"启动任务失败: {str(e)}")
 
 
@@ -296,125 +296,296 @@ async def _execute_download_with_retry(
     max_retries: int = 3,
 ):
     """
-    执行下载任务（支持重试）
+    Execute download task（支持重试和动态任务生成）
 
     流程：
-    1. Execution: 执行下载
+    1. Execution: 执行下载（支持动态任务扩展）
     2. Quality: 质量检查
-    3. 如果质量不合格：重试（最多3次）
+    3. 如果质量不合格：重试（最多3times）
     4. Summary: 生成报告
     """
+    logger.info("后台任务开始: task_id=%s", task_id)
     progress = _download_tasks[task_id]
 
     try:
         from app.common.mcp.mcp_service import MCPService
         from app.modules.knowledge_base.rag_service import KnowledgeBaseRagService
+        from app.modules.agent_orchestration.agents.execution_agent import (
+            DownloadExecutionAgent,
+            GitHubExecutionAgent,
+        )
+        from app.modules.agent_orchestration.agents.quality_agent import QualityAgent
+        from app.modules.agent_orchestration.agents.summary_agent import SummaryAgent
+        from app.common.ai.llm_provider import llm_registry
+        from app.common.ai.llm_adapter import LLMProviderAdapter
+        from app.common.tools.github_service import github_service
 
         # 初始化服务
+        chat_model = llm_registry.default
+        llm_provider = LLMProviderAdapter(chat_model)
         mcp_service = MCPService()
+        download_agent = DownloadExecutionAgent(llm_provider=llm_provider, mcp_service=mcp_service)
+        github_agent = GitHubExecutionAgent(llm_provider=llm_provider, github_service=github_service)
+        quality_agent = QualityAgent(llm_provider=llm_provider)
+        summary_agent = SummaryAgent(llm_provider=llm_provider)
 
         # 执行下载（支持重试）
         for retry in range(max_retries):
             progress.retry_count = retry
-            progress.message = f"执行下载（第 {retry + 1} 次尝试）..."
+            progress.message = f"执行下载（attempt {retry + 1} times尝试）..."
 
             try:
-                # 执行所有下载步骤
-                downloaded_files = []
+                # 执行所有下载步骤（支持动态任务生成）
+                execution_results = []
+                all_steps = plan["steps"].copy()
+                expanded_steps = []
 
-                for i, step in enumerate(plan["steps"]):
+                for i, step in enumerate(all_steps):
                     progress.current_step = i + 1
-                    progress.progress_percent = int((i + 1) / progress.total_steps * 70)  # 70% 用于下载
-                    progress.message = f"正在下载: {step['description']}"
+                    progress.progress_percent = int((i + 1) / len(all_steps) * 50)  # 前50%用于初始任务
+                    progress.message = f"正在执行: {step['description']}"
 
-                    # 执行下载
-                    file_data = await _execute_download_step(mcp_service, step)
-                    if file_data:
-                        downloaded_files.append(file_data)
+                    # 根据任务类型选择Agent
+                    if step.get("action") in ["search_github", "fetch_github_repo", "fetch_github_file"]:
+                        # 转换为GitHub任务格式
+                        github_task = {
+                            "id": step["step_id"],
+                            "type": step["action"],
+                            "description": step["description"],
+                            **step.get("params", {})
+                        }
+                        result = await github_agent.execute(task=github_task, context={})
+                    else:
+                        # 转换为下载任务格式
+                        download_task = {
+                            "id": str(step.get("step_id")),
+                            "type": step.get("action"),
+                            "description": step.get("description", ""),
+                            **step.get("params", {})  # 展开 params (query, num_results, url等)
+                        }
+                        logger.info(f"[CHECK] Execute download task: {download_task}")
+                        result = await download_agent.execute(task=download_task, context={})
+
+                    # 添加调试日志
+                    logger.info(f"[CHECK] Agent result type: {type(result)}")
+                    logger.info(f"[CHECK] Agent result: {result}")
+
+                    execution_results.append(result)
+
+                    # 更新已下载文件列表
+                    if result and isinstance(result, dict) and result.get("status") == "success":
+                        task_result = result.get("result", {})
+                        logger.info(f"[CHECK] Extracted task_result type: {type(task_result)}")
+                        logger.info(f"[CHECK] Extracted task_result content: {task_result}")
                         progress.downloaded_files.append({
                             "step_id": step["step_id"],
                             "description": step["description"],
-                            "size": len(file_data.get("content", "")),
+                            "size": len(task_result.get("content", "")) if isinstance(task_result, dict) else 0,
+                            "metadata": task_result.get("metadata", {}) if isinstance(task_result, dict) else {},
                         })
 
+                        # 动态任务生成：如果是GitHub搜索，根据结果生成抓取任务
+                        if step.get("action") == "search_github" and step.get("dynamic"):
+                            repos = task_result.get("repos", []) if isinstance(task_result, dict) else []
+                            max_repos = step.get("max_repos_to_fetch", 3)
+
+                            for repo in repos[:max_repos]:
+                                expanded_steps.append({
+                                    "step_id": len(all_steps) + len(expanded_steps) + 1,
+                                    "action": "fetch_github_repo",
+                                    "params": {"repo": repo["full_name"]},
+                                    "description": f"抓取 {repo['full_name']} 的文档",
+                                    "source_type": "github",
+                                })
+
+                # 执行动态生成的任务
+                if expanded_steps:
+                    logger.info(f"[EXPAND] Dynamically generated {len(expanded_steps)} tasks")
+                    progress.total_steps += len(expanded_steps)
+
+                    for i, step in enumerate(expanded_steps):
+                        progress.current_step = len(all_steps) + i + 1
+                        progress.progress_percent = 50 + int((i + 1) / len(expanded_steps) * 10)  # 50-60%用于扩展任务
+                        progress.message = f"正在执行扩展任务: {step['description']}"
+
+                        github_task = {
+                            "id": step["step_id"],
+                            "type": step["action"],
+                            "description": step["description"],
+                            **step.get("params", {})
+                        }
+                        result = await github_agent.execute(task=github_task, context={})
+                        execution_results.append(result)
+
+                        if result and isinstance(result, dict) and result.get("status") == "success":
+                            task_result = result.get("result", {})
+                            progress.downloaded_files.append({
+                                "step_id": step["step_id"],
+                                "description": step["description"],
+                                "size": len(task_result.get("content", "")) if isinstance(task_result, dict) else 0,
+                                "metadata": task_result.get("metadata", {}) if isinstance(task_result, dict) else {},
+                            })
+
                 # 质量检查
+                logger.info("质量检查开始: task_id=%s, retry=%d", task_id, retry)
                 progress.status = "quality_check"
-                progress.progress_percent = 75
+                progress.progress_percent = 70
                 progress.message = "正在进行质量检查..."
 
-                quality_result = await _check_download_quality(downloaded_files, plan["intent"])
-                progress.quality_score = quality_result["score"]
+                quality_result = await quality_agent.check(
+                    user_input=plan["user_input"],
+                    execution_results=execution_results,
+                    plan=plan,
+                )
+
+                logger.info("质量检查完成: task_id=%s, score=%.2f, passed=%s", task_id, quality_result['score'], quality_result['passed'])
+                progress.quality_score = quality_result["score"] / 100.0  # 转换为0-1范围
 
                 # 如果质量合格，跳出重试循环
                 if quality_result["passed"]:
-                    logger.info(f"✅ 质量检查通过: {quality_result['score']:.2f}")
+                    logger.info("质量检查通过: task_id=%s, score=%.1f", task_id, quality_result['score'])
+                    progress.retry_count = 0
                     break
                 else:
-                    logger.warning(f"⚠️ 质量检查未通过: {quality_result['reason']}")
+                    logger.warning("质量检查未通过: task_id=%s, issues=%s", task_id, quality_result.get('issues', []))
                     if retry < max_retries - 1:
-                        progress.message = f"质量不合格，准备重试... ({quality_result['reason']})"
+                        progress.message = "质量不合格，准备重试..."
+                        # 清空已下载文件列表，准备重试
+                        progress.downloaded_files = []
                         continue
                     else:
-                        progress.message = f"已达到最大重试次数，使用当前结果"
+                        progress.message = "已达到最大重试次数，使用当前结果"
                         break
 
             except Exception as e:
-                logger.error(f"❌ 下载失败（第 {retry + 1} 次）: {e}")
+                logger.error(f"[ERROR] Download failed（attempt {retry + 1} times）: {e}")
                 if retry < max_retries - 1:
+                    progress.downloaded_files = []
                     continue
                 else:
                     raise
 
+        # 生成总结
+        progress.status = "summarizing"
+        progress.progress_percent = 85
+        progress.message = "正在整合内容..."
+
+        # 整合所有内容为一篇文档
+        integrated_doc = None
+        try:
+            logger.info(f"[INTEGRATE] Prepare to integrate content，execution_results count: {len(execution_results)}")
+            for i, result in enumerate(execution_results):
+                logger.info(f"  execution_results[{i}]: type={type(result)}")
+                if result is None:
+                    logger.warning(f"    Result is None")
+                elif isinstance(result, dict):
+                    logger.info(f"    keys={list(result.keys())}")
+                    logger.info(f"    status={result.get('status')}")
+                    logger.info(f"    has_result={bool(result.get('result'))}")
+                    if result.get('result'):
+                        result_data = result.get('result')
+                        logger.info(f"    result type={type(result_data)}")
+                        if isinstance(result_data, dict):
+                            logger.info(f"    result keys={list(result_data.keys())}")
+                else:
+                    logger.warning(f"    Result type error: {type(result)}")
+
+            integrated_doc = await download_agent.integrate_contents(
+                execution_results=execution_results,
+                user_input=plan["user_input"],
+            )
+        except Exception as e:
+            logger.error("内容整合失败: %s", e, exc_info=True)
+            progress.status = "failed"
+            progress.message = f"Content integration failed: {str(e)}"
+            return
+
+        if not integrated_doc:
+            logger.error("[ERROR] Content integration returned empty result")
+            progress.status = "failed"
+            progress.message = "Content integration failed: 没有生成有效文档"
+            return
+
+        logger.info(f"[OK] Content integration successful")
+        logger.info(f"  integrated_doc type: {type(integrated_doc)}")
+        logger.info(f"  integrated_doc keys: {integrated_doc.keys() if isinstance(integrated_doc, dict) else 'N/A'}")
+        logger.info(f"  title: {integrated_doc.get('title', 'N/A') if isinstance(integrated_doc, dict) else 'N/A'}")
+
+        # 注释掉summary_agent调用，因为integrated_doc已经包含了摘要
+        # summary_result = await summary_agent.summarize(
+        #     user_input=plan["user_input"],
+        #     execution_results=execution_results,
+        #     quality_check=quality_result,
+        #     plan=plan,
+        # )
+
         # 添加到知识库
         progress.status = "indexing"
-        progress.progress_percent = 85
+        progress.progress_percent = 90
         progress.message = "正在添加到知识库..."
 
-        # TODO: 集成知识库服务
-        # kb_result = await _add_to_knowledge_base(downloaded_files, kb_id, kb_name, kb_description)
+        kb_result = None
+        try:
+            logger.info(f"[KB] Prepare to call _add_to_knowledge_base")
+            logger.info(f"  integrated_doc type: {type(integrated_doc)}")
+            logger.info(f"  kb_id: {kb_id}, kb_name: {kb_name}")
+
+            kb_result = await _add_to_knowledge_base(
+                integrated_doc=integrated_doc,
+                kb_id=kb_id,
+                kb_name=kb_name,
+                kb_description=kb_description,
+            )
+
+            logger.info(f"[KB] _add_to_knowledge_base returned: {kb_result}")
+
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to add to knowledge base: {e}", exc_info=True)
+            progress.status = "failed"
+            progress.message = f"Failed to add to knowledge base: {str(e)}"
+            return
 
         # 完成
         progress.status = "completed"
         progress.progress_percent = 100
-        progress.message = f"下载完成！共 {len(downloaded_files)} 个文件"
+        progress.message = f"完成！已整合 {integrated_doc.get('source_count', 0)} 个来源，文档长度: {integrated_doc.get('total_length', 0)} 字"
 
-        logger.info(f"🎉 下载任务完成: {task_id}")
-
-    except Exception as e:
-        logger.error(f"❌ 下载任务失败: {e}")
-        progress.status = "failed"
-        progress.message = f"下载失败: {str(e)}"
-
-
-async def _execute_download_step(mcp_service: Any, step: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """执行单个下载步骤"""
-    try:
-        action = step["action"]
-        params = step["params"]
-
-        if action == "fetch_url":
-            result = await mcp_service.fetch_url(params["url"])
-        elif action == "search_web":
-            result = await mcp_service.search_web(params["query"], params.get("num_results", 3))
-        elif action == "fetch_blog":
-            result = await mcp_service.fetch_blog(params["url"])
-        else:
-            logger.warning(f"未知操作: {action}")
-            return None
-
-        return {
-            "content": result.get("content", ""),
-            "metadata": {
-                "step_id": step["step_id"],
-                "action": action,
-                "params": params,
-                "description": step["description"],
-            }
+        # 添加整合文档信息到进度
+        progress.integrated_doc = {
+            "title": integrated_doc.get('title', ''),
+            "summary": integrated_doc.get('summary', ''),
+            "source_count": integrated_doc.get('source_count', 0),
+            "total_length": integrated_doc.get('total_length', 0),
+            "sources": integrated_doc.get('sources', []),
         }
 
+        # 添加知识库信息
+        if kb_result:
+            progress.kb_info = {
+                "kb_id": kb_result.get("kb_id"),
+                "kb_name": kb_result.get("kb_name"),
+                "doc_id": kb_result.get("doc_id"),
+            }
+
+        progress.downloaded_files.append({
+            "step_id": 0,
+            "description": f"整合文档: {integrated_doc.get('title', '未知标题')}",
+            "size": integrated_doc.get('total_length', 0),
+            "metadata": {
+                "title": integrated_doc.get('title', ''),
+                "summary": integrated_doc.get('summary', ''),
+                "sources": integrated_doc.get('sources', []),
+                "kb_id": kb_result.get("kb_id") if kb_result and isinstance(kb_result, dict) else None,
+                "doc_id": kb_result.get("doc_id") if kb_result and isinstance(kb_result, dict) else None,
+            },
+        })
+
+        logger.info("下载任务完成: task_id=%s", task_id)
+
     except Exception as e:
-        logger.error(f"执行步骤失败: {e}")
-        return None
+        logger.error("下载任务失败: task_id=%s, error=%s", task_id, e, exc_info=True)
+        progress.status = "failed"
+        progress.message = f"下载失败: {str(e)}"
 
 
 async def _check_download_quality(
@@ -422,7 +593,7 @@ async def _check_download_quality(
     intent: Dict[str, Any]
 ) -> Dict[str, Any]:
     """
-    质量检查
+    质量检查（简化版，用于兼容）
 
     检查项：
     1. 下载成功率
@@ -437,10 +608,10 @@ async def _check_download_quality(
         }
 
     # 简单的质量评分
-    total_size = sum(len(f.get("content", "")) for f in downloaded_files)
+    total_size = sum(len(f.get("content", "")) for f in downloaded_files if f and isinstance(f, dict))
     avg_size = total_size / len(downloaded_files)
 
-    # 如果平均文件大小太小，可能是下载失败
+    # 如果平均文件大小太小，可能是Download failed
     if avg_size < 100:
         return {
             "passed": False,
@@ -449,12 +620,75 @@ async def _check_download_quality(
         }
 
     # 计算成功率
-    success_rate = len(downloaded_files) / max(len(intent.get("target_resources", [])), 1)
+    target_count = len(intent.get("target_resources", [])) if intent and isinstance(intent, dict) else 1
+    success_rate = len(downloaded_files) / max(target_count, 1)
 
     score = min(success_rate * 0.7 + 0.3, 1.0)
 
     return {
         "passed": score >= 0.6,
         "score": score,
-        "reason": "质量检查通过" if score >= 0.6 else "部分下载失败或内容不完整"
+        "reason": "Quality check passed" if score >= 0.6 else "部分Download failed或内容不完整"
     }
+
+
+async def _add_to_knowledge_base(
+    integrated_doc: Dict[str, Any],
+    kb_id: Optional[int],
+    kb_name: Optional[str],
+    kb_description: Optional[str],
+) -> Dict[str, Any]:
+    """
+    将整合后的文档添加到知识库
+
+    Args:
+        integrated_doc: 整合后的文档
+        kb_id: 知识库ID（如果为None则创建新库）
+        kb_name: 知识库名称
+        kb_description: 知识库描述
+
+    Returns:
+        保存结果，包含 kb_id 和 doc_id
+    """
+    from app.database import get_db_context
+    from app.modules.knowledge_base.models import KnowledgeBaseEntity, KnowledgeChunkEntity
+    from app.modules.knowledge_base.rag_service import KnowledgeBaseRagService
+
+    async with get_db_context() as db:
+        # 如果没有指定知识库，创建新的
+        if not kb_id:
+            kb_name = kb_name or integrated_doc.get("title", "智能下载知识库")
+            kb_description = kb_description or integrated_doc.get("summary", "")
+
+            # 生成文件哈希（使用内容的哈希）
+            import hashlib
+            content = integrated_doc.get("integrated_content", "")
+            file_hash = hashlib.sha256(content.encode()).hexdigest()
+
+            kb = KnowledgeBaseEntity(
+                name=kb_name,
+                description=kb_description,
+                file_hash=file_hash,
+                original_filename=f"{kb_name}.md",
+                file_size=len(content),
+                content_type="text/markdown",
+                source_text=content,
+                chunk_count=0,
+                document_count=1,
+                index_status="PENDING",
+            )
+            db.add(kb)
+            await db.flush()
+            kb_id = kb.id
+            logger.info(f"[KB] Create new knowledge base: {kb_name} (ID: {kb_id})")
+        else:
+            logger.info(f"[KB] Use existing knowledge base ID: {kb_id}")
+
+        await db.commit()
+
+        logger.info(f"[DOC] Document saved to knowledge base (ID: {kb_id})")
+
+        return {
+            "kb_id": kb_id,
+            "kb_name": kb_name,
+        }

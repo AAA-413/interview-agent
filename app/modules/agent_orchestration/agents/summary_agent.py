@@ -157,12 +157,11 @@ class SummaryAgent:
 
 请生成最终答案："""
 
-            response = await self.llm_provider.chat(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.4,
+            response = await self.llm_provider.ainvoke(
+                [{"role": "user", "content": prompt}]
             )
 
-            final_answer = response.get("content", "")
+            final_answer = response.content
 
             return final_answer
 

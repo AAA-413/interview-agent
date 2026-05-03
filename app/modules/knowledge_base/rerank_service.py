@@ -32,7 +32,7 @@ class RerankService:
             self._enabled = True
             logger.info(f"重排序服务初始化成功: model={model_name}")
         except ImportError:
-            logger.warning("sentence-transformers 未安装，重排序功能已禁用")
+            logger.warning("sentence-transformers not installed, rerank disabled")
         except Exception as e:
             logger.warning(f"重排序模型加载失败: {e}，重排序功能已禁用")
 

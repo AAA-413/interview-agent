@@ -1,12 +1,45 @@
 from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 import time
 import logging
+from typing import Any, Dict, List
 from openai import APITimeoutError, RateLimitError
 
 from app.config import settings
 from app.common.exception import LLMTimeoutException, LLMRateLimitException
 
 logger = logging.getLogger(__name__)
+
+
+class LangChainLLMAdapter:
+    """适配器：将 LangChain ChatOpenAI 适配为 LLMProvider 协议"""
+
+    def __init__(self, chat_model: ChatOpenAI):
+        self.llm = chat_model
+
+    async def chat(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """实现 LLMProvider 协议的 chat 方法"""
+        # 转换消息格式
+        lc_messages = [HumanMessage(content=msg["content"]) for msg in messages if msg.get("role") == "user"]
+
+        # 调用 LangChain
+        response = await self.llm.ainvoke(lc_messages)
+
+        # 转换返回格式
+        result = {
+            "content": response.content,
+            "usage": {}
+        }
+
+        if hasattr(response, 'response_metadata'):
+            result["usage"] = response.response_metadata.get('token_usage', {})
+
+        return result
 
 
 class LlmProviderRegistry:
@@ -22,10 +55,10 @@ class LlmProviderRegistry:
             model=ai.model,
             temperature=ai.temperature,
             max_tokens=4096,
-            request_timeout=60,  # 从 180 秒改为 60 秒
-            max_retries=2,       # 添加自动重试 2 次
+            request_timeout=300,  # 智能下载内容整合需要更长时间
+            max_retries=2,
         )
-        logger.info("LLM Provider 初始化: model=%s, timeout=60s, max_retries=2", ai.model)
+        logger.info("LLM Provider 初始化: model=%s, timeout=300s, max_retries=2", ai.model)
 
     def get_chat_model(self, provider: str | None = None) -> ChatOpenAI:
         key = provider or "dashscope"
@@ -89,6 +122,11 @@ class LlmProviderRegistry:
     @property
     def default(self) -> ChatOpenAI:
         return self.get_chat_model("dashscope")
+
+    def get_adapter(self, provider: str | None = None) -> LangChainLLMAdapter:
+        """获取适配器实例，用于 Agent"""
+        chat_model = self.get_chat_model(provider)
+        return LangChainLLMAdapter(chat_model)
 
 
 llm_registry = LlmProviderRegistry()

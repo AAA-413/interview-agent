@@ -5,8 +5,8 @@ from datetime import datetime
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.common.base_persistence_service import BasePersistenceService, safe_json_loads
 from app.common.error_code import ErrorCode
-from app.common.exception import BusinessException
 from app.common.model import AsyncTaskStatus
 from app.modules.knowledge_base.models import KnowledgeBaseEntity, KnowledgeChunkEntity, RagChatEntity, RagChatStatus
 from app.modules.knowledge_base.schemas import (
@@ -22,16 +22,9 @@ from app.modules.knowledge_base.schemas import (
 logger = logging.getLogger(__name__)
 
 
-class KnowledgeBasePersistenceService:
-    async def find_by_id(self, db: AsyncSession, kb_id: int) -> KnowledgeBaseEntity | None:
-        result = await db.execute(select(KnowledgeBaseEntity).where(KnowledgeBaseEntity.id == kb_id))
-        return result.scalar_one_or_none()
-
-    async def find_by_id_or_throw(self, db: AsyncSession, kb_id: int) -> KnowledgeBaseEntity:
-        entity = await self.find_by_id(db, kb_id)
-        if entity is None:
-            raise BusinessException(ErrorCode.KNOWLEDGE_BASE_NOT_FOUND, "知识库不存在")
-        return entity
+class KnowledgeBasePersistenceService(BasePersistenceService[KnowledgeBaseEntity]):
+    model = KnowledgeBaseEntity
+    not_found_error = ErrorCode.KNOWLEDGE_BASE_NOT_FOUND
 
     async def find_by_file_hash(self, db: AsyncSession, file_hash: str) -> KnowledgeBaseEntity | None:
         result = await db.execute(select(KnowledgeBaseEntity).where(KnowledgeBaseEntity.file_hash == file_hash))
@@ -40,11 +33,6 @@ class KnowledgeBasePersistenceService:
     async def find_all(self, db: AsyncSession) -> list[KnowledgeBaseEntity]:
         result = await db.execute(select(KnowledgeBaseEntity).order_by(KnowledgeBaseEntity.created_at.desc()))
         return list(result.scalars().all())
-
-    async def save(self, db: AsyncSession, entity: KnowledgeBaseEntity) -> KnowledgeBaseEntity:
-        db.add(entity)
-        await db.flush()
-        return entity
 
     async def delete(self, db: AsyncSession, kb_id: int) -> KnowledgeBaseEntity:
         entity = await self.find_by_id_or_throw(db, kb_id)
@@ -193,13 +181,9 @@ class KnowledgeBasePersistenceService:
             created_at=entity.created_at,
         )
 
-    def _to_chunk_dto(self, entity: KnowledgeChunkEntity) -> KnowledgeChunkDTO:
-        metadata = {}
-        if entity.metadata_json:
-            try:
-                metadata = json.loads(entity.metadata_json)
-            except (json.JSONDecodeError, TypeError):
-                metadata = {}
+    @staticmethod
+    def _to_chunk_dto(entity: KnowledgeChunkEntity) -> KnowledgeChunkDTO:
+        metadata = safe_json_loads(entity.metadata_json, {})
         return KnowledgeChunkDTO(
             id=entity.id,
             chunk_index=entity.chunk_index,
@@ -209,13 +193,10 @@ class KnowledgeBasePersistenceService:
             metadata=metadata,
         )
 
-    def _to_chat_dto(self, entity: RagChatEntity) -> RagChatDTO:
-        references = []
-        if entity.references_json:
-            try:
-                references = [RagReferenceDTO(**item) for item in json.loads(entity.references_json)]
-            except (json.JSONDecodeError, TypeError, ValueError):
-                references = []
+    @staticmethod
+    def _to_chat_dto(entity: RagChatEntity) -> RagChatDTO:
+        raw_refs = safe_json_loads(entity.references_json, [])
+        references = [RagReferenceDTO(**item) for item in raw_refs] if raw_refs else []
         return RagChatDTO(
             id=entity.id,
             session_id=entity.session_id,

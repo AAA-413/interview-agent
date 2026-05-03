@@ -6,6 +6,7 @@ import yaml
 
 from app.common.error_code import ErrorCode
 from app.common.exception import BusinessException
+from app.common.prompt_utils import load_prompt
 from app.modules.interview.schemas import CategoryDTO, SkillCategoryDTO, SkillDTO
 
 logger = logging.getLogger(__name__)
@@ -309,7 +310,7 @@ class InterviewSkillService:
 
             chat_model = llm_registry.get_chat_model(None)
 
-            jd_system_prompt = self._load_prompt("jd-parse-system.md")
+            jd_system_prompt = load_prompt(_PROMPTS_DIR, "jd-parse-system.md")
 
             dto = await structured_output_invoker.invoke(
                 chat_model=chat_model,
@@ -337,14 +338,6 @@ class InterviewSkillService:
         except Exception as e:
             logger.error("JD 解析失败: %s", e)
             raise BusinessException(ErrorCode.AI_SERVICE_ERROR, "JD 解析失败，请重试或选择预设主题")
-
-    @staticmethod
-    def _load_prompt(filename: str) -> str:
-        path = _PROMPTS_DIR / filename
-        if path.exists():
-            return path.read_text(encoding="utf-8")
-        logger.warning("Prompt 文件不存在: %s", path)
-        return ""
 
     def _to_skill_dto(self, skill_id: str, definition: dict) -> SkillDTO:
         categories = []

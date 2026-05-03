@@ -5,8 +5,8 @@ from datetime import datetime
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.common.base_persistence_service import BasePersistenceService, safe_json_loads
 from app.common.error_code import ErrorCode
-from app.common.exception import BusinessException
 from app.common.model import AsyncTaskStatus
 from app.modules.resume.models import ResumeAnalysisEntity, ResumeEntity
 from app.modules.resume.schemas import (
@@ -20,16 +20,9 @@ from app.modules.resume.schemas import (
 logger = logging.getLogger(__name__)
 
 
-class ResumePersistenceService:
-    async def find_by_id(self, db: AsyncSession, resume_id: int) -> ResumeEntity | None:
-        result = await db.execute(select(ResumeEntity).where(ResumeEntity.id == resume_id))
-        return result.scalar_one_or_none()
-
-    async def find_by_id_or_throw(self, db: AsyncSession, resume_id: int) -> ResumeEntity:
-        entity = await self.find_by_id(db, resume_id)
-        if not entity:
-            raise BusinessException(ErrorCode.RESUME_NOT_FOUND)
-        return entity
+class ResumePersistenceService(BasePersistenceService[ResumeEntity]):
+    model = ResumeEntity
+    not_found_error = ErrorCode.RESUME_NOT_FOUND
 
     async def find_by_file_hash(self, db: AsyncSession, file_hash: str) -> ResumeEntity | None:
         result = await db.execute(select(ResumeEntity).where(ResumeEntity.file_hash == file_hash))
@@ -44,12 +37,15 @@ class ResumePersistenceService:
         return list(result.scalars().all())
 
     async def save_resume(self, db: AsyncSession, entity: ResumeEntity) -> ResumeEntity:
-        db.add(entity)
-        await db.flush()
-        return entity
+        return await self.save(db, entity)
 
     async def clear_analyses(self, db: AsyncSession, resume_id: int) -> None:
         await db.execute(delete(ResumeAnalysisEntity).where(ResumeAnalysisEntity.resume_id == resume_id))
+        await db.flush()
+
+    async def delete_resume(self, db: AsyncSession, resume_id: int) -> None:
+        await self.clear_analyses(db, resume_id)
+        await db.execute(delete(ResumeEntity).where(ResumeEntity.id == resume_id))
         await db.flush()
 
     async def update_analyze_status(
@@ -133,20 +129,9 @@ class ResumePersistenceService:
 
     @staticmethod
     def _to_analysis_history_dto(entity: ResumeAnalysisEntity) -> AnalysisHistoryDTO:
-        strengths = []
-        if entity.strengths_json:
-            try:
-                strengths = json.loads(entity.strengths_json)
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-        suggestions = []
-        if entity.suggestions_json:
-            try:
-                raw = json.loads(entity.suggestions_json)
-                suggestions = [Suggestion(**s) for s in raw]
-            except (json.JSONDecodeError, TypeError):
-                pass
+        strengths = safe_json_loads(entity.strengths_json, [])
+        raw_suggestions = safe_json_loads(entity.suggestions_json, [])
+        suggestions = [Suggestion(**s) for s in raw_suggestions] if raw_suggestions else []
 
         return AnalysisHistoryDTO(
             id=entity.id,

@@ -76,3 +76,16 @@ class LLMProviderAdapter:
         except Exception as e:
             logger.error(f"LLM 调用失败: {e}")
             raise
+
+    async def ainvoke(self, messages, **kwargs):
+        """
+        直接调用 LangChain 的 ainvoke 方法
+
+        Args:
+            messages: LangChain 消息对象列表
+            **kwargs: 额外参数
+
+        Returns:
+            LangChain AIMessage 对象
+        """
+        return await self.langchain_model.ainvoke(messages, **kwargs)

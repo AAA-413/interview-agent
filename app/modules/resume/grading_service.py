@@ -1,4 +1,3 @@
-import json
 import logging
 from pathlib import Path
 
@@ -8,6 +7,7 @@ from pydantic import BaseModel
 from app.common.ai.structured_output import structured_output_invoker
 from app.common.error_code import ErrorCode
 from app.common.exception import BusinessException
+from app.common.prompt_utils import load_prompt, render_template
 from app.modules.resume.schemas import ResumeAnalysisResponse, ScoreDetail, Suggestion
 
 logger = logging.getLogger(__name__)
@@ -40,21 +40,13 @@ class _AnalysisDTO(BaseModel):
 
 class ResumeGradingService:
     def __init__(self):
-        self._system_prompt = self._load_prompt("resume-analysis-system.md")
-        self._user_prompt_template = self._load_prompt("resume-analysis-user.md")
-
-    @staticmethod
-    def _load_prompt(filename: str) -> str:
-        path = _PROMPTS_DIR / filename
-        if path.exists():
-            return path.read_text(encoding="utf-8")
-        logger.warning("Prompt 文件不存在: %s", path)
-        return ""
+        self._system_prompt = load_prompt(_PROMPTS_DIR, "resume-analysis-system.md")
+        self._user_prompt_template = load_prompt(_PROMPTS_DIR, "resume-analysis-user.md")
 
     async def analyze_resume(self, chat_model: ChatOpenAI, resume_text: str) -> ResumeAnalysisResponse:
         logger.info("开始分析简历，文本长度: %d 字符", len(resume_text))
         try:
-            user_prompt = self._user_prompt_template.replace("{{ resumeText }}", resume_text)
+            user_prompt = render_template(self._user_prompt_template, {"resumeText": resume_text})
 
             dto = await structured_output_invoker.invoke(
                 chat_model=chat_model,

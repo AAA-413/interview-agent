@@ -40,6 +40,9 @@ async def upload_resume(file: UploadFile = File(...), db: AsyncSession = Depends
 
 @router.delete("/{resume_id}", response_model=Result[None])
 async def delete_resume(resume_id: int, db: AsyncSession = Depends(get_db)):
+    logger.info(f"开始删除简历 {resume_id}")
+    logger.info(f"resume_delete_service 类型: {type(resume_delete_service)}")
+    logger.info(f"resume_delete_service 方法: {dir(resume_delete_service)}")
     await resume_delete_service.delete_resume(db, resume_id)
     return Result.success(None)
 

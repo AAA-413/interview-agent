@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.common.ai.structured_output import structured_output_invoker
 from app.common.error_code import ErrorCode
+from app.common.prompt_utils import load_prompt, render_template
 from app.modules.interview.schemas import (
     CategoryScoreDTO,
     InterviewReportDTO,
@@ -52,20 +53,12 @@ class QaRecord(BaseModel):
 
 class UnifiedEvaluationService:
     def __init__(self):
-        self._system_prompt = self._load_prompt("interview-evaluation-system.md")
-        self._user_prompt = self._load_prompt("interview-evaluation-user.md")
-        self._summary_system_prompt = self._load_prompt("interview-evaluation-summary-system.md")
-        self._summary_user_prompt = self._load_prompt("interview-evaluation-summary-user.md")
+        self._system_prompt = load_prompt(_PROMPTS_DIR, "interview-evaluation-system.md")
+        self._user_prompt = load_prompt(_PROMPTS_DIR, "interview-evaluation-user.md")
+        self._summary_system_prompt = load_prompt(_PROMPTS_DIR, "interview-evaluation-summary-system.md")
+        self._summary_user_prompt = load_prompt(_PROMPTS_DIR, "interview-evaluation-summary-user.md")
         self._batch_size = 8
         self._max_concurrent_batches = 3  # 最多 3 个批次并行执行
-
-    @staticmethod
-    def _load_prompt(filename: str) -> str:
-        path = _PROMPTS_DIR / filename
-        if path.exists():
-            return path.read_text(encoding="utf-8")
-        logger.warning("Prompt 文件不存在: %s", path)
-        return ""
 
     async def evaluate(
         self,
@@ -154,7 +147,7 @@ class UnifiedEvaluationService:
             "referenceContext": reference_context if reference_context else "无",
         }
 
-        user_prompt = self._render_template(self._user_prompt, variables)
+        user_prompt = render_template(self._user_prompt, variables)
 
         try:
             return await structured_output_invoker.invoke(
@@ -187,7 +180,7 @@ class UnifiedEvaluationService:
                 "fallbackImprovements": "\n".join(fallback_improvements),
             }
 
-            user_prompt = self._render_template(self._summary_user_prompt, variables)
+            user_prompt = render_template(self._summary_user_prompt, variables)
 
             dto = await structured_output_invoker.invoke(
                 chat_model=chat_model,
@@ -338,13 +331,6 @@ class UnifiedEvaluationService:
             short_f = feedback[:80] + "..." if len(feedback) > 80 else feedback
             highlights.append(f"- Q{q.question_index + 1} | {short_q} | 分数:{score} | 反馈:{short_f}")
         return "\n".join(highlights[:20])
-
-    @staticmethod
-    def _render_template(template: str, variables: dict) -> str:
-        result = template
-        for key, value in variables.items():
-            result = result.replace(f"{{{{ {key} }}}}", str(value))
-        return result
 
 
 unified_evaluation_service = UnifiedEvaluationService()

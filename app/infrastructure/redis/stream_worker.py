@@ -41,7 +41,7 @@ class StreamWorker:
         self._stopped = True
 
     async def run_forever(self) -> None:
-        logger.info("启动异步 worker: %s (stream=%s)", self._name, self._stream_key)
+        logger.info("Starting async worker: %s (stream=%s)", self._name, self._stream_key)
         while not self._stopped:
             try:
                 results = await self._redis.xread(
@@ -62,16 +62,16 @@ class StreamWorker:
                         except Exception:
                             logger.exception("worker %s 处理消息失败: stream=%s, msg_id=%s", self._name, self._stream_key, msg_id)
             except asyncio.CancelledError:
-                logger.info("异步 worker 已取消: %s", self._name)
+                logger.info("Async worker cancelled: %s", self._name)
                 raise
             except TimeoutError:
                 logger.warning(
-                    "异步 worker 读取 Redis Stream 超时，将继续重试: %s (stream=%s, block_ms=%s)",
+                    "Async worker Redis Stream read timeout, will retry: %s (stream=%s, block_ms=%s)",
                     self._name,
                     self._stream_key,
                     self._block_ms,
                 )
                 await asyncio.sleep(self._error_sleep_seconds)
             except Exception:
-                logger.exception("异步 worker 运行异常: %s", self._name)
+                logger.exception("Async worker runtime error: %s", self._name)
                 await asyncio.sleep(self._error_sleep_seconds)

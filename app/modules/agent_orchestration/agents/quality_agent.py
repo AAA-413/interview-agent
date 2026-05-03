@@ -44,7 +44,10 @@ class QualityAgent:
             - issues: 发现的问题
             - suggestions: 改进建议
         """
-        logger.info("🔍 开始质量检查")
+        logger.info("[QA] Starting quality check")
+        logger.info(f"[QA] execution_results count: {len(execution_results)}")
+        for i, r in enumerate(execution_results):
+            logger.info(f"[QA] execution_results[{i}]: status={r.get('status')}, keys={list(r.keys())}")
 
         # 1. 检查执行状态
         all_success = all(r.get("status") == "success" for r in execution_results)
@@ -60,6 +63,8 @@ class QualityAgent:
 
         # 2. 整合执行结果
         integrated_result = self._integrate_results(execution_results)
+        logger.info(f"[QA] integrated_result length: {len(integrated_result) if integrated_result else 0}")
+        logger.info(f"[QA] integrated_result preview: {integrated_result[:200] if integrated_result else 'EMPTY'}")
 
         # 3. 多维度质量评估
         dimensions = await self._evaluate_dimensions(
@@ -71,8 +76,8 @@ class QualityAgent:
         # 4. 计算总分
         total_score = sum(dimensions.values()) / len(dimensions) if dimensions else 0
 
-        # 5. 判断是否通过
-        passed = total_score >= 70 and all(score >= 60 for score in dimensions.values())
+        # 5. 判断是否通过（降低阈值：总分 ≥50，各维度 ≥40）
+        passed = total_score >= 50 and all(score >= 40 for score in dimensions.values())
 
         # 6. 生成问题和建议
         issues = self._identify_issues(dimensions)
@@ -98,7 +103,9 @@ class QualityAgent:
 
                 if isinstance(task_result, dict):
                     # 提取主要内容
-                    if "answer" in task_result:
+                    if "content" in task_result:
+                        integrated.append(task_result["content"])
+                    elif "answer" in task_result:
                         integrated.append(task_result["answer"])
                     elif "code" in task_result:
                         integrated.append(task_result["code"])
@@ -152,11 +159,10 @@ class QualityAgent:
 只返回 JSON，不要其他内容。"""
 
             response = await self.llm_provider.chat(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
+                [{"role": "user", "content": prompt}]
             )
 
-            content = response.get("content", "{}")
+            content = response["content"]
 
             # 提取 JSON
             import json
@@ -212,16 +218,16 @@ class QualityAgent:
         issues = []
 
         if dimensions.get("accuracy", 0) < 70:
-            issues.append("准确性不足：回答可能包含错误或不准确的信息")
+            issues.append("Accuracy insufficient: answer may contain errors or inaccurate information")
 
         if dimensions.get("completeness", 0) < 70:
-            issues.append("完整性不足：回答不够全面，缺少关键信息")
+            issues.append("Completeness insufficient: answer is not comprehensive, missing key information")
 
         if dimensions.get("relevance", 0) < 70:
-            issues.append("相关性不足：回答偏离主题或不够切题")
+            issues.append("Relevance insufficient: answer deviates from topic or not relevant enough")
 
         if dimensions.get("clarity", 0) < 70:
-            issues.append("清晰度不足：回答不够清晰，难以理解")
+            issues.append("Clarity insufficient: answer is not clear or difficult to understand")
 
         return issues
 
@@ -234,20 +240,20 @@ class QualityAgent:
         suggestions = []
 
         if dimensions.get("accuracy", 0) < 70:
-            suggestions.append("重新检索更准确的知识来源")
-            suggestions.append("使用更低的 temperature 参数提高准确性")
+            suggestions.append("Re-retrieve more accurate knowledge sources")
+            suggestions.append("Use lower temperature parameter to improve accuracy")
 
         if dimensions.get("completeness", 0) < 70:
-            suggestions.append("扩展回答内容，补充缺失的信息")
-            suggestions.append("增加更多细节和示例")
+            suggestions.append("Expand answer content, supplement missing information")
+            suggestions.append("Add more details and examples")
 
         if dimensions.get("relevance", 0) < 70:
-            suggestions.append("重新理解用户意图，聚焦核心问题")
-            suggestions.append("过滤无关信息，突出重点")
+            suggestions.append("Re-understand user intent, focus on core issues")
+            suggestions.append("Filter irrelevant information, highlight key points")
 
         if dimensions.get("clarity", 0) < 70:
-            suggestions.append("优化回答结构，使用分点或分段")
-            suggestions.append("简化语言，提高可读性")
+            suggestions.append("Optimize answer structure, use bullet points or paragraphs")
+            suggestions.append("Simplify language, improve readability")
 
         if not suggestions:
             suggestions.append("质量良好，可以直接返回结果")

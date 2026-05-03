@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from app.common.ai.structured_output import structured_output_invoker
 from app.common.error_code import ErrorCode
 from app.common.exception import BusinessException
+from app.common.prompt_utils import load_prompt, render_template
 from app.config import settings
 from app.modules.interview.schemas import (
     CategoryDTO,
@@ -64,19 +65,11 @@ class _QuestionListDTO(BaseModel):
 
 class InterviewQuestionService:
     def __init__(self):
-        self._skill_system_prompt = self._load_prompt("interview-question-skill-system.md")
-        self._skill_user_prompt = self._load_prompt("interview-question-skill-user.md")
-        self._resume_system_prompt = self._load_prompt("interview-question-resume-system.md")
-        self._resume_user_prompt = self._load_prompt("interview-question-resume-user.md")
+        self._skill_system_prompt = load_prompt(_PROMPTS_DIR, "interview-question-skill-system.md")
+        self._skill_user_prompt = load_prompt(_PROMPTS_DIR, "interview-question-skill-user.md")
+        self._resume_system_prompt = load_prompt(_PROMPTS_DIR, "interview-question-resume-system.md")
+        self._resume_user_prompt = load_prompt(_PROMPTS_DIR, "interview-question-resume-user.md")
         self._follow_up_count = min(max(settings.interview.follow_up_count, 0), MAX_FOLLOW_UP_COUNT)
-
-    @staticmethod
-    def _load_prompt(filename: str) -> str:
-        path = _PROMPTS_DIR / filename
-        if path.exists():
-            return path.read_text(encoding="utf-8")
-        logger.warning("Prompt 文件不存在: %s", path)
-        return ""
 
     async def generate_questions(
         self,
@@ -154,7 +147,7 @@ class InterviewQuestionService:
             }
 
             system_prompt = self._resume_system_prompt
-            user_prompt = self._render_template(self._resume_user_prompt, variables)
+            user_prompt = render_template(self._resume_user_prompt, variables)
 
             dto = await structured_output_invoker.invoke(
                 chat_model=chat_model,
@@ -204,7 +197,7 @@ class InterviewQuestionService:
             }
 
             system_prompt = self._skill_system_prompt + GENERIC_MODE_SYSTEM_APPEND
-            user_prompt = self._render_template(self._skill_user_prompt, variables)
+            user_prompt = render_template(self._skill_user_prompt, variables)
 
             dto = await structured_output_invoker.invoke(
                 chat_model=chat_model,
@@ -398,13 +391,6 @@ class InterviewQuestionService:
     @staticmethod
     def _build_default_follow_up(question: str, index: int) -> str:
         return f"关于这个问题，请进一步展开说明第{index}个关键点。"
-
-    @staticmethod
-    def _render_template(template: str, variables: dict) -> str:
-        result = template
-        for key, value in variables.items():
-            result = result.replace(f"{{{{ {key} }}}}", str(value))
-        return result
 
 
 interview_question_service = InterviewQuestionService()

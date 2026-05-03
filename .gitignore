@@ -16,7 +16,17 @@ build/
 .idea/
 .vscode/
 .claude/
+.pytest_cache/
 
 *.log
+logs/
+
 .env
-tmp_verify_report.py
+.env.production
+
+tmp_*.py
+test_*.py
+
+ENDPOINT_CALLED.txt
+ENTRY_MARKER.txt
+TEST_BG.txt

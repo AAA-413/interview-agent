@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.common.base_persistence_service import safe_json_loads
 from app.common.error_code import ErrorCode
 from app.common.exception import BusinessException
 from app.common.model import AsyncTaskStatus
@@ -174,9 +175,7 @@ class InterviewPersistenceService:
         await db.flush()
 
     async def delete_session(self, db: AsyncSession, session_id: str) -> None:
-        entity = await self.find_by_session_id(db, session_id)
-        if entity is None:
-            raise BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND)
+        entity = await self.find_by_session_id_or_throw(db, session_id)
         await db.execute(delete(InterviewAnswerEntity).where(InterviewAnswerEntity.session_id == entity.id))
         await db.delete(entity)
         await db.flush()
@@ -218,13 +217,8 @@ class InterviewPersistenceService:
         return historical
 
     def parse_questions_json(self, questions_json: str | None) -> list[InterviewQuestionDTO]:
-        if not questions_json:
-            return []
-        try:
-            data = json.loads(questions_json)
-            return [InterviewQuestionDTO(**q) for q in data]
-        except (json.JSONDecodeError, KeyError):
-            return []
+        data = safe_json_loads(questions_json, [])
+        return [InterviewQuestionDTO(**q) for q in data] if data else []
 
     def to_session_list_item(self, entity: InterviewSessionEntity) -> SessionListItemDTO:
         return SessionListItemDTO(
@@ -245,16 +239,14 @@ class InterviewPersistenceService:
 
     def to_detail_dto(self, entity: InterviewSessionEntity) -> InterviewDetailDTO:
         questions = self.parse_questions_json(entity.questions_json)
-        strengths = json.loads(entity.strengths_json) if entity.strengths_json else []
-        improvements = json.loads(entity.improvements_json) if entity.improvements_json else []
-        reference_answers = []
-        if entity.reference_answers_json:
-            try:
-                from app.modules.interview.schemas import ReferenceAnswerDTO
+        strengths = safe_json_loads(entity.strengths_json, [])
+        improvements = safe_json_loads(entity.improvements_json, [])
 
-                reference_answers = [ReferenceAnswerDTO(**r) for r in json.loads(entity.reference_answers_json)]
-            except (json.JSONDecodeError, KeyError):
-                pass
+        raw_refs = safe_json_loads(entity.reference_answers_json, [])
+        reference_answers = []
+        if raw_refs:
+            from app.modules.interview.schemas import ReferenceAnswerDTO
+            reference_answers = [ReferenceAnswerDTO(**r) for r in raw_refs]
 
         question_evaluations = []
         for answer in entity.answers:

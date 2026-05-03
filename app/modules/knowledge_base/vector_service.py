@@ -34,7 +34,7 @@ class KnowledgeBaseVectorService:
         except ImportError:
             self._text_embedding = None
             self._use_real_embedding = False
-            logger.warning("dashscope 未安装，降级使用哈希向量 (16维)")
+            logger.warning("dashscope not installed, fallback to hash vector (16-dim)")
 
     def split_text(self, text: str, *, chunk_size: int = 900, overlap: int = 120, doc_type: str = "general") -> list[ChunkBuildResult]:
         """

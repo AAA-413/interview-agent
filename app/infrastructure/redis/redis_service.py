@@ -10,7 +10,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS = 5
-REDIS_SOCKET_TIMEOUT_SECONDS = 5  # 从 30 秒减少到 5 秒
+REDIS_SOCKET_TIMEOUT_SECONDS = 10  # Worker block_ms=5000 需要更长超时
 REDIS_MAX_CONNECTIONS = 50  # 连接池大小
 
 _redis: aioredis.Redis | None = None

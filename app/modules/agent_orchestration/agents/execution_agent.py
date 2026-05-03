@@ -127,12 +127,12 @@ class KnowledgeSearchAgent(ExecutionAgent):
 3. 保持简洁准确
 """
 
-            response = await self.llm_provider.chat(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
+            from langchain_core.messages import HumanMessage
+            response = await self.llm_provider.ainvoke(
+                [HumanMessage(content=prompt)]
             )
 
-            answer = response.get("content", "")
+            answer = response.content or ""
 
             return self._build_result(
                 task_id=task_id,
@@ -202,12 +202,12 @@ class CodeAnalysisAgent(ExecutionAgent):
 4. 遵循最佳实践
 """
 
-            response = await self.llm_provider.chat(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.5,
+            from langchain_core.messages import HumanMessage
+            response = await self.llm_provider.ainvoke(
+                [HumanMessage(content=prompt)]
             )
 
-            code = response.get("content", "")
+            code = response.content or ""
 
             return self._build_result(
                 task_id=task_id,
@@ -287,12 +287,12 @@ class DataProcessingAgent(ExecutionAgent):
 3. 生成结构化结果
 """
 
-            response = await self.llm_provider.chat(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
+            from langchain_core.messages import HumanMessage
+            response = await self.llm_provider.ainvoke(
+                [HumanMessage(content=prompt)]
             )
 
-            processed_data = response.get("content", "")
+            processed_data = response.content or ""
 
             return self._build_result(
                 task_id=task_id,
@@ -359,12 +359,12 @@ class DesignAgent(ExecutionAgent):
 4. 包含关键技术选型
 """
 
-            response = await self.llm_provider.chat(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.6,
+            from langchain_core.messages import HumanMessage
+            response = await self.llm_provider.ainvoke(
+                [HumanMessage(content=prompt)]
             )
 
-            design = response.get("content", "")
+            design = response.content or ""
 
             return self._build_result(
                 task_id=task_id,
@@ -386,6 +386,562 @@ class DesignAgent(ExecutionAgent):
             )
 
 
+class DownloadExecutionAgent(ExecutionAgent):
+    """下载执行 Agent - 专门用于智能下载功能"""
+
+    def __init__(self, llm_provider: LLMProvider, mcp_service):
+        super().__init__("download_execution", llm_provider)
+        self.mcp_service = mcp_service
+
+    async def execute(
+        self,
+        task: Dict[str, Any],
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        执行下载任务
+
+        Args:
+            task: 下载任务，包含 type、url、query 等
+            context: 上下文信息
+
+        Returns:
+            执行结果，包含下载的内容和元数据
+        """
+        task_id = task.get("id", "unknown")
+        task_type = task.get("type", "")
+        description = task.get("description", "")
+
+        logger.info(f"📥 执行下载任务: {description}")
+
+        try:
+            # 根据任务类型执行不同的下载操作
+            if task_type == "fetch_url":
+                result = await self._fetch_url(task)
+            elif task_type == "search_web":
+                result = await self._search_web(task)
+            elif task_type == "fetch_blog":
+                result = await self._fetch_blog(task)
+            else:
+                raise ValueError(f"未知的任务类型: {task_type}")
+
+            return self._build_result(
+                task_id=task_id,
+                status="success",
+                result=result,
+                metadata={
+                    "task_type": task_type,
+                    "content_size": len(result.get("content", "")),
+                },
+            )
+
+        except Exception as e:
+            import traceback
+            error_detail = traceback.format_exc()
+            logger.error(f"下载任务失败: {e}")
+            logger.error(f"详细错误:\n{error_detail}")
+            return self._build_result(
+                task_id=task_id,
+                status="failed",
+                error=str(e),
+            )
+
+    async def _fetch_url(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        """直接抓取URL"""
+        url = task.get("url")
+        if not url:
+            raise ValueError("缺少 URL 参数")
+
+        logger.info(f"  抓取URL: {url}")
+
+        result = await self.mcp_service.fetch_url(url)
+        raw_content = result.get("content", "")
+
+        # 内容清洗和结构化
+        logger.info(f"  开始清洗内容，原始长度: {len(raw_content)}")
+        cleaned_content = await self._clean_content(
+            raw_content=raw_content,
+            task_description=task.get("description", ""),
+            source_type="url"
+        )
+        logger.info(f"  清洗完成，清洗后长度: {len(cleaned_content)}")
+
+        return {
+            "content": cleaned_content,
+            "metadata": {
+                "url": url,
+                "source_type": "url",
+                "description": task.get("description", ""),
+                "raw_length": len(raw_content),
+                "cleaned_length": len(cleaned_content),
+            },
+        }
+
+    async def _search_web(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        """搜索网页并抓取结果"""
+        query = task.get("query")
+        num_results = task.get("num_results", 3)
+
+        if not query:
+            raise ValueError("缺少 query 参数")
+
+        logger.info(f"  搜索: {query} (前{num_results}个结果)")
+
+        try:
+            result = await self.mcp_service.search_web(query, num_results)
+            raw_content = result.get("content", "")
+
+            # 添加详细日志
+            logger.info(f"  搜索返回结果: content长度={len(raw_content)}, results数量={len(result.get('results', []))}")
+
+            # 内容清洗和结构化
+            logger.info(f"  开始清洗搜索内容")
+            cleaned_content = await self._clean_content(
+                raw_content=raw_content,
+                task_description=task.get("description", ""),
+                source_type="search"
+            )
+            logger.info(f"  清洗完成，清洗后长度: {len(cleaned_content)}")
+
+            return {
+                "content": cleaned_content,
+                "results": result.get("results", []),
+                "metadata": {
+                    "query": query,
+                    "num_results": num_results,
+                    "source_type": "search",
+                    "description": task.get("description", ""),
+                    "raw_length": len(raw_content),
+                    "cleaned_length": len(cleaned_content),
+                },
+            }
+        except Exception as e:
+            import traceback
+            error_detail = traceback.format_exc()
+            logger.error(f"  搜索异常: {e}")
+            logger.error(f"  详细错误:\n{error_detail}")
+            raise
+
+    async def _fetch_blog(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        """抓取博客文章"""
+        url = task.get("url")
+        if not url:
+            raise ValueError("缺少 URL 参数")
+
+        logger.info(f"  抓取博客: {url}")
+
+        result = await self.mcp_service.fetch_blog(url)
+
+        return {
+            "content": result.get("content", ""),
+            "title": result.get("title", ""),
+            "author": result.get("author", ""),
+            "metadata": {
+                "url": url,
+                "platform": result.get("metadata", {}).get("platform", ""),
+                "source_type": "blog",
+                "description": task.get("description", ""),
+            },
+        }
+
+    async def _clean_content(self, raw_content: str, task_description: str, source_type: str) -> str:
+        """
+        清洗和结构化内容
+
+        Args:
+            raw_content: 原始内容
+            task_description: 任务描述
+            source_type: 来源类型（url/search/blog）
+
+        Returns:
+            清洗后的 Markdown 格式内容
+        """
+        if not raw_content or len(raw_content.strip()) < 100:
+            logger.warning(f"  内容过短或为空，跳过清洗")
+            return raw_content
+
+        # 限制输入长度，避免 token 超限
+        content_to_clean = raw_content[:4000]
+
+        prompt = f"""请清洗和结构化以下网页内容，提取核心知识：
+
+任务描述：{task_description}
+来源类型：{source_type}
+
+原始内容：
+{content_to_clean}
+
+要求：
+1. 移除导航、广告、页脚、版权声明等无关内容
+2. 提取核心知识点、概念定义、使用方法
+3. 保留所有代码示例（使用 Markdown 代码块格式）
+4. 使用清晰的 Markdown 格式（# 标题、- 列表、```代码块```）
+5. 保留关键术语的英文原文（如 async/await）
+6. 控制在 1500 字以内
+
+输出清洗后的 Markdown 文档："""
+
+        try:
+            from langchain_core.messages import HumanMessage
+            response = await self.llm_provider.ainvoke([HumanMessage(content=prompt)])
+
+            cleaned = response.content or ""
+
+            # 如果清洗后内容过短，返回原始内容
+            if len(cleaned.strip()) < 50:
+                logger.warning(f"  清洗后内容过短，使用原始内容")
+                return raw_content
+
+            return cleaned
+
+        except Exception as e:
+            logger.error(f"  内容清洗失败: {e}，返回原始内容")
+            return raw_content
+
+    async def integrate_contents(
+        self,
+        execution_results: List[Dict[str, Any]],
+        user_input: str,
+    ) -> Dict[str, Any]:
+        """
+        整合多个搜索结果为一篇综合文档
+
+        Args:
+            execution_results: 执行结果列表
+            user_input: 用户原始需求
+
+        Returns:
+            整合后的文档，包含：
+            - integrated_content: 整合后的内容
+            - title: 文档标题
+            - summary: 文档摘要
+            - sources: 来源列表
+        """
+        logger.info(f"🔄 开始整合 {len(execution_results)} 个搜索结果")
+        logger.info(f"📋 execution_results 类型: {type(execution_results)}")
+        logger.info(f"📋 execution_results 内容: {execution_results}")
+
+        # 提取所有成功的内容
+        contents = []
+        sources = []
+
+        for i, result in enumerate(execution_results):
+            if result is None:
+                logger.warning(f"  结果{i+1}: None (跳过)")
+                continue
+
+            if not isinstance(result, dict):
+                logger.warning(f"  结果{i+1}: 不是字典类型 (type={type(result)}), 跳过")
+                continue
+
+            logger.info(f"  结果{i+1}: status={result.get('status')}, has_result={bool(result.get('result'))}")
+
+            if result.get("status") != "success":
+                continue
+
+            task_result = result.get("result", {})
+            if not isinstance(task_result, dict):
+                logger.warning(f"  结果{i+1}: task_result不是字典类型, 跳过")
+                continue
+
+            content = task_result.get("content", "")
+            metadata = task_result.get("metadata", {})
+
+            logger.info(f"    content_length={len(content)}, metadata={metadata}")
+
+            if content and len(content.strip()) > 50:  # 降低过滤阈值从100到50
+                contents.append({
+                    "content": content,
+                    "source": metadata.get("url") or metadata.get("query", ""),
+                    "description": metadata.get("description", ""),
+                })
+                sources.append(metadata.get("url") or metadata.get("query", ""))
+
+        if not contents:
+            logger.error(f"❌ 没有有效内容可整合。执行结果数: {len(execution_results)}")
+            for i, result in enumerate(execution_results):
+                if result is None:
+                    logger.error(f"  结果{i+1}: None")
+                elif not isinstance(result, dict):
+                    logger.error(f"  结果{i+1}: 不是字典类型 (type={type(result)})")
+                else:
+                    result_data = result.get('result', {})
+                    content_len = len(result_data.get('content', '')) if isinstance(result_data, dict) else 0
+                    logger.error(f"  结果{i+1}: status={result.get('status')}, content_length={content_len}")
+            raise ValueError("没有有效的内容可以整合，请检查搜索引擎配置或网络连接")
+
+        logger.info(f"  有效内容数: {len(contents)}")
+
+        # 限制最多3个来源，优化处理速度
+        if len(contents) > 3:
+            logger.info(f"  内容数超过3个，仅使用前3个来源")
+            contents = contents[:3]
+
+        # 构建整合提示词
+        content_blocks = []
+        for i, item in enumerate(contents, 1):
+            content_blocks.append(
+                f"## 来源 {i}: {item['description']}\n"
+                f"URL: {item['source']}\n\n"
+                f"{item['content'][:2000]}\n"  # 每个来源限制2000字符（从1000提升）
+            )
+
+        combined_content = "\n\n---\n\n".join(content_blocks)
+
+        prompt = f"""用户需求："{user_input}"
+
+请将以下资料整合为一篇简洁的文档（3000字以内）：
+
+{combined_content}
+
+要求：
+1. 提取核心知识点和关键概念
+2. 保留所有代码示例（使用 Markdown 代码块）
+3. 使用清晰的 Markdown 格式（标题、列表、代码块）
+4. 保持结构清晰，便于阅读
+5. 如果有多个来源，综合不同视角的信息
+
+输出整合文档："""
+
+        # 调用LLM整合
+        from langchain_core.messages import HumanMessage
+        response = await self.llm_provider.ainvoke(
+            [HumanMessage(content=prompt)]
+        )
+
+        if not response:
+            logger.error("❌ LLM返回空响应")
+            raise ValueError("LLM整合失败：返回空响应")
+
+        integrated_content = response.content or ""
+        if not integrated_content:
+            logger.error("❌ LLM返回的content为空")
+            raise ValueError("LLM整合失败：返回内容为空")
+
+        # 生成标题和摘要
+        title_prompt = f"""基于以下内容，生成一个简洁的标题（10字以内）和摘要（50字以内）：
+
+用户需求：{user_input}
+
+内容：
+{integrated_content[:500]}
+
+请以JSON格式输出：
+{{"title": "标题", "summary": "摘要"}}"""
+
+        from langchain_core.messages import HumanMessage
+        title_response = await self.llm_provider.ainvoke(
+            [HumanMessage(content=title_prompt)]
+        )
+
+        # 解析标题和摘要
+        import json
+        try:
+            if not title_response:
+                logger.warning("标题生成返回空响应，使用默认值")
+                title = user_input[:20]
+                summary = integrated_content[:100]
+            else:
+                title_data = json.loads(title_response.content or "{}")
+                title = title_data.get("title", user_input[:20])
+                summary = title_data.get("summary", "")
+        except Exception as e:
+            logger.warning(f"解析标题失败: {e}，使用默认值")
+            title = user_input[:20]
+            summary = integrated_content[:100]
+
+        logger.info(f"✅ 内容整合完成，标题: {title}")
+
+        return {
+            "integrated_content": integrated_content,
+            "title": title,
+            "summary": summary,
+            "sources": sources,
+            "source_count": len(contents),
+            "total_length": len(integrated_content),
+        }
+
+
+class GitHubExecutionAgent(ExecutionAgent):
+    """GitHub执行 Agent - 专门处理GitHub相关任务"""
+
+    def __init__(self, llm_provider: LLMProvider, github_service):
+        super().__init__("github_execution", llm_provider)
+        self.github_service = github_service
+
+    async def execute(
+        self,
+        task: Dict[str, Any],
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        执行GitHub任务
+
+        Args:
+            task: GitHub任务，包含 type、repo、query 等
+            context: 上下文信息
+
+        Returns:
+            执行结果
+        """
+        task_id = task.get("id", "unknown")
+        task_type = task.get("type", "")
+        description = task.get("description", "")
+
+        logger.info(f"🐙 执行GitHub任务: {description}")
+
+        try:
+            # 根据任务类型执行不同的操作
+            if task_type == "search_github":
+                result = await self._search_github(task)
+            elif task_type == "fetch_github_repo":
+                result = await self._fetch_github_repo(task)
+            elif task_type == "fetch_github_file":
+                result = await self._fetch_github_file(task)
+            else:
+                raise ValueError(f"未知的GitHub任务类型: {task_type}")
+
+            return self._build_result(
+                task_id=task_id,
+                status="success",
+                result=result,
+                metadata={
+                    "task_type": task_type,
+                },
+            )
+
+        except Exception as e:
+            logger.error(f"GitHub任务失败: {e}")
+            return self._build_result(
+                task_id=task_id,
+                status="failed",
+                error=str(e),
+            )
+
+    async def _search_github(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        搜索GitHub仓库
+
+        Args:
+            task: 包含 query、language、num_results 等参数
+
+        Returns:
+            搜索结果，包含仓库列表
+        """
+        query = task.get("query")
+        language = task.get("language", "")
+        sort = task.get("sort", "stars")
+        num_results = task.get("num_results", 5)
+
+        if not query:
+            raise ValueError("缺少 query 参数")
+
+        logger.info(f"  搜索GitHub: {query}")
+
+        repos = await self.github_service.search_repositories(
+            query=query,
+            language=language,
+            sort=sort,
+            per_page=num_results,
+        )
+
+        # 生成内容摘要
+        content_parts = []
+        for i, repo in enumerate(repos, 1):
+            content_parts.append(
+                f"## {i}. {repo['full_name']} (⭐{repo['stars']})\n\n"
+                f"{repo['description']}\n\n"
+                f"语言: {repo['language']}\n"
+                f"链接: {repo['url']}"
+            )
+
+        content = "\n\n---\n\n".join(content_parts)
+
+        return {
+            "content": content,
+            "repos": repos,
+            "metadata": {
+                "query": query,
+                "num_results": len(repos),
+                "source_type": "github_search",
+            },
+        }
+
+    async def _fetch_github_repo(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        抓取GitHub仓库的文档
+
+        Args:
+            task: 包含 repo 参数（格式：owner/repo）
+
+        Returns:
+            仓库文档集合
+        """
+        repo = task.get("repo")
+        if not repo:
+            raise ValueError("缺少 repo 参数")
+
+        logger.info(f"  抓取仓库: {repo}")
+
+        result = await self.github_service.fetch_repo_docs(
+            repo=repo,
+            include_readme=True,
+            max_files=20,
+        )
+
+        # 合并所有文档内容
+        content_parts = []
+        for doc in result["documents"]:
+            content_parts.append(
+                f"# {doc['path']}\n\n{doc['content']}"
+            )
+
+        content = "\n\n---\n\n".join(content_parts)
+
+        return {
+            "content": content,
+            "repo": repo,
+            "documents": result["documents"],
+            "total_docs": result["total_docs"],
+            "metadata": {
+                "repo": repo,
+                "source_type": "github_repo",
+            },
+        }
+
+    async def _fetch_github_file(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        抓取GitHub单个文件
+
+        Args:
+            task: 包含 repo、file_path 参数
+
+        Returns:
+            文件内容
+        """
+        repo = task.get("repo")
+        file_path = task.get("file_path")
+
+        if not repo or not file_path:
+            raise ValueError("缺少 repo 或 file_path 参数")
+
+        logger.info(f"  抓取文件: {repo}/{file_path}")
+
+        content = await self.github_service.get_file_content(repo, file_path)
+
+        if not content:
+            raise ValueError(f"无法获取文件内容: {file_path}")
+
+        return {
+            "content": content,
+            "metadata": {
+                "repo": repo,
+                "file_path": file_path,
+                "source_type": "github_file",
+            },
+        }
+
+
 # Agent 工厂
 class ExecutionAgentFactory:
     """执行 Agent 工厂"""
@@ -395,6 +951,8 @@ class ExecutionAgentFactory:
         agent_type: str,
         llm_provider: LLMProvider,
         knowledge_service=None,
+        mcp_service=None,
+        github_service=None,
     ) -> ExecutionAgent:
         """创建执行 Agent"""
         if agent_type == "knowledge_search":
@@ -407,5 +965,13 @@ class ExecutionAgentFactory:
             return DataProcessingAgent(llm_provider)
         elif agent_type == "design":
             return DesignAgent(llm_provider)
+        elif agent_type == "download_execution":
+            if not mcp_service:
+                raise ValueError("DownloadExecutionAgent 需要 mcp_service")
+            return DownloadExecutionAgent(llm_provider, mcp_service)
+        elif agent_type == "github_execution":
+            if not github_service:
+                raise ValueError("GitHubExecutionAgent 需要 github_service")
+            return GitHubExecutionAgent(llm_provider, github_service)
         else:
             raise ValueError(f"未知的 Agent 类型: {agent_type}")

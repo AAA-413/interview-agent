@@ -24,30 +24,46 @@ def _check_port_open(host: str, port: int, timeout: float = 2) -> bool:
 engine = None
 async_session_factory = None
 
-_db_available = _check_port_open(settings.database.host, settings.database.port)
 
-if _db_available:
-    engine = create_async_engine(
-        settings.database.dsn,
-        echo=settings.debug,
-        pool_size=20,              # 常驻连接数（从 10 增加到 20）
-        max_overflow=10,           # 最大溢出连接数（从 20 减少到 10，总连接数 30）
-        pool_timeout=30,           # 获取连接超时（秒）
-        pool_recycle=3600,         # 连接回收时间（秒）
-        pool_pre_ping=True,        # 连接前检测是否有效
-        connect_args={
-            "timeout": 5,
-            "command_timeout": 5,
-        },
-    )
-    logger.info("数据库连接池配置: pool_size=20, max_overflow=10, 总连接数=30")
-    async_session_factory = async_sessionmaker(
-        engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-    )
-else:
-    logger.warning("PostgreSQL (%s:%s) 不可用，数据库功能将被禁用", settings.database.host, settings.database.port)
+def init_engine():
+    """延迟初始化数据库引擎（在应用启动时调用）"""
+    global engine, async_session_factory
+
+    import time
+    max_retries = 5
+    retry_delay = 2
+
+    for attempt in range(max_retries):
+        try:
+            logger.info("正在创建数据库引擎（尝试 %d/%d）", attempt + 1, max_retries)
+            engine = create_async_engine(
+                settings.database.dsn,
+                echo=settings.debug,
+                pool_size=20,
+                max_overflow=10,
+                pool_timeout=30,
+                pool_recycle=3600,
+                pool_pre_ping=True,
+                connect_args={
+                    "timeout": 5,
+                    "command_timeout": 5,
+                },
+            )
+            logger.info("数据库引擎创建成功，连接池配置: pool_size=20, max_overflow=10, 总连接数=30")
+
+            async_session_factory = async_sessionmaker(
+                engine,
+                class_=AsyncSession,
+                expire_on_commit=False,
+            )
+            return
+        except Exception as e:
+            logger.warning(f"数据库引擎创建失败（尝试 {attempt + 1}/{max_retries}）: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+            else:
+                logger.error("数据库引擎创建最终失败")
+                raise
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -69,9 +85,16 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         raise
 
 
+def get_db_context():
+    """返回数据库会话上下文管理器（用于 async with）"""
+    if async_session_factory is None:
+        raise RuntimeError("数据库不可用，请先启动 PostgreSQL")
+    return async_session_factory()
+
+
 async def init_db() -> None:
-    if not _db_available or engine is None:
-        logger.warning("数据库不可用，跳过表创建")
+    if engine is None:
+        logger.warning("数据库引擎未初始化，跳过表创建")
         return
 
     from app.models.base import Base
@@ -79,16 +102,26 @@ async def init_db() -> None:
     from app.modules.interview.models import InterviewAnswerEntity, InterviewSessionEntity  # noqa: F401
     from app.modules.knowledge_base.models import KnowledgeBaseEntity, KnowledgeChunkEntity, RagChatEntity  # noqa: F401
 
-    try:
-        await asyncio.wait_for(
-            _do_create_tables(Base),
-            timeout=10,
-        )
-        logger.info("数据库表创建成功")
-    except asyncio.TimeoutError:
-        logger.warning("数据库连接超时（10s），跳过表创建")
-    except Exception as e:
-        logger.warning("数据库初始化失败: %s", e)
+    max_retries = 5
+    retry_delay = 2
+
+    for attempt in range(max_retries):
+        try:
+            await asyncio.wait_for(
+                _do_create_tables(Base),
+                timeout=10,
+            )
+            logger.info("数据库表创建成功")
+            return
+        except asyncio.TimeoutError:
+            logger.warning("数据库连接超时（10s），尝试 %d/%d", attempt + 1, max_retries)
+        except Exception as e:
+            logger.warning("数据库初始化失败（尝试 %d/%d）: %s", attempt + 1, max_retries, e)
+
+        if attempt < max_retries - 1:
+            await asyncio.sleep(retry_delay)
+
+    logger.error("数据库初始化最终失败，已重试 %d 次", max_retries)
 
 
 async def _do_create_tables(base) -> None:

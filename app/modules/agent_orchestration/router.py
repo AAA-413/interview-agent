@@ -77,9 +77,9 @@ class AgentExecutionDetail(BaseModel):
 # ==================== 依赖注入 ====================
 
 
-async def get_knowledge_service(db: AsyncSession = Depends(get_db)) -> KnowledgeBaseRagService:
+async def get_knowledge_service() -> KnowledgeBaseRagService:
     """获取知识库服务"""
-    return KnowledgeBaseRagService(db)
+    return KnowledgeBaseRagService()
 
 
 async def get_tool_registry() -> AgentToolRegistry:
@@ -147,6 +147,9 @@ async def agent_chat(
         cost_controller = CostController(budget_limit=request.budget_limit)
 
         # 5. 创建责任链
+        from app.common.ai.llm_adapter import LLMProviderAdapter
+        chat_model = llm_registry.default
+        llm_provider = LLMProviderAdapter(chat_model)
         factory = AgentFactory(
             llm_provider=llm_provider,
             knowledge_service=knowledge_service,
@@ -341,6 +344,9 @@ async def build_knowledge_base(
         mcp_service = MCPService(document_fetcher=document_fetcher)
 
         # 创建 KnowledgeBuilderAgent
+        from app.common.ai.llm_adapter import LLMProviderAdapter
+        chat_model = llm_registry.default
+        llm_provider = LLMProviderAdapter(chat_model)
         agent = KnowledgeBuilderAgent(
             llm_provider=llm_provider,
             mcp_service=mcp_service,

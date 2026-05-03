@@ -132,16 +132,15 @@ class KnowledgeBuilderAgent:
 
 只返回 JSON，不要其他内容。"""
 
-        response = await self.llm_provider.chat(
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
+        response = await self.llm_provider.ainvoke(
+            [{"role": "user", "content": prompt}]
         )
 
         # 解析 JSON
         import json
         import re
 
-        content = response.get("content", "")
+        content = response.content
         json_match = re.search(r"\{.*\}", content, re.DOTALL)
         if json_match:
             return json.loads(json_match.group())
@@ -215,16 +214,15 @@ class KnowledgeBuilderAgent:
 
 只返回 JSON，不要其他内容。"""
 
-        response = await self.llm_provider.chat(
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
+        response = await self.llm_provider.ainvoke(
+            [{"role": "user", "content": prompt}]
         )
 
         # 解析 JSON
         import json
         import re
 
-        content = response.get("content", "")
+        content = response.content
         json_match = re.search(r"\{.*\}", content, re.DOTALL)
         if json_match:
             return json.loads(json_match.group())

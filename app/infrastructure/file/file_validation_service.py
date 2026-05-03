@@ -29,10 +29,10 @@ class FileValidationService:
     @staticmethod
     def _is_allowed_type(content_type: str, allowed_types: list[str]) -> bool:
         if not content_type:
-            return True
-        lower = content_type.lower()
+            return False
+        lower = content_type.lower().split(";")[0].strip()  # 去除 charset 等参数
         for allowed in allowed_types:
-            if lower == allowed.lower() or lower.startswith(allowed.lower().split("/")[0]):
+            if lower == allowed.lower():
                 return True
         return False
 
