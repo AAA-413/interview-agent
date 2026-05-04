@@ -13,6 +13,7 @@ from app.modules.interview.schemas import (
     CategoryScoreDTO,
     InterviewReportDTO,
     KeyPoint,
+    ProjectDimensionsDTO,
     QuestionEvaluationDTO,
     ReferenceAnswerDTO,
 )
@@ -50,6 +51,11 @@ class _QuestionEvalDTO(BaseModel):
     feedback: str
     referenceAnswer: str = ""
     keyPoints: list[str] | None = None
+    questionType: str = "knowledge"
+    coveredPoints: list[str] | None = None
+    missedPoints: list[str] | None = None
+    errors: list[str] | None = None
+    dimensions: _ProjectDimensionsDTO | None = None
 
 
 class _BatchReportDTO(BaseModel):
@@ -155,10 +161,17 @@ class UnifiedEvaluationService:
                             questionIndex=qa.question_index,
                             score=result.score,
                             feedback=result.feedback,
+                            questionType="project",
+                            dimensions=_ProjectDimensionsDTO(
+                                authenticity=result.dimensions.authenticity,
+                                technical_depth=result.dimensions.technical_depth,
+                                depth=result.dimensions.depth,
+                                expression=result.dimensions.expression,
+                            ),
                         )
                     else:
                         evaluations[index] = _QuestionEvalDTO(
-                            questionIndex=qa.question_index, score=0, feedback="评估失败"
+                            questionIndex=qa.question_index, score=0, feedback="评估失败", questionType="project"
                         )
                 else:
                     # Knowledge evaluation with key_points
@@ -172,12 +185,16 @@ class UnifiedEvaluationService:
                                 questionIndex=qa.question_index,
                                 score=result.score,
                                 feedback=result.feedback,
+                                questionType="knowledge",
                                 referenceAnswer=qa.reference_answer,
                                 keyPoints=[kp.point for kp in qa.key_points] if qa.key_points else [],
+                                coveredPoints=result.coveredPoints,
+                                missedPoints=result.missedPoints,
+                                errors=result.errors,
                             )
                         else:
                             evaluations[index] = _QuestionEvalDTO(
-                                questionIndex=qa.question_index, score=0, feedback="评估失败"
+                                questionIndex=qa.question_index, score=0, feedback="评估失败", questionType="knowledge"
                             )
                     else:
                         # Fallback to basic evaluation
@@ -369,6 +386,16 @@ class UnifiedEvaluationService:
                     user_answer=q.user_answer,
                     score=score,
                     feedback=feedback,
+                    question_type=eval_dto.questionType if eval_dto else "knowledge",
+                    covered_points=eval_dto.coveredPoints if eval_dto else None,
+                    missed_points=eval_dto.missedPoints if eval_dto else None,
+                    errors=eval_dto.errors if eval_dto else None,
+                    dimensions=ProjectDimensionsDTO(
+                        authenticity=eval_dto.dimensions.authenticity,
+                        technical_depth=eval_dto.dimensions.technical_depth,
+                        depth=eval_dto.dimensions.depth,
+                        expression=eval_dto.dimensions.expression,
+                    ) if eval_dto and eval_dto.dimensions else None,
                 )
             )
             reference_answers.append(

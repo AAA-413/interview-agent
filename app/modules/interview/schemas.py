@@ -101,6 +101,13 @@ class SessionListItemDTO(BaseModel):
     completed_at: datetime | None = None
 
 
+class ProjectDimensionsDTO(BaseModel):
+    authenticity: int = 0
+    technical_depth: int = 0
+    depth: int = 0
+    expression: int = 0
+
+
 class QuestionEvaluationDTO(BaseModel):
     question_index: int
     question: str
@@ -108,13 +115,18 @@ class QuestionEvaluationDTO(BaseModel):
     user_answer: str | None = None
     score: int = 0
     feedback: str | None = None
+    question_type: str = "knowledge"
+    covered_points: list[str] | None = None
+    missed_points: list[str] | None = None
+    errors: list[str] | None = None
+    dimensions: ProjectDimensionsDTO | None = None
 
 
 class ReferenceAnswerDTO(BaseModel):
     question_index: int
     question: str
     reference_answer: str | None = None
-    key_points: list[str] = Field(default_factory=list)
+    key_points: list[str] | None = None
 
 
 class CategoryScoreDTO(BaseModel):
