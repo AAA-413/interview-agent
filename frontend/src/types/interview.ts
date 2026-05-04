@@ -1,3 +1,9 @@
+export interface KeyPoint {
+  point: string;
+  score_range: string;
+  weight: string;
+}
+
 export interface InterviewQuestionDTO {
   question_index: number;
   question: string;
@@ -7,6 +13,9 @@ export interface InterviewQuestionDTO {
   is_follow_up: boolean;
   parent_question_index: number | null;
   answer: string | null;
+  question_type: string;
+  reference_answer: string | null;
+  key_points: KeyPoint[] | null;
 }
 
 export interface CategoryDTO {
@@ -82,6 +91,13 @@ export interface SessionListItemDTO {
   completed_at: string | null;
 }
 
+export interface ProjectDimensions {
+  authenticity: number;
+  technical_depth: number;
+  depth: number;
+  expression: number;
+}
+
 export interface QuestionEvaluationDTO {
   question_index: number;
   question: string;
@@ -89,6 +105,11 @@ export interface QuestionEvaluationDTO {
   user_answer: string | null;
   score: number;
   feedback: string | null;
+  question_type?: string;
+  covered_points?: string[];
+  missed_points?: string[];
+  errors?: string[];
+  dimensions?: ProjectDimensions;
 }
 
 export interface ReferenceAnswerDTO {

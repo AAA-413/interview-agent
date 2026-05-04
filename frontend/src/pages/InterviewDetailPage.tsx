@@ -180,32 +180,96 @@ export default function InterviewDetailPage() {
           <div className="bg-white rounded-2xl border border-slate-200 p-6">
             <h2 className="text-lg font-semibold text-slate-900 mb-4">问答详情</h2>
             <div className="space-y-4">
-              {detail.question_evaluations.map((q, idx) => (
-                <div key={idx} className="border border-slate-100 rounded-xl p-4">
-                  <div className="flex items-start justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <span className="w-6 h-6 bg-primary-100 text-primary-600 rounded-full flex items-center justify-center text-xs font-medium">{q.question_index + 1}</span>
-                      <span className="text-xs text-slate-400">{q.category || '综合'}</span>
+              {detail.question_evaluations.map((q, idx) => {
+                const refAnswer = detail.reference_answers?.find(r => r.question_index === q.question_index);
+                const isFollowUp = refAnswer?.question?.includes('-追问') || false;
+                return (
+                  <div key={idx} className="border border-slate-100 rounded-xl p-4">
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="w-6 h-6 bg-primary-100 text-primary-600 rounded-full flex items-center justify-center text-xs font-medium">{q.question_index + 1}</span>
+                        {isFollowUp && (
+                          <span className="px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded text-xs">追问</span>
+                        )}
+                        {q.question_type === 'project' && (
+                          <span className="px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded text-xs">项目题</span>
+                        )}
+                        <span className="text-xs text-slate-400">{q.category || '综合'}</span>
+                      </div>
+                      {q.score > 0 && (
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                          q.score >= 80 ? 'bg-green-100 text-green-600' :
+                          q.score >= 60 ? 'bg-yellow-100 text-yellow-600' :
+                          'bg-red-100 text-red-600'
+                        }`}>{q.score} 分</span>
+                      )}
                     </div>
-                    {q.score > 0 && (
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                        q.score >= 80 ? 'bg-green-100 text-green-600' :
-                        q.score >= 60 ? 'bg-yellow-100 text-yellow-600' :
-                        'bg-red-100 text-red-600'
-                      }`}>{q.score} 分</span>
+                    <p className="text-slate-800 font-medium mb-2">{q.question}</p>
+                    {q.user_answer && (
+                      <div className="bg-slate-50 rounded-lg p-3 mb-2">
+                        <p className="text-sm text-slate-600"><span className="font-medium text-slate-700">你的回答：</span>{q.user_answer}</p>
+                      </div>
+                    )}
+                    {q.feedback && (
+                      <p className="text-sm text-slate-500 mb-2"><span className="font-medium text-slate-700">点评：</span>{q.feedback}</p>
+                    )}
+
+                    {/* 知识题：关键得分点 */}
+                    {q.covered_points && q.covered_points.length > 0 && (
+                      <div className="mt-2 p-2 bg-green-50 rounded-lg">
+                        <p className="text-xs font-medium text-green-700 mb-1">答到的点：</p>
+                        <div className="flex flex-wrap gap-1">
+                          {q.covered_points.map((p, i) => (
+                            <span key={i} className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs">{p}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {q.missed_points && q.missed_points.length > 0 && (
+                      <div className="mt-2 p-2 bg-orange-50 rounded-lg">
+                        <p className="text-xs font-medium text-orange-700 mb-1">遗漏的点：</p>
+                        <div className="flex flex-wrap gap-1">
+                          {q.missed_points.map((p, i) => (
+                            <span key={i} className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded text-xs">{p}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 项目题：四维评分 */}
+                    {q.dimensions && (
+                      <div className="mt-2 grid grid-cols-4 gap-2">
+                        <div className="text-center p-2 bg-slate-50 rounded-lg">
+                          <p className="text-xs text-slate-500">真实性</p>
+                          <p className="text-sm font-semibold text-slate-700">{q.dimensions.authenticity}</p>
+                        </div>
+                        <div className="text-center p-2 bg-slate-50 rounded-lg">
+                          <p className="text-xs text-slate-500">技术深度</p>
+                          <p className="text-sm font-semibold text-slate-700">{q.dimensions.technical_depth}</p>
+                        </div>
+                        <div className="text-center p-2 bg-slate-50 rounded-lg">
+                          <p className="text-xs text-slate-500">深度</p>
+                          <p className="text-sm font-semibold text-slate-700">{q.dimensions.depth}</p>
+                        </div>
+                        <div className="text-center p-2 bg-slate-50 rounded-lg">
+                          <p className="text-xs text-slate-500">表达</p>
+                          <p className="text-sm font-semibold text-slate-700">{q.dimensions.expression}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 参考答案 */}
+                    {refAnswer?.reference_answer && (
+                      <details className="mt-2">
+                        <summary className="text-xs text-slate-400 cursor-pointer hover:text-slate-600">查看参考答案</summary>
+                        <div className="mt-1 p-2 bg-blue-50 rounded-lg">
+                          <p className="text-xs text-blue-800">{refAnswer.reference_answer}</p>
+                        </div>
+                      </details>
                     )}
                   </div>
-                  <p className="text-slate-800 font-medium mb-2">{q.question}</p>
-                  {q.user_answer && (
-                    <div className="bg-slate-50 rounded-lg p-3 mb-2">
-                      <p className="text-sm text-slate-600"><span className="font-medium text-slate-700">你的回答：</span>{q.user_answer}</p>
-                    </div>
-                  )}
-                  {q.feedback && (
-                    <p className="text-sm text-slate-500"><span className="font-medium text-slate-700">点评：</span>{q.feedback}</p>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </>

@@ -202,20 +202,76 @@ export default function InterviewPage() {
 
         <div className="space-y-4 mb-8">
           <h2 className="text-lg font-semibold text-slate-900">答题详情</h2>
-          {report.question_evaluations.map((q, idx) => (
-            <div key={idx} className="bg-white rounded-xl border border-slate-200 p-4">
-              <div className="flex items-start justify-between mb-2">
-                <span className="text-sm font-medium text-slate-700">Q{q.question_index + 1}. {q.question}</span>
-                <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                  q.score >= 80 ? 'bg-green-100 text-green-600' :
-                  q.score >= 60 ? 'bg-yellow-100 text-yellow-600' :
-                  'bg-red-100 text-red-600'
-                }`}>{q.score}分</span>
+          {report.question_evaluations.map((q, idx) => {
+            const question = report.reference_answers?.find(r => r.question_index === q.question_index);
+            const isFollowUp = question?.question?.includes('-追问') || false;
+            return (
+              <div key={idx} className="bg-white rounded-xl border border-slate-200 p-4">
+                <div className="flex items-start justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-slate-700">Q{q.question_index + 1}. {q.question}</span>
+                    {isFollowUp && (
+                      <span className="px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded text-xs">追问</span>
+                    )}
+                    {q.question_type === 'project' && (
+                      <span className="px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded text-xs">项目题</span>
+                    )}
+                  </div>
+                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                    q.score >= 80 ? 'bg-green-100 text-green-600' :
+                    q.score >= 60 ? 'bg-yellow-100 text-yellow-600' :
+                    'bg-red-100 text-red-600'
+                  }`}>{q.score}分</span>
+                </div>
+                {q.user_answer && <p className="text-sm text-slate-500 mb-1"><span className="font-medium">你的回答：</span>{q.user_answer}</p>}
+                {q.feedback && <p className="text-sm text-slate-500 mb-2"><span className="font-medium">点评：</span>{q.feedback}</p>}
+
+                {/* 知识题：关键得分点 */}
+                {q.covered_points && q.covered_points.length > 0 && (
+                  <div className="mt-2 p-2 bg-green-50 rounded-lg">
+                    <p className="text-xs font-medium text-green-700 mb-1">答到的点：</p>
+                    <div className="flex flex-wrap gap-1">
+                      {q.covered_points.map((p, i) => (
+                        <span key={i} className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs">{p}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {q.missed_points && q.missed_points.length > 0 && (
+                  <div className="mt-2 p-2 bg-orange-50 rounded-lg">
+                    <p className="text-xs font-medium text-orange-700 mb-1">遗漏的点：</p>
+                    <div className="flex flex-wrap gap-1">
+                      {q.missed_points.map((p, i) => (
+                        <span key={i} className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded text-xs">{p}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 项目题：四维评分 */}
+                {q.dimensions && (
+                  <div className="mt-2 grid grid-cols-4 gap-2">
+                    <div className="text-center p-2 bg-slate-50 rounded-lg">
+                      <p className="text-xs text-slate-500">真实性</p>
+                      <p className="text-sm font-semibold text-slate-700">{q.dimensions.authenticity}</p>
+                    </div>
+                    <div className="text-center p-2 bg-slate-50 rounded-lg">
+                      <p className="text-xs text-slate-500">技术深度</p>
+                      <p className="text-sm font-semibold text-slate-700">{q.dimensions.technical_depth}</p>
+                    </div>
+                    <div className="text-center p-2 bg-slate-50 rounded-lg">
+                      <p className="text-xs text-slate-500">深度</p>
+                      <p className="text-sm font-semibold text-slate-700">{q.dimensions.depth}</p>
+                    </div>
+                    <div className="text-center p-2 bg-slate-50 rounded-lg">
+                      <p className="text-xs text-slate-500">表达</p>
+                      <p className="text-sm font-semibold text-slate-700">{q.dimensions.expression}</p>
+                    </div>
+                  </div>
+                )}
               </div>
-              {q.user_answer && <p className="text-sm text-slate-500 mb-1"><span className="font-medium">你的回答：</span>{q.user_answer}</p>}
-              {q.feedback && <p className="text-sm text-slate-500"><span className="font-medium">点评：</span>{q.feedback}</p>}
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         <div className="flex gap-3">
@@ -292,7 +348,12 @@ export default function InterviewPage() {
         <div className="mb-6 space-y-3 max-h-64 overflow-y-auto">
           {questionHistory.map((item, idx) => (
             <div key={idx} className="bg-slate-50 rounded-xl p-3">
-              <p className="text-sm font-medium text-slate-700">Q{item.question.question_index + 1}. {item.question.question}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-medium text-slate-700">Q{item.question.question_index + 1}. {item.question.question}</p>
+                {item.question.is_follow_up && (
+                  <span className="px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded text-xs">追问</span>
+                )}
+              </div>
               <p className="text-sm text-slate-500 mt-1 line-clamp-2">{item.answer}</p>
             </div>
           ))}
@@ -305,8 +366,14 @@ export default function InterviewPage() {
             <span className="w-7 h-7 bg-primary-100 text-primary-600 rounded-full flex items-center justify-center text-sm font-medium">
               {currentQuestion.question_index + 1}
             </span>
+            {currentQuestion.is_follow_up && (
+              <span className="px-2 py-0.5 bg-blue-100 text-blue-600 rounded-full text-xs font-medium">追问</span>
+            )}
             {currentQuestion.category && (
               <span className="px-2.5 py-0.5 bg-slate-100 text-slate-500 rounded-full text-xs">{currentQuestion.category}</span>
+            )}
+            {currentQuestion.question_type === 'project' && (
+              <span className="px-2.5 py-0.5 bg-purple-100 text-purple-600 rounded-full text-xs">项目题</span>
             )}
           </div>
           <h2 className="text-lg font-semibold text-slate-900 leading-relaxed">{currentQuestion.question}</h2>
