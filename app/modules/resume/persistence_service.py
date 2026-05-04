@@ -14,6 +14,7 @@ from app.modules.resume.schemas import (
     ResumeDetailDTO,
     ResumeListItemDTO,
     ResumeAnalysisResponse,
+    ResumeProfile,
     Suggestion,
 )
 
@@ -76,6 +77,9 @@ class ResumePersistenceService(BasePersistenceService[ResumeEntity]):
             suggestions_json=json.dumps(
                 [s.model_dump() for s in analysis.suggestions], ensure_ascii=False
             ),
+            profile_json=json.dumps(
+                analysis.profile.model_dump(), ensure_ascii=False
+            ) if analysis.profile else None,
             analyzed_at=datetime.now(),
         )
         db.add(entity)
@@ -135,6 +139,8 @@ class ResumePersistenceService(BasePersistenceService[ResumeEntity]):
         strengths = safe_json_loads(entity.strengths_json, [])
         raw_suggestions = safe_json_loads(entity.suggestions_json, [])
         suggestions = [Suggestion(**s) for s in raw_suggestions] if raw_suggestions else []
+        raw_profile = safe_json_loads(entity.profile_json, None)
+        profile = ResumeProfile(**raw_profile) if raw_profile else None
 
         return AnalysisHistoryDTO(
             id=entity.id,
@@ -148,6 +154,7 @@ class ResumePersistenceService(BasePersistenceService[ResumeEntity]):
             analyzed_at=entity.analyzed_at,
             strengths=strengths,
             suggestions=suggestions,
+            profile=profile,
         )
 
 

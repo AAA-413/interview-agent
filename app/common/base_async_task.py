@@ -65,6 +65,7 @@ class StreamTaskHandler(ABC):
             try:
                 await self.update_status(db, raw, AsyncTaskStatus.PROCESSING)
                 await asyncio.wait_for(self.process(db, raw), timeout=TASK_TIMEOUT_SECONDS)
+                await self.update_status(db, raw, AsyncTaskStatus.COMPLETED)
                 await db.commit()
                 logger.info("任务处理完成: %s=%s", self.field_name, raw)
             except asyncio.TimeoutError:

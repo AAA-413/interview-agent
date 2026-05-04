@@ -51,16 +51,33 @@ GENERIC_FALLBACK_QUESTIONS = [
 ]
 
 
+class _KeyPointDTO(BaseModel):
+    point: str
+    scoreRange: str
+    weight: str
+
+
 class _QuestionDTO(BaseModel):
     question: str
     type: str = DEFAULT_QUESTION_TYPE
     category: str | None = None
     topicSummary: str | None = None
     followUps: list[str] | None = None
+    questionType: str = "knowledge"
+    referenceAnswer: str | None = None
+    keyPoints: list[_KeyPointDTO] | None = None
 
 
 class _QuestionListDTO(BaseModel):
     questions: list[_QuestionDTO] | None = None
+
+
+class _FollowUpDecisionDTO(BaseModel):
+    shouldFollowUp: bool
+    followUpQuestion: str | None = None
+    referenceAnswer: str | None = None
+    keyPoints: list[_KeyPointDTO] | None = None
+    reason: str = ""
 
 
 class InterviewQuestionService:
@@ -69,7 +86,7 @@ class InterviewQuestionService:
         self._skill_user_prompt = load_prompt(_PROMPTS_DIR, "interview-question-skill-user.md")
         self._resume_system_prompt = load_prompt(_PROMPTS_DIR, "interview-question-resume-system.md")
         self._resume_user_prompt = load_prompt(_PROMPTS_DIR, "interview-question-resume-user.md")
-        self._follow_up_count = min(max(settings.interview.follow_up_count, 0), MAX_FOLLOW_UP_COUNT)
+        self._follow_up_decision_prompt = load_prompt(_PROMPTS_DIR, "follow-up-decision-system.md")
 
     async def generate_questions(
         self,
@@ -138,7 +155,6 @@ class InterviewQuestionService:
 
             variables = {
                 "questionCount": question_count,
-                "followUpCount": self._follow_up_count,
                 "skillName": skill.name,
                 "skillDescription": skill.description or "",
                 "difficultyDescription": difficulty_desc,
@@ -185,7 +201,6 @@ class InterviewQuestionService:
         try:
             variables = {
                 "questionCount": question_count,
-                "followUpCount": self._follow_up_count,
                 "difficultyDescription": difficulty_desc,
                 "skillName": skill.name,
                 "skillDescription": skill.description or "",
@@ -229,6 +244,8 @@ class InterviewQuestionService:
         return interview_skill_service.get_skill(skill_id or settings.interview.default_skill_id)
 
     def _convert_to_questions(self, dto: _QuestionListDTO | None) -> list[InterviewQuestionDTO]:
+        from app.modules.interview.schemas import KeyPoint
+
         questions = []
         if not dto or not dto.questions:
             return questions
@@ -238,7 +255,16 @@ class InterviewQuestionService:
             if not q.question or not q.question.strip():
                 continue
             q_type = q.type.upper() if q.type else DEFAULT_QUESTION_TYPE
+            q_question_type = q.questionType if q.questionType else "knowledge"
             main_index = index
+
+            key_points = None
+            if q.keyPoints:
+                key_points = [
+                    KeyPoint(point=kp.point, score_range=kp.scoreRange, weight=kp.weight)
+                    for kp in q.keyPoints
+                ]
+
             questions.append(
                 InterviewQuestionDTO(
                     question_index=index,
@@ -247,23 +273,12 @@ class InterviewQuestionService:
                     category=q.category,
                     topic_summary=q.topicSummary,
                     is_follow_up=False,
+                    question_type=q_question_type,
+                    reference_answer=q.referenceAnswer,
+                    key_points=key_points,
                 )
             )
             index += 1
-
-            follow_ups = self._sanitize_follow_ups(q.followUps)
-            for i, fu in enumerate(follow_ups):
-                questions.append(
-                    InterviewQuestionDTO(
-                        question_index=index,
-                        question=fu,
-                        type=q_type,
-                        category=self._build_follow_up_category(q.category, i + 1),
-                        is_follow_up=True,
-                        parent_question_index=main_index,
-                    )
-                )
-                index += 1
 
         return questions
 
@@ -305,6 +320,9 @@ class InterviewQuestionService:
                     topic_summary=q.topic_summary,
                     is_follow_up=q.is_follow_up,
                     parent_question_index=new_parent,
+                    question_type=q.question_type,
+                    reference_answer=q.reference_answer,
+                    key_points=q.key_points,
                 )
             )
         return merged
@@ -319,43 +337,17 @@ class InterviewQuestionService:
                 cat = categories[generated % len(categories)]
                 question = f"请谈谈你在\"{cat.label}\"方向的技术理解和实践经验。"
                 questions.append(
-                    InterviewQuestionDTO(question_index=index, question=question, type=cat.key, category=cat.label, is_follow_up=False)
+                    InterviewQuestionDTO(question_index=index, question=question, type=cat.key, category=cat.label, is_follow_up=False, question_type="knowledge")
                 )
-                main_index = index
                 index += 1
-                for j in range(self._follow_up_count):
-                    questions.append(
-                        InterviewQuestionDTO(
-                            question_index=index,
-                            question=self._build_default_follow_up(question, j + 1),
-                            type=cat.key,
-                            category=self._build_follow_up_category(cat.label, j + 1),
-                            is_follow_up=True,
-                            parent_question_index=main_index,
-                        )
-                    )
-                    index += 1
             return questions
 
         for i in range(min(count, len(GENERIC_FALLBACK_QUESTIONS))):
             q_text, q_type, q_cat = GENERIC_FALLBACK_QUESTIONS[i]
             questions.append(
-                InterviewQuestionDTO(question_index=index, question=q_text, type=q_type, category=q_cat, is_follow_up=False)
+                InterviewQuestionDTO(question_index=index, question=q_text, type=q_type, category=q_cat, is_follow_up=False, question_type="knowledge")
             )
-            main_index = index
             index += 1
-            for j in range(self._follow_up_count):
-                questions.append(
-                    InterviewQuestionDTO(
-                        question_index=index,
-                        question=self._build_default_follow_up(q_text, j + 1),
-                        type=q_type,
-                        category=self._build_follow_up_category(q_cat, j + 1),
-                        is_follow_up=True,
-                        parent_question_index=main_index,
-                    )
-                )
-                index += 1
         return questions
 
     def _build_historical_section(self, historical_questions: list[HistoricalQuestion]) -> str:
@@ -379,18 +371,54 @@ class InterviewQuestionService:
             return ""
         return f"## 职位描述（JD）\n根据以下 JD 关键要求出题，确保题目与岗位实际需求相关：\n{source_jd}"
 
-    def _sanitize_follow_ups(self, follow_ups: list[str] | None) -> list[str]:
-        if self._follow_up_count == 0 or not follow_ups:
-            return []
-        return [fu.strip() for fu in follow_ups if fu and fu.strip()][: self._follow_up_count]
+    async def generate_follow_up(
+        self,
+        chat_model: ChatOpenAI,
+        question: str,
+        user_answer: str,
+        question_type: str = "knowledge",
+        category: str | None = None,
+        follow_up_count: int = 0,
+    ) -> _FollowUpDecisionDTO | None:
+        if follow_up_count >= MAX_FOLLOW_UP_COUNT:
+            return None
 
-    @staticmethod
-    def _build_follow_up_category(category: str | None, index: int) -> str:
-        return f"{category or '综合能力'}-追问{index}" if category else f"追问{index}"
+        try:
+            from app.common.ai.llm_provider import llm_registry
 
-    @staticmethod
-    def _build_default_follow_up(question: str, index: int) -> str:
-        return f"关于这个问题，请进一步展开说明第{index}个关键点。"
+            model = llm_registry.get_chat_model(None)
+
+            user_prompt = f"""## 原问题
+{question}
+
+## 候选人回答
+{user_answer}
+
+## 当前已追问次数
+{follow_up_count}（最多追问{MAX_FOLLOW_UP_COUNT}次）
+
+## 问题类型
+{question_type}"""
+
+            dto = await structured_output_invoker.invoke(
+                chat_model=model,
+                system_prompt=self._follow_up_decision_prompt,
+                user_prompt=user_prompt,
+                output_model=_FollowUpDecisionDTO,
+                error_code=ErrorCode.INTERVIEW_QUESTION_GENERATION_FAILED,
+                error_prefix="追问决策失败：",
+                log_context="追问决策",
+            )
+
+            if dto.shouldFollowUp and dto.followUpQuestion:
+                logger.info("生成追问: 原问题=%s, 原因=%s", question[:30], dto.reason)
+                return dto
+            else:
+                logger.info("不追问: 原因=%s", dto.reason)
+                return None
+        except Exception as e:
+            logger.error("追问生成失败: %s", e)
+            return None
 
 
 interview_question_service = InterviewQuestionService()

@@ -101,6 +101,17 @@ class InterviewPersistenceService:
         )
         await db.flush()
 
+    async def update_questions_json(self, db: AsyncSession, session_id: str, questions: list[InterviewQuestionDTO]) -> None:
+        await db.execute(
+            update(InterviewSessionEntity)
+            .where(InterviewSessionEntity.session_id == session_id)
+            .values(
+                questions_json=json.dumps([q.model_dump() for q in questions], ensure_ascii=False),
+                total_questions=len(questions),
+            )
+        )
+        await db.flush()
+
     async def update_evaluate_status(
         self, db: AsyncSession, session_id: str, status: str | None, error: str | None = None
     ) -> None:

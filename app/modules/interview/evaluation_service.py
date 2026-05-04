@@ -12,6 +12,7 @@ from app.common.prompt_utils import load_prompt, render_template
 from app.modules.interview.schemas import (
     CategoryScoreDTO,
     InterviewReportDTO,
+    KeyPoint,
     QuestionEvaluationDTO,
     ReferenceAnswerDTO,
 )
@@ -20,6 +21,27 @@ logger = logging.getLogger(__name__)
 
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
 MAX_REFERENCE_CONTEXT_CHARS = 6000
+
+
+class _KnowledgeEvalDTO(BaseModel):
+    score: int
+    coveredPoints: list[str] = []
+    missedPoints: list[str] = []
+    errors: list[str] = []
+    feedback: str
+
+
+class _ProjectDimensionsDTO(BaseModel):
+    authenticity: int = 0
+    technical_depth: int = 0
+    depth: int = 0
+    expression: int = 0
+
+
+class _ProjectEvalDTO(BaseModel):
+    score: int
+    dimensions: _ProjectDimensionsDTO = _ProjectDimensionsDTO()
+    feedback: str
 
 
 class _QuestionEvalDTO(BaseModel):
@@ -49,16 +71,25 @@ class QaRecord(BaseModel):
     question: str
     category: str | None = None
     user_answer: str | None = None
+    question_type: str = "knowledge"
+    reference_answer: str | None = None
+    key_points: list[KeyPoint] | None = None
+    is_follow_up: bool = False
+    parent_question_index: int | None = None
 
 
 class UnifiedEvaluationService:
     def __init__(self):
         self._system_prompt = load_prompt(_PROMPTS_DIR, "interview-evaluation-system.md")
         self._user_prompt = load_prompt(_PROMPTS_DIR, "interview-evaluation-user.md")
+        self._knowledge_eval_system = load_prompt(_PROMPTS_DIR, "eval-knowledge-system.md")
+        self._knowledge_eval_user = load_prompt(_PROMPTS_DIR, "eval-knowledge-user.md")
+        self._project_eval_system = load_prompt(_PROMPTS_DIR, "eval-project-system.md")
+        self._project_eval_user = load_prompt(_PROMPTS_DIR, "eval-project-user.md")
         self._summary_system_prompt = load_prompt(_PROMPTS_DIR, "interview-evaluation-summary-system.md")
         self._summary_user_prompt = load_prompt(_PROMPTS_DIR, "interview-evaluation-summary-user.md")
         self._batch_size = 8
-        self._max_concurrent_batches = 3  # 最多 3 个批次并行执行
+        self._max_concurrent_batches = 3
 
     async def evaluate(
         self,
@@ -78,19 +109,93 @@ class UnifiedEvaluationService:
         if len(reference_baseline) > MAX_REFERENCE_CONTEXT_CHARS:
             reference_baseline = reference_baseline[:MAX_REFERENCE_CONTEXT_CHARS] + "\n...(参考基线过长，已截断)"
 
-        batch_results = await self._evaluate_in_batches(chat_model, session_id, resume_context, qa_records, reference_baseline)
+        # Evaluate questions individually based on type
+        evaluations = await self._evaluate_by_type(chat_model, session_id, qa_records, resume_context)
 
-        merged_evaluations = self._merge_question_evaluations(batch_results)
-        fallback_feedback = self._merge_overall_feedback(batch_results)
-        fallback_strengths = self._merge_list_items(batch_results, True)
-        fallback_improvements = self._merge_list_items(batch_results, False)
-
+        # Build summary
         summary = await self._summarize_batch_results(
             chat_model, session_id, resume_context, reference_baseline,
-            qa_records, merged_evaluations, fallback_feedback, fallback_strengths, fallback_improvements,
+            qa_records, evaluations, "", [], [],
         )
 
-        return self._build_report(session_id, qa_records, merged_evaluations, summary.overallFeedback, summary.strengths or [], summary.improvements or [])
+        return self._build_report(session_id, qa_records, evaluations, summary.overallFeedback, summary.strengths or [], summary.improvements or [])
+
+    async def _evaluate_by_type(
+        self, chat_model: ChatOpenAI, session_id: str,
+        qa_records: list[QaRecord], resume_context: str,
+    ) -> list[_QuestionEvalDTO]:
+        """Evaluate questions individually based on type (knowledge vs project)"""
+        semaphore = Semaphore(self._max_concurrent_batches)
+        evaluations: list[_QuestionEvalDTO | None] = [None] * len(qa_records)
+
+        async def evaluate_one(index: int, qa: QaRecord):
+            async with semaphore:
+                if not qa.user_answer or not qa.user_answer.strip():
+                    evaluations[index] = _QuestionEvalDTO(
+                        questionIndex=qa.question_index, score=0, feedback="未作答"
+                    )
+                    return
+
+                # Determine evaluation strategy
+                effective_type = qa.question_type
+                if qa.is_follow_up and qa.parent_question_index is not None:
+                    # Follow-up inherits parent's type
+                    for parent_qa in qa_records:
+                        if parent_qa.question_index == qa.parent_question_index:
+                            effective_type = parent_qa.question_type
+                            break
+
+                if effective_type == "project" or (not qa.reference_answer and not qa.key_points):
+                    # Project evaluation
+                    result = await self.evaluate_project_question(
+                        chat_model, qa.question, qa.user_answer, resume_context,
+                    )
+                    if result:
+                        evaluations[index] = _QuestionEvalDTO(
+                            questionIndex=qa.question_index,
+                            score=result.score,
+                            feedback=result.feedback,
+                        )
+                    else:
+                        evaluations[index] = _QuestionEvalDTO(
+                            questionIndex=qa.question_index, score=0, feedback="评估失败"
+                        )
+                else:
+                    # Knowledge evaluation with key_points
+                    if qa.reference_answer and qa.key_points:
+                        result = await self.evaluate_knowledge_question(
+                            chat_model, qa.question, qa.user_answer,
+                            qa.reference_answer, qa.key_points,
+                        )
+                        if result:
+                            evaluations[index] = _QuestionEvalDTO(
+                                questionIndex=qa.question_index,
+                                score=result.score,
+                                feedback=result.feedback,
+                                referenceAnswer=qa.reference_answer,
+                                keyPoints=[kp.point for kp in qa.key_points] if qa.key_points else [],
+                            )
+                        else:
+                            evaluations[index] = _QuestionEvalDTO(
+                                questionIndex=qa.question_index, score=0, feedback="评估失败"
+                            )
+                    else:
+                        # Fallback to basic evaluation
+                        evaluations[index] = _QuestionEvalDTO(
+                            questionIndex=qa.question_index, score=0, feedback="无参考答案"
+                        )
+
+        tasks = [evaluate_one(i, qa) for i, qa in enumerate(qa_records)]
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Fill in any remaining None evaluations
+        for i in range(len(evaluations)):
+            if evaluations[i] is None:
+                evaluations[i] = _QuestionEvalDTO(
+                    questionIndex=i, score=0, feedback="评估异常"
+                )
+
+        return evaluations
 
     async def _evaluate_in_batches(
         self, chat_model: ChatOpenAI, session_id: str, resume_context: str,
@@ -331,6 +436,70 @@ class UnifiedEvaluationService:
             short_f = feedback[:80] + "..." if len(feedback) > 80 else feedback
             highlights.append(f"- Q{q.question_index + 1} | {short_q} | 分数:{score} | 反馈:{short_f}")
         return "\n".join(highlights[:20])
+
+    async def evaluate_knowledge_question(
+        self, chat_model: ChatOpenAI, question: str, user_answer: str,
+        reference_answer: str, key_points: list[KeyPoint],
+    ) -> _KnowledgeEvalDTO | None:
+        if not user_answer or not user_answer.strip():
+            return _KnowledgeEvalDTO(score=0, feedback="未作答")
+
+        key_points_text = "\n".join([
+            f"- {kp.point} (分数段: {kp.score_range}, 重要程度: {kp.weight})"
+            for kp in key_points
+        ])
+
+        variables = {
+            "question": question,
+            "userAnswer": user_answer,
+            "referenceAnswer": reference_answer,
+            "keyPoints": key_points_text,
+        }
+
+        user_prompt = render_template(self._knowledge_eval_user, variables)
+
+        try:
+            return await structured_output_invoker.invoke(
+                chat_model=chat_model,
+                system_prompt=self._knowledge_eval_system,
+                user_prompt=user_prompt,
+                output_model=_KnowledgeEvalDTO,
+                error_code=ErrorCode.INTERVIEW_EVALUATION_FAILED,
+                error_prefix="知识题评估失败：",
+                log_context="知识题评估",
+            )
+        except Exception as e:
+            logger.error("知识题评估失败: %s", e)
+            return None
+
+    async def evaluate_project_question(
+        self, chat_model: ChatOpenAI, question: str, user_answer: str,
+        project_context: str = "",
+    ) -> _ProjectEvalDTO | None:
+        if not user_answer or not user_answer.strip():
+            return _ProjectEvalDTO(score=0, feedback="未作答")
+
+        variables = {
+            "question": question,
+            "userAnswer": user_answer,
+            "projectContext": project_context or "无项目上下文",
+        }
+
+        user_prompt = render_template(self._project_eval_user, variables)
+
+        try:
+            return await structured_output_invoker.invoke(
+                chat_model=chat_model,
+                system_prompt=self._project_eval_system,
+                user_prompt=user_prompt,
+                output_model=_ProjectEvalDTO,
+                error_code=ErrorCode.INTERVIEW_EVALUATION_FAILED,
+                error_prefix="项目题评估失败：",
+                log_context="项目题评估",
+            )
+        except Exception as e:
+            logger.error("项目题评估失败: %s", e)
+            return None
 
 
 unified_evaluation_service = UnifiedEvaluationService()

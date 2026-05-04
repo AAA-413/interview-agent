@@ -8,7 +8,7 @@ from app.common.ai.structured_output import structured_output_invoker
 from app.common.error_code import ErrorCode
 from app.common.exception import BusinessException
 from app.common.prompt_utils import load_prompt, render_template
-from app.modules.resume.schemas import ResumeAnalysisResponse, ScoreDetail, Suggestion
+from app.modules.resume.schemas import ResumeAnalysisResponse, ResumeProfile, ScoreDetail, Suggestion
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +30,35 @@ class _ScoreDetailDTO(BaseModel):
     expressionScore: int
 
 
+class _ProjectInfoDTO(BaseModel):
+    name: str
+    role: str
+    techStack: list[str]
+    description: str
+    highlights: list[str]
+
+
+class _TechStackDTO(BaseModel):
+    name: str
+    proficiency: str
+    context: str
+
+
+class _ResumeProfileDTO(BaseModel):
+    projects: list[_ProjectInfoDTO]
+    techStacks: list[_TechStackDTO]
+    experienceLevel: str
+    hasProjects: bool
+    summary: str
+
+
 class _AnalysisDTO(BaseModel):
     overallScore: int
     scoreDetail: _ScoreDetailDTO
     summary: str
     strengths: list[str]
     suggestions: list[_SuggestionDTO]
+    profile: _ResumeProfileDTO
 
 
 class ResumeGradingService:
@@ -85,6 +108,29 @@ class ResumeGradingService:
             )
             for s in dto.suggestions
         ]
+        profile = ResumeProfile(
+            projects=[
+                {
+                    "name": p.name,
+                    "role": p.role,
+                    "tech_stack": p.techStack,
+                    "description": p.description,
+                    "highlights": p.highlights,
+                }
+                for p in dto.profile.projects
+            ],
+            tech_stacks=[
+                {
+                    "name": t.name,
+                    "proficiency": t.proficiency,
+                    "context": t.context,
+                }
+                for t in dto.profile.techStacks
+            ],
+            experience_level=dto.profile.experienceLevel,
+            has_projects=dto.profile.hasProjects,
+            summary=dto.profile.summary,
+        )
         return ResumeAnalysisResponse(
             overall_score=dto.overallScore,
             score_detail=score_detail,
@@ -92,6 +138,7 @@ class ResumeGradingService:
             strengths=dto.strengths,
             suggestions=suggestions,
             original_text=original_text,
+            profile=profile,
         )
 
     @staticmethod
@@ -110,6 +157,7 @@ class ResumeGradingService:
                 )
             ],
             original_text=original_text,
+            profile=ResumeProfile(),
         )
 
 

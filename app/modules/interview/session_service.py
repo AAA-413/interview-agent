@@ -12,9 +12,10 @@ from app.config import settings
 from app.modules.interview.evaluation_service import QaRecord, unified_evaluation_service
 from app.modules.interview.models import SessionStatus
 from app.modules.interview.persistence_service import interview_persistence_service
-from app.modules.interview.question_service import interview_question_service
+from app.modules.interview.question_service import interview_question_service, MAX_FOLLOW_UP_COUNT
 from app.modules.interview.schemas import (
     CreateInterviewRequest,
+    InterviewQuestionDTO,
     InterviewReportDTO,
     InterviewSessionDTO,
     SubmitAnswerRequest,
@@ -120,12 +121,6 @@ class InterviewSessionService:
         question = questions[index]
         questions[index] = question.model_copy(update={"answer": request.answer})
 
-        new_index = index + 1
-        has_next = new_index < len(questions)
-        next_question = questions[new_index] if has_next else None
-
-        new_status = SessionStatus.IN_PROGRESS if has_next else SessionStatus.COMPLETED
-
         await interview_persistence_service.save_answer(
             db=db,
             session_entity_id=entity.id,
@@ -134,19 +129,99 @@ class InterviewSessionService:
             category=question.category,
             answer=request.answer,
         )
+
+        # Try to generate a follow-up question
+        follow_up = None
+        if self._should_try_follow_up(question, questions, index):
+            try:
+                chat_model = llm_registry.get_chat_model(entity.llm_provider)
+                follow_up_count = self._count_follow_ups(questions, index)
+                follow_up = await interview_question_service.generate_follow_up(
+                    chat_model=chat_model,
+                    question=question.question,
+                    user_answer=request.answer,
+                    question_type=question.question_type,
+                    category=question.category,
+                    follow_up_count=follow_up_count,
+                )
+            except Exception as e:
+                logger.warning("追问生成失败，继续下一题: %s", e)
+
+        if follow_up and follow_up.shouldFollowUp and follow_up.followUpQuestion:
+            # Insert follow-up question after current question
+            from app.modules.interview.schemas import KeyPoint
+
+            follow_up_index = index + 1
+            key_points = None
+            if follow_up.keyPoints:
+                key_points = [
+                    KeyPoint(point=kp.point, score_range=kp.scoreRange, weight=kp.weight)
+                    for kp in follow_up.keyPoints
+                ]
+
+            follow_up_question = InterviewQuestionDTO(
+                question_index=follow_up_index,
+                question=follow_up.followUpQuestion,
+                type=question.type,
+                category=f"{question.category or '综合能力'}-追问",
+                is_follow_up=True,
+                parent_question_index=index,
+                question_type=question.question_type,
+                reference_answer=follow_up.referenceAnswer,
+                key_points=key_points,
+            )
+
+            # Reindex questions after insertion
+            questions.insert(follow_up_index, follow_up_question)
+            for i in range(follow_up_index + 1, len(questions)):
+                questions[i] = questions[i].model_copy(update={"question_index": i})
+                if questions[i].parent_question_index is not None and questions[i].parent_question_index >= follow_up_index:
+                    questions[i] = questions[i].model_copy(update={"parent_question_index": questions[i].parent_question_index + 1})
+
+            # Save updated questions
+            await interview_persistence_service.update_questions_json(db, session_id, questions)
+
+            new_index = follow_up_index
+            next_question = follow_up_question
+            has_next = True
+        else:
+            # No follow-up, move to next question
+            new_index = index + 1
+            has_next = new_index < len(questions)
+            next_question = questions[new_index] if has_next else None
+
+        new_status = SessionStatus.IN_PROGRESS if has_next else SessionStatus.COMPLETED
+
         await interview_persistence_service.update_current_question_index(db, session_id, new_index)
         await interview_persistence_service.update_session_status(db, session_id, new_status)
 
         if not has_next:
             await self._enqueue_evaluation(db, session_id)
 
-        logger.info("会话 %s 提交答案: 问题%d, 剩余%d题", session_id, index, len(questions) - new_index)
+        logger.info("会话 %s 提交答案: 问题%d, 剩余%d题, 追问=%s", session_id, index, len(questions) - new_index, follow_up is not None)
 
         return SubmitAnswerResponse(
             has_next_question=has_next,
             next_question=next_question,
             current_question_index=new_index,
             total_questions=len(questions),
+        )
+
+    @staticmethod
+    def _should_try_follow_up(question: InterviewQuestionDTO, questions: list[InterviewQuestionDTO], current_index: int) -> bool:
+        if question.is_follow_up:
+            return False
+        follow_up_count = sum(
+            1 for i in range(current_index + 1, len(questions))
+            if questions[i].is_follow_up and questions[i].parent_question_index == current_index
+        )
+        return follow_up_count < MAX_FOLLOW_UP_COUNT
+
+    @staticmethod
+    def _count_follow_ups(questions: list[InterviewQuestionDTO], parent_index: int) -> int:
+        return sum(
+            1 for q in questions
+            if q.is_follow_up and q.parent_question_index == parent_index
         )
 
     async def save_answer(self, db: AsyncSession, session_id: str, request: SubmitAnswerRequest, user_id: int = 0) -> None:
@@ -217,11 +292,21 @@ class InterviewSessionService:
                     question=answer.question or (q.question if q else ""),
                     category=answer.category or (q.category if q else None),
                     user_answer=answer.user_answer,
+                    question_type=q.question_type if q else "knowledge",
+                    reference_answer=q.reference_answer if q else None,
+                    key_points=q.key_points if q else None,
+                    is_follow_up=q.is_follow_up if q else False,
+                    parent_question_index=q.parent_question_index if q else None,
                 )
             )
 
         chat_model = llm_registry.get_chat_model(entity.llm_provider)
         reference_context = interview_skill_service.build_evaluation_reference_section_safe(entity.skill_id)
+
+        # 检索用户知识库作为评估参考
+        kb_context = await self._search_knowledge_for_evaluation(db, entity.user_id, qa_records)
+        if kb_context:
+            reference_context = f"{reference_context}\n\n{kb_context}" if reference_context else kb_context
 
         report = await unified_evaluation_service.evaluate(
             chat_model=chat_model,
@@ -301,6 +386,68 @@ class InterviewSessionService:
             return await self.get_session(db, entity.session_id, user_id)
         except Exception as e:
             logger.error("恢复未完成会话失败: %s", e)
+            return None
+
+    async def _search_knowledge_for_evaluation(
+        self, db: AsyncSession, user_id: int, qa_records: list[QaRecord],
+    ) -> str | None:
+        """从用户知识库检索与面试题相关的知识点，作为评估参考"""
+        try:
+            from app.modules.knowledge_base.persistence_service import knowledge_base_persistence_service
+            from app.modules.knowledge_base.vector_service import knowledge_base_vector_service
+            from app.modules.knowledge_base.models import KnowledgeChunkEntity
+            from sqlalchemy import select
+
+            # 获取用户的已完成索引的知识库
+            all_kbs = await knowledge_base_persistence_service.find_all(db, user_id)
+            completed_kbs = [kb for kb in all_kbs if hasattr(kb, 'index_status') and kb.index_status.value == 'COMPLETED']
+
+            if not completed_kbs:
+                return None
+
+            # 收集所有知识题的问题文本
+            knowledge_questions = [
+                qa.question for qa in qa_records
+                if qa.question_type == "knowledge" and not qa.is_follow_up
+            ]
+            if not knowledge_questions:
+                return None
+
+            # 从每个知识库检索相关片段
+            all_references = []
+            for kb in completed_kbs[:3]:  # 最多检查3个知识库
+                for question in knowledge_questions[:5]:  # 最多检查5个问题
+                    try:
+                        query_embedding = knowledge_base_vector_service.embed_text(question)
+                        stmt = (
+                            select(KnowledgeChunkEntity)
+                            .where(KnowledgeChunkEntity.knowledge_base_id == kb.id)
+                            .where(KnowledgeChunkEntity.embedding.isnot(None))
+                            .order_by(KnowledgeChunkEntity.embedding.cosine_distance(query_embedding))
+                            .limit(2)
+                        )
+                        result = await db.execute(stmt)
+                        chunks = result.scalars().all()
+                        for chunk in chunks:
+                            if chunk.content_preview:
+                                all_references.append(chunk.content_preview)
+                    except Exception as e:
+                        logger.warning("知识库检索失败: kb=%d, question=%s, error=%s", kb.id, question[:30], e)
+                        continue
+
+            if not all_references:
+                return None
+
+            # 去重并限制长度
+            unique_refs = list(dict.fromkeys(all_references))[:10]
+            context = "以下是从用户知识库检索到的相关知识点（用于评估参考）：\n"
+            for i, ref in enumerate(unique_refs, 1):
+                context += f"{i}. {ref}\n"
+
+            logger.info("知识库检索完成: user_id=%d, references=%d", user_id, len(unique_refs))
+            return context
+        except Exception as e:
+            logger.warning("知识库检索异常，跳过: %s", e)
             return None
 
 

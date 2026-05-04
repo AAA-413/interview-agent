@@ -57,6 +57,7 @@ class ResumeAnalysisEntity(Base):
     summary: Mapped[str | None] = mapped_column(Text)
     strengths_json: Mapped[str | None] = mapped_column(Text)
     suggestions_json: Mapped[str | None] = mapped_column(Text)
+    profile_json: Mapped[str | None] = mapped_column(Text)
     analyzed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
     resume: Mapped["ResumeEntity"] = relationship(back_populates="analyses")

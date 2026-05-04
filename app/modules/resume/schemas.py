@@ -20,6 +20,28 @@ class Suggestion(BaseModel):
     recommendation: str
 
 
+class ProjectInfo(BaseModel):
+    name: str
+    role: str
+    tech_stack: list[str]
+    description: str
+    highlights: list[str]
+
+
+class TechStack(BaseModel):
+    name: str
+    proficiency: str
+    context: str
+
+
+class ResumeProfile(BaseModel):
+    projects: list[ProjectInfo] = []
+    tech_stacks: list[TechStack] = []
+    experience_level: str = "unknown"
+    has_projects: bool = False
+    summary: str = ""
+
+
 class ResumeAnalysisResponse(BaseModel):
     overall_score: int
     score_detail: ScoreDetail
@@ -27,6 +49,7 @@ class ResumeAnalysisResponse(BaseModel):
     strengths: list[str]
     suggestions: list[Suggestion]
     original_text: str = ""
+    profile: ResumeProfile = ResumeProfile()
 
 
 class AnalysisHistoryDTO(BaseModel):
@@ -41,6 +64,7 @@ class AnalysisHistoryDTO(BaseModel):
     analyzed_at: datetime
     strengths: list[str] = []
     suggestions: list[Suggestion] = []
+    profile: ResumeProfile | None = None
 
 
 class ResumeListItemDTO(BaseModel):

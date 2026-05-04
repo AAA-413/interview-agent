@@ -1,6 +1,5 @@
 # Input Data
 请生成共 {{ questionCount }} 个主问题。
-每个主问题都必须额外生成 {{ followUpCount }} 个追问。
 
 ## 难度级别
 {{ difficultyDescription }}

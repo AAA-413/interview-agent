@@ -3,6 +3,12 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
+class KeyPoint(BaseModel):
+    point: str
+    score_range: str
+    weight: str
+
+
 class InterviewQuestionDTO(BaseModel):
     question_index: int
     question: str
@@ -12,6 +18,9 @@ class InterviewQuestionDTO(BaseModel):
     is_follow_up: bool = False
     parent_question_index: int | None = None
     answer: str | None = None
+    question_type: str = "knowledge"
+    reference_answer: str | None = None
+    key_points: list[KeyPoint] | None = None
 
 
 class CreateInterviewRequest(BaseModel):
