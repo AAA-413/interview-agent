@@ -55,9 +55,7 @@ class ResumeUploadService:
 
         entity = await resume_persistence_service.save_resume(db, entity)
 
-        if resume_text:
-            await self._enqueue_analysis(entity.id)
-        else:
+        if not resume_text:
             await resume_persistence_service.update_analyze_status(db, entity.id, AsyncTaskStatus.FAILED, "简历解析结果为空")
 
         return entity
