@@ -27,6 +27,7 @@ websockets>=14.0
 numpy>=1.26.0
 pgvector>=0.3.0
 passlib[bcrypt]>=1.7.4
+bcrypt>=4.0.0,<4.1.0
 email-validator>=2.0.0
 readabilipy>=0.2.0
 dashscope>=1.14.0

@@ -377,7 +377,30 @@ npm install
 npm run dev
 ```
 
-### 问题 7：环境变量未加载
+### 问题 7：bcrypt 版本不兼容导致登录 500 错误
+
+**现象：**
+```
+POST /api/auth/login HTTP/1.1" 500 Internal Server Error
+ValueError: password cannot be longer than 72 bytes, truncate manually if necessary
+AttributeError: module 'bcrypt' has no attribute '__about__'
+```
+
+**原因：** `bcrypt>=4.1.0` 与 `passlib` 不兼容，passlib 尚未适配新版 bcrypt 的 API 变更。
+
+**解决方案：**
+```bash
+# 降级 bcrypt 到兼容版本
+.venv\Scripts\pip.exe install "bcrypt>=4.0.0,<4.1.0"
+
+# 重启后端服务
+Ctrl+C
+.venv\Scripts\python.exe -B -m uvicorn app.main:app --host 0.0.0.0 --port 8002
+```
+
+**预防：** `requirements.txt` 和 `pyproject.toml` 中已锁定 `bcrypt>=4.0.0,<4.1.0`，重新安装依赖即可避免。
+
+### 问题 8：环境变量未加载
 
 **现象：** API Key 或数据库连接失败。
 

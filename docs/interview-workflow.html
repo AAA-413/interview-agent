@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>智能面试工作流程图</title>
+<style>
+  body { margin: 0; padding: 20px; background: #f5f5f5; font-family: sans-serif; }
+  h1 { text-align: center; color: #333; }
+  #diagram { background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+  .legend { display: flex; gap: 16px; justify-content: center; margin: 16px 0; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+  .legend-dot { width: 14px; height: 14px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<h1>智能面试工作流程</h1>
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#4CAF50"></div>起止</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#2196F3"></div>出题（LLM）</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#FF9800"></div>追问决策（LLM）</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#9C27B0"></div>评估（LLM）</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#E91E63"></div>总评汇总（LLM）</div>
+</div>
+<div id="diagram">
+<pre class="mermaid">
+flowchart TD
+    Start(["🚀 用户发起面试"]) --> CheckResume{"有简历?"}
+
+    CheckResume -->|"是"| ParallelGen["并行出题 · 2次LLM"]
+    CheckResume -->|"否"| DirectionOnly["方向题出题 · 1次LLM"]
+
+    ParallelGen --> ResumeQ["📋 简历题 LLM · 60%"]
+    ParallelGen --> DirectionQ["📖 方向题 LLM · 40%"]
+    ResumeQ --> Merge["合并题目列表"]
+    DirectionQ --> Merge
+    DirectionOnly --> Merge
+
+    Merge --> GetQ["获取当前题目"]
+    GetQ --> ShowQ["展示题目给用户"]
+    ShowQ --> UserAnswer["用户提交答案"]
+    UserAnswer --> SaveAnswer["保存答案"]
+
+    SaveAnswer --> FollowUpCheck{"需要追问?<br/>非追问题 且 追问<2次"}
+
+    FollowUpCheck -->|"是"| FollowUpLLM["🔍 追问决策 LLM"]
+    FollowUpLLM --> ShouldFollow{"shouldFollowUp?"}
+    ShouldFollow -->|"是"| InsertFollowUp["插入追问题到队列"]
+    InsertFollowUp --> GetQ
+    ShouldFollow -->|"否"| NextQ["推进到下一题"]
+
+    FollowUpCheck -->|"否"| NextQ
+
+    NextQ --> HasMore{"还有题目?"}
+    HasMore -->|"是"| GetQ
+    HasMore -->|"否"| TriggerEval["触发评估"]
+
+    TriggerEval --> EvalEach["逐题并发评估<br/>N次LLM · 限流3并发"]
+    EvalEach --> EvalBranch{"题型分流"}
+
+    EvalBranch -->|"知识题"| KnowledgeEval["📚 知识题评估<br/>参考答案 + 评分要点"]
+    EvalBranch -->|"项目题"| ProjectEval["💼 项目题评估<br/>4维度评分"]
+
+    KnowledgeEval --> SummaryLLM["📊 总评汇总 LLM · 1次"]
+    ProjectEval --> SummaryLLM
+
+    SummaryLLM --> Report["生成评估报告"]
+    Report --> End(["✅ 展示报告"])
+
+    style Start fill:#4CAF50,color:#fff,stroke:#388E3C
+    style End fill:#4CAF50,color:#fff,stroke:#388E3C
+    style ParallelGen fill:#2196F3,color:#fff,stroke:#1565C0
+    style ResumeQ fill:#2196F3,color:#fff,stroke:#1565C0
+    style DirectionQ fill:#2196F3,color:#fff,stroke:#1565C0
+    style DirectionOnly fill:#2196F3,color:#fff,stroke:#1565C0
+    style FollowUpLLM fill:#FF9800,color:#fff,stroke:#E65100
+    style EvalEach fill:#9C27B0,color:#fff,stroke:#6A1B9A
+    style KnowledgeEval fill:#9C27B0,color:#fff,stroke:#6A1B9A
+    style ProjectEval fill:#9C27B0,color:#fff,stroke:#6A1B9A
+    style SummaryLLM fill:#E91E63,color:#fff,stroke:#AD1457
+    style CheckResume fill:#FFF3E0,stroke:#FF9800
+    style FollowUpCheck fill:#FFF3E0,stroke:#FF9800
+    style ShouldFollow fill:#FFF3E0,stroke:#FF9800
+    style HasMore fill:#FFF3E0,stroke:#FF9800
+    style EvalBranch fill:#F3E5F5,stroke:#9C27B0
+</pre>
+</div>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'default', flowchart: { curve: 'basis', padding: 15 } });
+</script>
+</body>
+</html>
