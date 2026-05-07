@@ -30,3 +30,8 @@ test_*.py
 ENDPOINT_CALLED.txt
 ENTRY_MARKER.txt
 TEST_BG.txt
+
+# Server-specific config (not in repo)
+.env.prod
+docker-compose.infra.yml
+DEPLOY_SERVER.md

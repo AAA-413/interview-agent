@@ -1,5 +1,6 @@
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
-import { LayoutDashboard, FileText, MessageSquare, BarChart3, Upload, BookOpen, Database, Sparkles } from 'lucide-react';
+import { LogOut, FileText, MessageSquare, BarChart3, Upload, BookOpen, Database, Sparkles } from 'lucide-react';
+import { authApi } from '../api/auth';
 
 const navItems = [
   { path: '/resumes', label: '简历管理', icon: FileText, gradient: 'from-blue-500 to-cyan-500' },
@@ -13,6 +14,17 @@ const navItems = [
 export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
+
+  const handleLogout = async () => {
+    try {
+      await authApi.logout();
+    } catch {
+      // 即使接口失败也清除本地状态
+    }
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('token_type');
+    navigate('/login');
+  };
 
   return (
     <div className="min-h-screen flex bg-gradient-to-br from-slate-50 via-white to-indigo-50/30">
@@ -61,7 +73,7 @@ export default function Layout() {
             );
           })}
         </nav>
-        <div className="p-4 border-t border-slate-100/60">
+        <div className="p-4 border-t border-slate-100/60 space-y-2">
           <div className="relative px-4 py-3 bg-gradient-to-r from-primary-50 via-indigo-50 to-purple-50 rounded-xl overflow-hidden group hover:shadow-md transition-shadow">
             <div className="absolute inset-0 bg-gradient-to-r from-primary-500/5 to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity" />
             <div className="relative flex items-center gap-2">
@@ -72,6 +84,15 @@ export default function Layout() {
               </div>
             </div>
           </div>
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-red-500 hover:bg-red-50 transition-all duration-300"
+          >
+            <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-red-50 group-hover:bg-red-100">
+              <LogOut className="w-5 h-5" />
+            </div>
+            <span>退出登录</span>
+          </button>
         </div>
       </aside>
       <main className="flex-1 overflow-auto">
