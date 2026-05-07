@@ -13,8 +13,10 @@ export interface RagReferenceDTO {
   chunk_id: number;
   chunk_index: number;
   title: string | null;
+  content: string;
   content_preview: string;
   score: number;
+  source_name: string;
   metadata: Record<string, unknown>;
 }
 

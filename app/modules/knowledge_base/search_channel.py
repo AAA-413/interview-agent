@@ -78,8 +78,13 @@ class VectorSearchChannel(SearchChannel):
         start = time.time()
 
         try:
-            from app.modules.knowledge_base.models import KnowledgeChunkEntity
+            from app.modules.knowledge_base.models import KnowledgeChunkEntity, KnowledgeBaseEntity
             from sqlalchemy import select
+
+            # 0. 获取知识库名称（用于来源追溯）
+            kb_stmt = select(KnowledgeBaseEntity.name).where(KnowledgeBaseEntity.id == context.kb_id)
+            kb_result = await self.db_session.execute(kb_stmt)
+            source_name = kb_result.scalar_one_or_none() or "未知文档"
 
             # 1. 生成查询向量
             query_embedding = self.vector_service.embed_text(context.question)
@@ -124,8 +129,10 @@ class VectorSearchChannel(SearchChannel):
                         chunk_id=chunk_entity.id,
                         chunk_index=chunk_entity.chunk_index,
                         title=chunk_entity.title or "",
+                        content=chunk_entity.content or "",
                         content_preview=chunk_entity.content_preview or chunk_entity.content[:200],
-                        score=score
+                        score=score,
+                        source_name=source_name,
                     ))
 
             latency_ms = int((time.time() - start) * 1000)

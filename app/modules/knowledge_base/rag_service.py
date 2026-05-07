@@ -31,7 +31,8 @@ REWRITE_SYSTEM_PROMPT = (
 ANSWER_SYSTEM_PROMPT = (
     "你是知识库问答助手。请严格基于给定参考片段回答。"
     "如果参考内容不足，请明确说明依据不足，不要编造。"
-    "回答使用中文，尽量结构化，必要时引用片段编号。"
+    "回答使用中文，尽量结构化，必要时引用片段编号如 [1][2]。"
+    "在回答末尾，基于内容生成 2-3 个推荐追问问题，以 `---` 分隔，格式为 `**推荐追问：**` 开头。"
 )
 
 
@@ -60,7 +61,15 @@ class KnowledgeBaseRagService:
             raise BusinessException(ErrorCode.KNOWLEDGE_BASE_QUERY_FAILED, "知识库尚未完成索引，暂时无法问答")
 
         resolved_session_id = session_id or uuid.uuid4().hex
-        rewritten_query = await self._rewrite_query(question)
+
+        # 获取对话历史（多轮上下文）
+        chat_history = None
+        if session_id:
+            prev_chats = await knowledge_base_persistence_service.find_session_chats(db, kb_id, session_id)
+            if prev_chats:
+                chat_history = [{"question": c.question, "answer": c.answer or ""} for c in prev_chats]
+
+        rewritten_query = await self._rewrite_query(question, chat_history)
         chat = await knowledge_base_persistence_service.create_chat(
             db,
             kb_id=kb_id,
@@ -124,7 +133,15 @@ class KnowledgeBaseRagService:
             raise BusinessException(ErrorCode.KNOWLEDGE_BASE_QUERY_FAILED, "知识库尚未完成索引，暂时无法问答")
 
         resolved_session_id = session_id or uuid.uuid4().hex
-        rewritten_query = await self._rewrite_query(question)
+
+        # 获取对话历史（多轮上下文）
+        chat_history = None
+        if session_id:
+            prev_chats = await knowledge_base_persistence_service.find_session_chats(db, kb_id, session_id)
+            if prev_chats:
+                chat_history = [{"question": c.question, "answer": c.answer or ""} for c in prev_chats]
+
+        rewritten_query = await self._rewrite_query(question, chat_history)
         chat = await knowledge_base_persistence_service.create_chat(
             db, kb_id=kb_id, session_id=resolved_session_id, question=question, rewritten_query=rewritten_query,
         )
@@ -182,14 +199,23 @@ class KnowledgeBaseRagService:
         chats = await knowledge_base_persistence_service.find_recent_chats(db, kb_id)
         return [knowledge_base_persistence_service.to_chat_list_item(item) for item in chats]
 
-    async def _rewrite_query(self, question: str) -> str:
+    async def _rewrite_query(self, question: str, chat_history: list[dict] | None = None) -> str:
         try:
-            response = await llm_registry.default.ainvoke(
-                [
-                    SystemMessage(content=REWRITE_SYSTEM_PROMPT),
-                    HumanMessage(content=question),
-                ]
-            )
+            messages = [SystemMessage(content=REWRITE_SYSTEM_PROMPT)]
+
+            # 如果有对话历史，添加上下文
+            if chat_history:
+                history_text = "\n".join(
+                    f"用户: {c['question']}\n助手: {c['answer'][:200]}"
+                    for c in chat_history
+                )
+                messages.append(HumanMessage(
+                    content=f"对话历史：\n{history_text}\n\n当前问题：{question}\n\n请结合对话历史改写当前问题，使其能独立检索到相关内容。只输出改写后的查询。"
+                ))
+            else:
+                messages.append(HumanMessage(content=question))
+
+            response = await llm_registry.default.ainvoke(messages)
             text = (response.content or "").strip() if hasattr(response, "content") else ""
             return text or question
         except Exception as e:
@@ -219,7 +245,7 @@ class KnowledgeBaseRagService:
         except Exception as e:
             logger.warning("LLM 生成问答失败，回退为模板答案: %s", e)
 
-        summary_lines = [f"- {item.content_preview}" for item in references]
+        summary_lines = [f"- {item.content or item.content_preview}" for item in references]
         return "根据知识库检索结果，相关内容包括：\n" + "\n".join(summary_lines)
 
     @staticmethod
@@ -228,16 +254,20 @@ class KnowledgeBaseRagService:
     ) -> str:
         context_parts = []
         for index, item in enumerate(references, start=1):
+            content = item.content or item.content_preview
             context_parts.append(
                 f"[片段{index}] 标题: {item.title or '未命名'}\n"
                 f"相关度: {item.score:.4f}\n"
-                f"内容: {item.content_preview}"
+                f"内容: {content}"
             )
         return (
             f"用户问题：{question}\n"
             f"检索查询：{rewritten_query}\n\n"
             f"参考片段：\n{chr(10).join(context_parts)}\n\n"
-            "请基于这些片段回答，并在结尾简短说明依据来自哪些片段。"
+            "请基于这些片段回答。要求：\n"
+            "1. 在回答中用 [1][2] 等标注引用来源\n"
+            "2. 如有代码，保留代码块格式\n"
+            "3. 回答末尾以 `---` 分隔，写 `**推荐追问：**` 后列出 2-3 个有价值的后续问题"
         )
 
     def _search_chunks(
@@ -262,6 +292,7 @@ class KnowledgeBaseRagService:
                     chunk_id=chunk.id,
                     chunk_index=chunk.chunk_index,
                     title=chunk.title,
+                    content=chunk.content or "",
                     content_preview=chunk.content_preview or chunk.content[:180],
                     score=round(score, 4),
                     metadata=metadata,

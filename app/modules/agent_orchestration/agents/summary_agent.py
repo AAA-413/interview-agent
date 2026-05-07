@@ -206,3 +206,50 @@ class SummaryAgent:
         }
 
         return summary
+
+    async def refine_document(
+        self,
+        user_input: str,
+        integrated_doc: Dict[str, Any],
+    ) -> str:
+        """
+        精炼整合文档，生成结构化目录+要点提炼
+
+        Args:
+            user_input: 用户原始需求
+            integrated_doc: 整合后的文档（含 title, summary, integrated_content）
+
+        Returns:
+            精炼后的 Markdown 文本
+        """
+        content = integrated_doc.get("integrated_content", "")
+        if not content:
+            return content
+
+        title = integrated_doc.get("title", "知识文档")
+
+        prompt = f"""请对以下文档进行精炼，生成结构化的内容。
+
+用户需求：{user_input}
+文档标题：{title}
+
+原始文档：
+{content[:6000]}
+
+要求：
+1. 生成 `## 目录` 章节，列出主要章节
+2. 生成 `## 核心要点` 章节，提炼 3-5 个关键结论
+3. 保留原文档的重要技术细节和代码示例
+4. 使用 Markdown 格式，结构清晰
+5. 如果有代码，保留代码块格式
+
+请输出精炼后的完整文档："""
+
+        try:
+            response = await self.llm_provider.ainvoke(
+                [{"role": "user", "content": prompt}]
+            )
+            return response.content
+        except Exception as e:
+            logger.warning("文档精炼失败，返回原文: %s", e)
+            return content

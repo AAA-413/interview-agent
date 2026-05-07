@@ -39,8 +39,8 @@ class InterviewSessionEntity(Base):
     evaluate_status: Mapped[str | None] = mapped_column(String(20))
     evaluate_error: Mapped[str | None] = mapped_column(String(500))
     llm_provider: Mapped[str] = mapped_column(String(50), default="dashscope")
-    created_at: Mapped[str | None] = mapped_column(DateTime, server_default=func.now())
-    completed_at: Mapped[str | None] = mapped_column(DateTime)
+    created_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[str | None] = mapped_column(DateTime(timezone=True))
 
     answers: Mapped[list["InterviewAnswerEntity"]] = relationship(
         back_populates="session", cascade="all, delete-orphan", lazy="selectin"
@@ -64,6 +64,6 @@ class InterviewAnswerEntity(Base):
     feedback: Mapped[str | None] = mapped_column(Text)
     reference_answer: Mapped[str | None] = mapped_column(Text)
     key_points_json: Mapped[str | None] = mapped_column(Text)
-    answered_at: Mapped[str | None] = mapped_column(DateTime, server_default=func.now())
+    answered_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     session: Mapped["InterviewSessionEntity"] = relationship(back_populates="answers")

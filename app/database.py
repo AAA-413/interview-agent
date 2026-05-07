@@ -47,6 +47,9 @@ def init_engine():
                 connect_args={
                     "timeout": 5,
                     "command_timeout": 5,
+                    "server_settings": {
+                        "timezone": "Asia/Shanghai",
+                    },
                 },
             )
             logger.info("数据库引擎创建成功，连接池配置: pool_size=20, max_overflow=10, 总连接数=30")

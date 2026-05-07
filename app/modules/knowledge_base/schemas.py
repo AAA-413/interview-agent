@@ -51,8 +51,10 @@ class RagReferenceDTO(BaseModel):
     chunk_id: int
     chunk_index: int
     title: str | None = None
-    content_preview: str
+    content: str = ""
+    content_preview: str = ""
     score: float
+    source_name: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 from .agent_factory import AgentFactory
 from .cost_controller import CostController
 from .decision_tree import DecisionTree
+from .schemas import AgentMessage
 from .tool_registry import AgentToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -179,12 +180,17 @@ class AgentOrchestrator:
                     break
 
                 # 执行子任务
-                execution_results = await self._execute_tasks(
+                raw_results = await self._execute_tasks(
                     subtasks=plan.get("subtasks", []),
                     user_input=user_input,
                     kb_ids=kb_ids,
                     plan=plan,
                 )
+                # 转为 dict 供下游 agent 使用
+                execution_results = [
+                    r.model_dump() if hasattr(r, "model_dump") else r
+                    for r in raw_results
+                ]
                 logger.info(f"✅ 执行完成: {len(execution_results)} 个任务")
 
                 # 阶段 3：质检（如果需要）
@@ -261,6 +267,13 @@ class AgentOrchestrator:
         """
         strategy = plan.get("strategy", "sequential")
 
+        # A-P4: parallel 模式下检查是否有依赖，有则自动降级为 hybrid
+        if strategy == "parallel":
+            has_deps = any(task.get("dependencies") for task in subtasks)
+            if has_deps:
+                logger.warning("parallel 模式下检测到任务依赖，自动降级为 hybrid")
+                strategy = "hybrid"
+
         if strategy == "sequential":
             return await self._execute_sequential(subtasks, user_input, kb_ids, plan)
         elif strategy == "parallel":
@@ -288,6 +301,7 @@ class AgentOrchestrator:
                 "kb_ids": kb_ids or [],
                 "plan": plan,
                 "previous_results": previous_results,
+                "tool_registry": self.tool_registry,
             }
 
             # 使用 agent_factory 创建 Agent
@@ -298,11 +312,12 @@ class AgentOrchestrator:
             result = await agent.execute(task, context)
 
             # 追踪成本（如果有 token 使用信息）
-            if "metadata" in result and "tokens" in result["metadata"]:
+            meta = result.metadata if hasattr(result, "metadata") else result.get("metadata", {})
+            tokens = meta.get("tokens", 0) if isinstance(meta, dict) else 0
+            if tokens:
                 from .cost_controller import TokenUsage
-                tokens = result["metadata"]["tokens"]
                 usage = TokenUsage(
-                    prompt_tokens=tokens // 3,  # 估算
+                    prompt_tokens=tokens // 3,
                     completion_tokens=tokens * 2 // 3,
                     total_tokens=tokens,
                 )
@@ -335,6 +350,7 @@ class AgentOrchestrator:
                 "kb_ids": kb_ids or [],
                 "plan": plan,
                 "previous_results": [],
+                "tool_registry": self.tool_registry,
             }
 
             agent = self.agent_factory.create_execution_agent(
@@ -343,22 +359,27 @@ class AgentOrchestrator:
 
             tasks.append(agent.execute(subtask, context))
 
-        # 并行执行
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # 并行执行（带超时保护）
+        TASK_TIMEOUT = 120  # 单个任务最长 120 秒
+        wrapped_tasks = [asyncio.wait_for(t, timeout=TASK_TIMEOUT) for t in tasks]
+        results = await asyncio.gather(*wrapped_tasks, return_exceptions=True)
 
         # 处理异常并追踪成本
         processed_results = []
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                processed_results.append({
-                    "task_id": subtasks[i].get("id"),
-                    "status": "failed",
-                    "error": str(result),
-                })
+                error_msg = "任务超时" if isinstance(result, asyncio.TimeoutError) else str(result)
+                processed_results.append(AgentMessage(
+                    task_id=subtasks[i].get("id", "unknown"),
+                    agent_type=subtasks[i].get("type", "unknown"),
+                    status="failed",
+                    error=error_msg,
+                ))
             else:
                 # 追踪成本
-                if "metadata" in result and "tokens" in result["metadata"]:
-                    tokens = result["metadata"]["tokens"]
+                meta = result.metadata if hasattr(result, "metadata") else result.get("metadata", {})
+                tokens = meta.get("tokens", 0) if isinstance(meta, dict) else 0
+                if tokens:
                     self.cost_controller.track(
                         model=self.llm_provider.model_name,
                         input_tokens=tokens // 3,
@@ -414,6 +435,7 @@ class AgentOrchestrator:
                     "kb_ids": kb_ids or [],
                     "plan": plan,
                     "previous_results": previous_results,
+                    "tool_registry": self.tool_registry,
                 }
 
                 agent = self.agent_factory.create_execution_agent(
@@ -422,8 +444,10 @@ class AgentOrchestrator:
 
                 layer_tasks.append(agent.execute(task, context))
 
-            # 执行这一层
-            layer_results = await asyncio.gather(*layer_tasks, return_exceptions=True)
+            # 执行这一层（带超时保护）
+            TASK_TIMEOUT = 120
+            wrapped_layer = [asyncio.wait_for(t, timeout=TASK_TIMEOUT) for t in layer_tasks]
+            layer_results = await asyncio.gather(*wrapped_layer, return_exceptions=True)
 
             # 记录结果并追踪成本
             for i, result in enumerate(layer_results):
@@ -431,15 +455,18 @@ class AgentOrchestrator:
                 executed.add(task_id)
 
                 if isinstance(result, Exception):
-                    result = {
-                        "task_id": task_id,
-                        "status": "failed",
-                        "error": str(result),
-                    }
+                    error_msg = "任务超时" if isinstance(result, asyncio.TimeoutError) else str(result)
+                    result = AgentMessage(
+                        task_id=task_id,
+                        agent_type=ready_tasks[i].get("type", "unknown"),
+                        status="failed",
+                        error=error_msg,
+                    )
                 else:
                     # 追踪成本
-                    if "metadata" in result and "tokens" in result["metadata"]:
-                        tokens = result["metadata"]["tokens"]
+                    meta = result.metadata if hasattr(result, "metadata") else result.get("metadata", {})
+                    tokens = meta.get("tokens", 0) if isinstance(meta, dict) else 0
+                    if tokens:
                         self.cost_controller.track(
                             model=self.llm_provider.model_name,
                             input_tokens=tokens // 3,

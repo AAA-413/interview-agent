@@ -148,10 +148,10 @@ export default function InterviewDetailPage() {
               <TrendingUp className="w-8 h-8 text-green-500 mb-3" />
               <h3 className="font-semibold text-slate-900 mb-2">优势</h3>
               <ul className="text-sm text-slate-600 space-y-1">
-                {detail.strengths.slice(0, 3).map((s, i) => (
+                {detail.strengths.map((s, i) => (
                   <li key={i} className="flex items-start gap-2">
-                    <span className="text-green-500">✓</span>
-                    <span className="line-clamp-1">{s}</span>
+                    <span className="text-green-500 mt-0.5">✓</span>
+                    <span>{s}</span>
                   </li>
                 ))}
               </ul>
@@ -160,10 +160,10 @@ export default function InterviewDetailPage() {
               <Target className="w-8 h-8 text-orange-500 mb-3" />
               <h3 className="font-semibold text-slate-900 mb-2">待改进</h3>
               <ul className="text-sm text-slate-600 space-y-1">
-                {detail.improvements.slice(0, 3).map((s, i) => (
+                {detail.improvements.map((s, i) => (
                   <li key={i} className="flex items-start gap-2">
-                    <span className="text-orange-500">→</span>
-                    <span className="line-clamp-1">{s}</span>
+                    <span className="text-orange-500 mt-0.5">→</span>
+                    <span>{s}</span>
                   </li>
                 ))}
               </ul>

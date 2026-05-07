@@ -17,6 +17,12 @@ tags: [startup, backend, frontend, troubleshooting]
 
 ## 快速启动
 
+### 前置条件：启动 Docker 基础设施
+
+```bash
+docker compose up -d
+```
+
 ### 后端启动（一键命令）
 
 ```bash
@@ -32,6 +38,39 @@ cd frontend && npm run dev
 ```
 
 ## 标准启动流程
+
+### 步骤 0：启动基础设施服务（Docker）
+
+**重要：必须先启动 PostgreSQL、Redis、MinIO，后端才能正常运行。**
+
+```bash
+# 在项目根目录执行
+docker compose up -d
+
+# 验证所有容器健康
+docker ps --filter "name=interview" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+```
+
+**预期输出（3 个容器均为 healthy）：**
+```
+NAMES                STATUS                    PORTS
+interview-postgres   Up X seconds (healthy)    0.0.0.0:5432->5432/tcp
+interview-redis      Up X seconds (healthy)    0.0.0.0:6379->6379/tcp
+interview-minio      Up X seconds (healthy)    0.0.0.0:9000-9001->9000-9001/tcp
+```
+
+**容器说明：**
+| 容器 | 端口 | 用途 |
+|------|------|------|
+| interview-postgres | 5432 | PostgreSQL + pgvector（向量检索） |
+| interview-redis | 6379 | Redis（任务队列、缓存、会话） |
+| interview-minio | 9000/9001 | MinIO 对象存储（文件上传） |
+
+**停止基础设施：**
+```bash
+docker compose down        # 停止并保留数据
+docker compose down -v     # 停止并删除数据卷（慎用）
+```
 
 ### 步骤 1：环境检查
 
@@ -190,6 +229,10 @@ curl -X DELETE http://localhost:8002/api/resumes/<resume_id> | python -m json.to
 ```powershell
 # 启动前后端服务
 
+Write-Host "=== 启动基础设施 (Docker) ===" -ForegroundColor Green
+docker compose up -d
+Start-Sleep -Seconds 3
+
 Write-Host "=== 清理 Python 字节码缓存 ===" -ForegroundColor Green
 Get-ChildItem -Path . -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
 
@@ -219,6 +262,10 @@ Write-Host "API 文档: http://localhost:8002/docs" -ForegroundColor Cyan
 
 ```bash
 #!/bin/bash
+
+echo "=== 启动基础设施 (Docker) ==="
+docker compose up -d
+sleep 3
 
 echo "=== 清理 Python 字节码缓存 ==="
 find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null
@@ -301,17 +348,17 @@ WARNING: 数据库初始化失败（服务仍可启动）: connection refused
 
 **解决方案：**
 ```bash
-# 检查 PostgreSQL 服务
-pg_ctl status
+# 检查 Docker 容器是否运行
+docker ps --filter "name=interview-postgres"
 
-# 启动 PostgreSQL
-pg_ctl start
+# 如果未运行，启动基础设施
+docker compose up -d
 
-# 检查连接配置
-echo $DATABASE_URL
+# 等待容器 healthy 后测试连接
+docker exec interview-postgres pg_isready -U postgres
 
-# 测试连接
-psql -U postgres -d your_database -c "SELECT 1;"
+# 直接测试 psql 连接
+psql -h localhost -U postgres -d interview_guide -c "SELECT 1;"
 ```
 
 ### 问题 4：Redis 连接失败
@@ -323,18 +370,14 @@ WARNING: Redis 连接失败（服务仍可启动）: Connection refused
 
 **解决方案：**
 ```bash
-# 检查 Redis 服务
-redis-cli ping
+# 检查 Docker 容器是否运行
+docker ps --filter "name=interview-redis"
 
-# 启动 Redis
-redis-server
-
-# 检查连接配置
-echo $REDIS_HOST
-echo $REDIS_PORT
+# 如果未运行，启动基础设施
+docker compose up -d
 
 # 测试连接
-redis-cli -h localhost -p 6379 ping
+docker exec interview-redis redis-cli ping
 ```
 
 ### 问题 5：Worker 未启动
@@ -510,6 +553,15 @@ Write-Host "`n=== 所有服务已停止 ===" -ForegroundColor Green
 ### 关键命令
 
 ```bash
+# 启动基础设施（PostgreSQL + Redis + MinIO）
+docker compose up -d
+
+# 检查容器状态
+docker ps --filter "name=interview"
+
+# 停止基础设施
+docker compose down
+
 # 清理缓存
 Get-ChildItem -Path . -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
 

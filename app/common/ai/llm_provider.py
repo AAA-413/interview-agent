@@ -1,5 +1,6 @@
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+import asyncio
 import time
 import logging
 from typing import Any, Dict, List
@@ -9,6 +10,9 @@ from app.config import settings
 from app.common.exception import LLMTimeoutException, LLMRateLimitException
 
 logger = logging.getLogger(__name__)
+
+# 全局信号量：限制 LLM 并发调用数，防止触发 provider 限流
+_LLM_SEMAPHORE = asyncio.Semaphore(10)
 
 
 class MonitoredChatModel:
@@ -24,7 +28,8 @@ class MonitoredChatModel:
     async def ainvoke(self, messages, **kwargs):
         start = time.time()
         try:
-            result = await self._model.ainvoke(messages, **kwargs)
+            async with _LLM_SEMAPHORE:
+                result = await self._model.ainvoke(messages, **kwargs)
             duration = time.time() - start
 
             if hasattr(result, 'response_metadata'):
@@ -64,7 +69,8 @@ class MonitoredChatModel:
     async def agenerate(self, messages, **kwargs):
         start = time.time()
         try:
-            result = await self._model.agenerate(messages, **kwargs)
+            async with _LLM_SEMAPHORE:
+                result = await self._model.agenerate(messages, **kwargs)
             duration = time.time() - start
             logger.info("LLM agenerate 成功: provider=%s, model=%s, duration=%.2fs",
                         self._provider, self._model.model_name, duration)
@@ -80,6 +86,12 @@ class MonitoredChatModel:
             logger.error("LLM agenerate 失败: provider=%s, model=%s, duration=%.2fs",
                          self._provider, self._model.model_name, duration)
             raise
+
+    async def astream(self, messages, **kwargs):
+        """流式调用，带并发限制"""
+        async with _LLM_SEMAPHORE:
+            async for chunk in self._model.astream(messages, **kwargs):
+                yield chunk
 
     def bind(self, **kwargs):
         return self._model.bind(**kwargs)

@@ -42,6 +42,8 @@ class AiSettings(BaseSettings):
     structured_retry_use_repair_prompt: bool = True
     embedding_model: str = "text-embedding-v2"
     embedding_api_key: str = ""  # Embedding API 单独配置（默认使用 bailian_api_key）
+    embedding_provider: str = "zhipu"  # zhipu | dashscope
+    zhipu_api_key: str = ""  # 智谱 API key
 
 
 class StorageSettings(BaseSettings):
@@ -86,6 +88,16 @@ class ResumeSettings(BaseSettings):
     ]
 
 
+class GitHubSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="GITHUB_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    tokens: str = ""  # 逗号分隔的 GitHub Personal Access Token 列表
+
+    @property
+    def token_list(self) -> list[str]:
+        return [t.strip() for t in self.tokens.split(",") if t.strip()]
+
+
 class VoiceInterviewSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="APP_VOICE_INTERVIEW_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -111,6 +123,7 @@ class Settings(BaseSettings):
     interview: InterviewSettings = InterviewSettings()
     resume: ResumeSettings = ResumeSettings()
     voice_interview: VoiceInterviewSettings = VoiceInterviewSettings()
+    github: GitHubSettings = GitHubSettings()
 
 
 settings = Settings()

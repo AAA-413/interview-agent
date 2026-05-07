@@ -115,30 +115,7 @@ export default function KnowledgeBaseUploadPage() {
           >
             上传文件
           </button>
-          <button
-            onClick={() => setMode('url')}
-            className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all ${
-              mode === 'url'
-                ? 'bg-white text-primary-600 shadow-sm'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            从 URL 抓取
-          </button>
         </div>
-
-        {mode === 'url' && (
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">文档 URL</label>
-            <input
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://example.com/document.pdf"
-              className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none focus:border-primary-400"
-            />
-            <p className="text-xs text-slate-400 mt-2">支持网页、PDF、Markdown 等格式的 URL</p>
-          </div>
-        )}
 
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-2">知识库名称</label>

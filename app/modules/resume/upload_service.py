@@ -54,6 +54,7 @@ class ResumeUploadService:
         )
 
         entity = await resume_persistence_service.save_resume(db, entity)
+        await db.commit()
 
         if resume_text:
             await self._enqueue_analysis(entity.id)
@@ -69,6 +70,7 @@ class ResumeUploadService:
             raise BusinessException(ErrorCode.RESUME_PARSE_FAILED, "简历文本为空，无法重新分析")
 
         await resume_persistence_service.update_analyze_status(db, resume_id, AsyncTaskStatus.PENDING, None)
+        await db.commit()
         await self._enqueue_analysis(resume_id)
 
     @staticmethod

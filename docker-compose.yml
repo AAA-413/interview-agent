@@ -8,6 +8,8 @@ services:
       POSTGRES_DB: interview_guide
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
     ports:
       - "5432:5432"
     volumes:

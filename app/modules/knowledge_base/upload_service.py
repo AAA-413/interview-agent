@@ -62,6 +62,7 @@ class KnowledgeBaseUploadService:
             index_status=AsyncTaskStatus.PENDING,
         )
         entity = await knowledge_base_persistence_service.save(db, entity)
+        await db.commit()
 
         if source_text:
             await self._enqueue_index(entity.id)
@@ -81,6 +82,7 @@ class KnowledgeBaseUploadService:
         await knowledge_base_persistence_service.clear_chunks(db, kb_id)
         entity.chunk_count = 0
         await db.flush()
+        await db.commit()
         await self._enqueue_index(kb_id)
         return entity
 

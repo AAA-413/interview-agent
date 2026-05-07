@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import Markdown from 'react-markdown';
+import rehypeHighlight from 'rehype-highlight';
 import {
   generateDownloadPlan,
   executeDownloadPlan,
   getDownloadProgress,
+  cancelDownloadTask,
   DownloadPlan,
   DownloadProgress,
   DownloadStep,
@@ -99,8 +102,8 @@ const SmartDownloadPage: React.FC = () => {
           const progressData = await getDownloadProgress(result.task_id);
           setProgress(progressData);
 
-          // 如果完成或失败，停止轮询
-          if (progressData.status === 'completed' || progressData.status === 'failed') {
+          // 如果完成、失败或取消，停止轮询
+          if (progressData.status === 'completed' || progressData.status === 'failed' || progressData.status === 'cancelled') {
             clearInterval(interval);
           }
         } catch (error) {
@@ -139,6 +142,16 @@ const SmartDownloadPage: React.FC = () => {
     if (progressInterval) {
       clearInterval(progressInterval);
       setProgressInterval(null);
+    }
+  };
+
+  // 取消任务
+  const handleCancel = async () => {
+    if (!taskId) return;
+    try {
+      await cancelDownloadTask(taskId);
+    } catch (error) {
+      console.error('取消任务失败:', error);
     }
   };
 
@@ -340,22 +353,24 @@ const SmartDownloadPage: React.FC = () => {
   const renderExecutingStage = () => {
     if (!progress) return null;
 
-    const statusText = {
+    const statusText: Record<string, string> = {
       planning: '规划中',
       executing: '下载中',
       quality_check: '质量检查',
       indexing: '建立索引',
       completed: '完成',
       failed: '失败',
+      cancelled: '已取消',
     };
 
-    const statusColor = {
+    const statusColor: Record<string, string> = {
       planning: 'text-blue-600',
       executing: 'text-blue-600',
       quality_check: 'text-yellow-600',
       indexing: 'text-purple-600',
       completed: 'text-green-600',
       failed: 'text-red-600',
+      cancelled: 'text-gray-600',
     };
 
     return (
@@ -409,6 +424,33 @@ const SmartDownloadPage: React.FC = () => {
                   <span>📚 来源: {progress.integrated_doc.source_count} 个</span>
                   <span>📝 字数: {progress.integrated_doc.total_length.toLocaleString()}</span>
                 </div>
+                {progress.integrated_doc.content && (
+                  <details className="mt-3">
+                    <summary className="text-sm text-blue-600 cursor-pointer hover:underline font-medium">
+                      查看完整文档内容
+                    </summary>
+                    <div className="mt-3 p-4 bg-white border border-blue-100 rounded-lg max-h-[500px] overflow-auto">
+                      <div className="prose prose-sm max-w-none text-slate-700 leading-7">
+                        <Markdown rehypePlugins={[rehypeHighlight]}>{progress.integrated_doc.content}</Markdown>
+                      </div>
+                    </div>
+                  </details>
+                )}
+                {progress.integrated_doc.source_summaries && progress.integrated_doc.source_summaries.length > 0 && (
+                  <details className="mt-3">
+                    <summary className="text-xs text-blue-600 cursor-pointer hover:underline font-medium">
+                      各来源摘要
+                    </summary>
+                    <div className="mt-2 space-y-2">
+                      {progress.integrated_doc.source_summaries.map((s: {source: string; description: string; summary: string}, idx: number) => (
+                        <div key={idx} className="p-3 bg-white border border-blue-100 rounded-lg">
+                          <p className="text-xs font-medium text-blue-800 mb-1">{s.description || `来源 ${idx + 1}`}</p>
+                          <p className="text-xs text-slate-600">{s.summary}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
                 {progress.integrated_doc.sources && progress.integrated_doc.sources.length > 0 && (
                   <details className="mt-3">
                     <summary className="text-xs text-blue-600 cursor-pointer hover:underline">
@@ -446,7 +488,26 @@ const SmartDownloadPage: React.FC = () => {
             </div>
           )}
 
-          {(progress.status === 'completed' || progress.status === 'failed') && (
+          {progress.status === 'cancelled' && (
+            <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg mb-4">
+              <p className="text-gray-800 font-semibold">⚠️ 任务已取消</p>
+              <p className="text-sm text-gray-700 mt-1">{progress.message}</p>
+            </div>
+          )}
+
+          {/* 进行中：显示取消按钮 */}
+          {['planning', 'executing', 'quality_check', 'indexing'].includes(progress.status) && (
+            <div className="mb-4">
+              <button
+                onClick={handleCancel}
+                className="w-full bg-red-100 text-red-700 py-2 rounded-lg hover:bg-red-200 transition-colors text-sm"
+              >
+                取消任务
+              </button>
+            </div>
+          )}
+
+          {(progress.status === 'completed' || progress.status === 'failed' || progress.status === 'cancelled') && (
             <div className="flex gap-4">
               <button
                 onClick={handleReset}

@@ -122,8 +122,8 @@ class AgentPersistenceService:
     async def complete_execution(
         self,
         execution_id: int,
-        context: DynamicContext,
         final_answer: str,
+        context: Optional[DynamicContext] = None,
         quality_score: Optional[float] = None,
         quality_passed: Optional[bool] = None,
         status: AgentExecutionStatus = AgentExecutionStatus.SUCCESS,
@@ -135,20 +135,19 @@ class AgentPersistenceService:
         execution = result.scalar_one_or_none()
 
         if execution:
-            # 计算执行时间
-            execution_time_ms = 0
-            if context.start_time:
-                execution_time_ms = int((datetime.now() - context.start_time).total_seconds() * 1000)
-
-            # 更新执行记录
             execution.final_answer = final_answer
             execution.quality_score = quality_score
             execution.quality_passed = quality_passed
-            execution.total_steps = context.step_count
-            execution.retry_count = context.retry_count
-            execution.execution_time_ms = execution_time_ms
             execution.status = status
             execution.error_message = error_message
+
+            if context:
+                execution_time_ms = 0
+                if context.start_time:
+                    execution_time_ms = int((datetime.now() - context.start_time).total_seconds() * 1000)
+                execution.total_steps = context.step_count
+                execution.retry_count = context.retry_count
+                execution.execution_time_ms = execution_time_ms
 
             await self.db.commit()
 
@@ -174,9 +173,11 @@ class AgentPersistenceService:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_execution_by_session(self, session_id: str) -> Optional[AgentExecutionEntity]:
+    async def get_execution_by_session(self, session_id: str, user_id: Optional[int] = None) -> Optional[AgentExecutionEntity]:
         """根据 session_id 获取执行记录"""
         stmt = select(AgentExecutionEntity).where(AgentExecutionEntity.session_id == session_id)
+        if user_id is not None:
+            stmt = stmt.where(AgentExecutionEntity.user_id == user_id)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 

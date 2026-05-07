@@ -11,13 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.ai.llm_provider import llm_registry
 from app.database import get_db
-from app.modules.agent_orchestration import (
-    AgentChain,
-    AgentFactory,
-    CostController,
-    DecisionTree,
-    DynamicContext,
-)
+from app.modules.auth.dependencies import get_current_user_id
+from app.modules.agent_orchestration import AgentOrchestrator
 from app.modules.agent_orchestration.models import AgentExecutionStatus
 from app.modules.agent_orchestration.persistence_service import AgentPersistenceService
 from app.modules.agent_orchestration.tool_registry import AgentToolRegistry
@@ -95,6 +90,7 @@ async def get_tool_registry() -> AgentToolRegistry:
 @router.post("/chat", response_model=AgentChatResponse)
 async def agent_chat(
     request: AgentChatRequest,
+    user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
     knowledge_service: KnowledgeBaseRagService = Depends(get_knowledge_service),
     tool_registry: AgentToolRegistry = Depends(get_tool_registry),
@@ -102,131 +98,100 @@ async def agent_chat(
     """
     Agent 聊天接口
 
-    执行流程：
-    1. 创建执行记录
-    2. 决策树评估路径
-    3. 创建责任链
-    4. 执行责任链
-    5. 保存结果
+    使用 AgentOrchestrator 执行完整流程：
+    决策树 → 规划 → 执行 → 质检 → 总结
     """
     persistence = AgentPersistenceService(db)
+    execution = None
 
     try:
         # 1. 创建执行记录
         execution = await persistence.create_execution(
             user_input=request.message,
+            user_id=user_id,
             kb_ids=request.kb_ids,
         )
 
-        # 2. 创建上下文
-        context = DynamicContext(
-            user_input=request.message,
-            max_step=request.max_step,
-        )
-        context.kb_ids = request.kb_ids or []
-        context.execution_id = execution.id
-        context.session_id = execution.session_id
-        context.set_value("model", request.model)
+        # 2. 使用 AgentOrchestrator 执行完整流程
+        from app.common.ai.llm_adapter import LLMProviderAdapter
+        chat_model = llm_registry.default
+        llm_provider = LLMProviderAdapter(chat_model)
 
-        # 3. 决策树评估
-        decision_tree = DecisionTree(knowledge_service=knowledge_service)
-        path = await decision_tree.decide(
+        orchestrator = AgentOrchestrator(
+            llm_provider=llm_provider,
+            knowledge_service=knowledge_service,
+            max_cost=request.budget_limit or 10.0,
+        )
+
+        logger.info("🚀 开始 Agent 编排")
+        result = await orchestrator.execute(
             user_input=request.message,
             kb_ids=request.kb_ids or [],
         )
 
-        logger.info(f"🎯 选择执行路径: {path.name}")
-
-        # 更新执行路径
+        # 3. 更新执行路径
+        from app.modules.agent_orchestration.models import AgentExecutionPath
+        exec_path_name = result.get("execution_summary", {}).get("execution_path", "standard")
+        exec_path_enum = AgentExecutionPath(exec_path_name) if exec_path_name in [e.value for e in AgentExecutionPath] else AgentExecutionPath.STANDARD
         await persistence.update_execution_path(
             execution_id=execution.id,
-            path=path,
+            path=exec_path_enum,
         )
 
-        # 4. 创建成本控制器
-        cost_controller = CostController(budget_limit=request.budget_limit)
+        # 4. 保存成本日志
+        cost_report = result.get("cost_report", {})
+        for agent_name, usage in cost_report.get("agent_breakdown", {}).items():
+            if isinstance(usage, dict):
+                await persistence.add_cost_log(
+                    execution_id=execution.id,
+                    agent_name=agent_name,
+                    model=request.model,
+                    prompt_tokens=usage.get("prompt_tokens", 0),
+                    completion_tokens=usage.get("completion_tokens", 0),
+                    total_tokens=usage.get("total_tokens", 0),
+                    estimated_cost=usage.get("cost", 0.0),
+                )
 
-        # 5. 创建责任链
-        from app.common.ai.llm_adapter import LLMProviderAdapter
-        chat_model = llm_registry.default
-        llm_provider = LLMProviderAdapter(chat_model)
-        factory = AgentFactory(
-            llm_provider=llm_provider,
-            knowledge_service=knowledge_service,
-            cost_controller=cost_controller,
-            tool_registry=tool_registry,
-        )
-        chain = factory.create_chain(path)
-
-        # 6. 执行责任链
-        logger.info("🚀 开始执行责任链")
-        final_answer = await chain.execute(context)
-
-        # 7. 保存执行步骤
-        for i, record in enumerate(context.execution_history):
-            await persistence.add_execution_step(
-                execution_id=execution.id,
-                step_number=i + 1,
-                agent_name=record.get("agent", "unknown"),
-                result_preview=record.get("result", "")[:500],
-                tokens_used=0,  # TODO: 从 cost_controller 获取
-                execution_time_ms=0,
-            )
-
-        # 8. 保存成本日志
-        cost_summary = cost_controller.get_summary()
-        for agent_name, usage in cost_summary.get("agent_breakdown", {}).items():
-            await persistence.add_cost_log(
-                execution_id=execution.id,
-                agent_name=agent_name,
-                model=request.model,
-                prompt_tokens=usage["prompt_tokens"],
-                completion_tokens=usage["completion_tokens"],
-                total_tokens=usage["total_tokens"],
-                estimated_cost=0.0,  # TODO: 计算成本
-            )
-
-        # 9. 更新执行成本
+        # 5. 更新执行成本
+        exec_summary = result.get("execution_summary", {})
+        total_tokens = exec_summary.get("total_tokens", 0)
+        total_cost = cost_report.get("total_cost", 0.0)
         await persistence.update_execution_cost(
             execution_id=execution.id,
-            total_tokens=cost_summary["total_tokens"],
-            total_cost=cost_summary.get("total_cost", 0.0),
+            total_tokens=total_tokens,
+            total_cost=total_cost,
         )
 
-        # 10. 完成执行记录
-        quality_result = context.get_value("quality_result", {})
+        # 6. 完成执行记录
+        quality_check = result.get("quality_check") or {}
         await persistence.complete_execution(
             execution_id=execution.id,
-            context=context,
-            final_answer=final_answer,
-            quality_score=quality_result.get("score"),
-            quality_passed=quality_result.get("passed"),
+            final_answer=result.get("final_answer", ""),
+            quality_score=quality_check.get("score"),
+            quality_passed=quality_check.get("passed"),
             status=AgentExecutionStatus.SUCCESS,
         )
 
-        # 11. 返回响应
+        # 7. 返回响应
         return AgentChatResponse(
             session_id=execution.session_id,
-            answer=final_answer,
-            execution_path=path.name,
-            total_steps=context.step_count,
-            quality_score=quality_result.get("score"),
-            total_tokens=cost_summary["total_tokens"],
-            total_cost=cost_summary.get("total_cost", 0.0),
-            execution_time_ms=context.execution_time_ms,
+            answer=result.get("final_answer", ""),
+            execution_path=exec_path_name,
+            total_steps=exec_summary.get("total_tasks", 0),
+            quality_score=quality_check.get("score"),
+            total_tokens=total_tokens,
+            total_cost=total_cost,
+            execution_time_ms=int(exec_summary.get("execution_time", 0) * 1000),
         )
 
     except Exception as e:
         logger.error(f"❌ Agent 执行失败: {e}", exc_info=True)
 
-        # 更新执行状态为失败
-        if context.execution_id:
+        if execution:
             await persistence.complete_execution(
-                execution_id=context.execution_id,
-                context=context,
-                final_answer="",
+                execution_id=execution.id,
+                final_answer=f"执行失败: {str(e)}",
                 status=AgentExecutionStatus.FAILED,
-                error_message=str(e),
             )
 
         raise HTTPException(status_code=500, detail=f"Agent 执行失败: {str(e)}")
@@ -235,11 +200,12 @@ async def agent_chat(
 @router.get("/executions/{session_id}", response_model=AgentExecutionDetail)
 async def get_execution(
     session_id: str,
+    user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """获取执行详情"""
     persistence = AgentPersistenceService(db)
-    execution = await persistence.get_execution_by_session(session_id)
+    execution = await persistence.get_execution_by_session(session_id, user_id=user_id)
 
     if not execution:
         raise HTTPException(status_code=404, detail="执行记录不存在")
@@ -263,11 +229,12 @@ async def get_execution(
 async def list_executions(
     limit: int = 20,
     offset: int = 0,
+    user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """列出执行记录"""
     persistence = AgentPersistenceService(db)
-    executions = await persistence.list_executions(limit=limit, offset=offset)
+    executions = await persistence.list_executions(user_id=user_id, limit=limit, offset=offset)
 
     return [
         AgentExecutionDetail(

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -8,17 +8,11 @@ import {
   Loader2,
   MessageSquare,
   RefreshCw,
-  Send,
-  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { knowledgeBaseApi } from '../api/knowledgeBase';
-import type {
-  AsyncTaskStatus,
-  KnowledgeBaseDetailDTO,
-  RagAnswerDTO,
-  RagReferenceDTO,
-} from '../types/knowledgeBase';
+import type { AsyncTaskStatus, KnowledgeBaseDetailDTO } from '../types/knowledgeBase';
+import RagChatDrawer from '../components/RagChatDrawer';
 
 const processingStatuses = new Set<AsyncTaskStatus>(['PENDING', 'PROCESSING']);
 const statusMap: Record<AsyncTaskStatus, { label: string; color: string }> = {
@@ -34,14 +28,8 @@ export default function KnowledgeBaseDetailPage() {
   const [detail, setDetail] = useState<KnowledgeBaseDetailDTO | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [question, setQuestion] = useState('');
-  const [asking, setAsking] = useState(false);
-  const [streaming, setStreaming] = useState(false);
-  const [answer, setAnswer] = useState<RagAnswerDTO | null>(null);
-  const [references, setReferences] = useState<RagReferenceDTO[]>([]);
-  const [streamedAnswer, setStreamedAnswer] = useState('');
-  const [answerSessionId, setAnswerSessionId] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerSessionId, setDrawerSessionId] = useState<string | null>(null);
 
   const numericKbId = useMemo(() => (kbId ? parseInt(kbId, 10) : null), [kbId]);
 
@@ -103,89 +91,15 @@ export default function KnowledgeBaseDetailPage() {
     }
   };
 
-  const resetAnswerState = () => {
-    setAnswer(null);
-    setReferences([]);
-    setStreamedAnswer('');
-    setAnswerSessionId(null);
+  const openDrawer = (sessionId?: string) => {
+    setDrawerSessionId(sessionId || null);
+    setDrawerOpen(true);
   };
 
-  const handleAsk = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!numericKbId || !question.trim()) return;
-    setAsking(true);
-    setError('');
-    resetAnswerState();
-
-    try {
-      const result = await knowledgeBaseApi.askKnowledgeBase(numericKbId, {
-        question: question.trim(),
-        session_id: sessionId,
-        top_k: 4,
-      });
-      setAnswer(result);
-      setAnswerSessionId(result.session_id);
-      setSessionId(result.session_id);
-      setReferences(result.references);
-      await loadDetail(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '提问失败');
-    } finally {
-      setAsking(false);
-    }
-  };
-
-  const handleStreamAsk = async () => {
-    if (!numericKbId || !question.trim()) return;
-    setStreaming(true);
-    setError('');
-    resetAnswerState();
-
-    try {
-      await knowledgeBaseApi.streamKnowledgeBaseAnswer(
-        numericKbId,
-        {
-          question: question.trim(),
-          session_id: sessionId,
-          top_k: 4,
-        },
-        {
-          onMeta: (data) => {
-            if (typeof data.session_id === 'string') {
-              setSessionId(data.session_id);
-              setAnswerSessionId(data.session_id);
-            }
-          },
-          onChunk: (chunk) => {
-            setStreamedAnswer(prev => prev + chunk);
-          },
-          onReferences: (refs) => {
-            setReferences(refs as RagReferenceDTO[]);
-          },
-          onDone: async (data) => {
-            const finalAnswer = typeof data.answer === 'string' ? data.answer : '';
-            const rewrittenQuery = typeof data.rewritten_query === 'string' ? data.rewritten_query : question.trim();
-            const nextSessionId = typeof data.session_id === 'string' ? data.session_id : sessionId || '';
-            const finalReferences = Array.isArray(data.references) ? (data.references as RagReferenceDTO[]) : references;
-            const finalPayload: RagAnswerDTO = {
-              session_id: nextSessionId,
-              rewritten_query: rewrittenQuery,
-              answer: finalAnswer,
-              references: finalReferences,
-            };
-            setReferences(finalReferences);
-            setAnswer(finalPayload);
-            setAnswerSessionId(nextSessionId || null);
-            setSessionId(nextSessionId || null);
-            await loadDetail(false);
-          },
-        },
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '流式提问失败');
-    } finally {
-      setStreaming(false);
-    }
+  const closeDrawer = () => {
+    setDrawerOpen(false);
+    setDrawerSessionId(null);
+    void loadDetail(false);
   };
 
   if (loading) {
@@ -213,8 +127,6 @@ export default function KnowledgeBaseDetailPage() {
   }
 
   const status = statusMap[detail.index_status] || statusMap.PENDING;
-  const currentAnswerText = answer?.answer || streamedAnswer;
-  const currentReferences = answer?.references || references;
 
   return (
     <div className="space-y-6">
@@ -278,75 +190,19 @@ export default function KnowledgeBaseDetailPage() {
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div className="xl:col-span-2 space-y-6">
           <div className="bg-white rounded-2xl border border-slate-200 p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <MessageSquare className="w-5 h-5 text-primary-500" />
-              <h2 className="text-lg font-semibold text-slate-900">知识库问答</h2>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-primary-500" />
+                <h2 className="text-lg font-semibold text-slate-900">知识库问答</h2>
+              </div>
+              <button
+                onClick={() => openDrawer()}
+                disabled={detail.index_status !== 'COMPLETED'}
+                className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-primary-600 to-primary-500 text-white rounded-xl hover:from-primary-700 hover:to-primary-600 text-sm disabled:bg-slate-300 disabled:cursor-not-allowed"
+              >
+                <MessageSquare className="w-4 h-4" /> 开始问答
+              </button>
             </div>
-
-            <form onSubmit={handleAsk} className="space-y-4">
-              <textarea
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                placeholder="输入问题，例如：这个文档主要讲了什么？有哪些关键结论？"
-                rows={4}
-                disabled={detail.index_status !== 'COMPLETED' || asking || streaming}
-                className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none focus:border-primary-400 resize-none disabled:bg-slate-50"
-              />
-              <div className="flex flex-wrap gap-3">
-                <button
-                  type="submit"
-                  disabled={!question.trim() || detail.index_status !== 'COMPLETED' || asking || streaming}
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-primary-600 to-primary-500 text-white rounded-xl disabled:bg-slate-300 disabled:cursor-not-allowed"
-                >
-                  {asking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} 普通问答
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleStreamAsk()}
-                  disabled={!question.trim() || detail.index_status !== 'COMPLETED' || asking || streaming}
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
-                >
-                  {streaming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} 流式问答
-                </button>
-              </div>
-            </form>
-
-            {error && (
-              <div className="mt-4 flex items-center gap-2 p-4 bg-red-50 text-red-600 rounded-xl">
-                <AlertCircle className="w-5 h-5" />
-                <span className="text-sm">{error}</span>
-              </div>
-            )}
-
-            {currentAnswerText && (
-              <div className="mt-6 space-y-4">
-                <div className="rounded-2xl border border-slate-200 p-5 bg-slate-50">
-                  <h3 className="text-sm font-semibold text-slate-900 mb-3">回答结果</h3>
-                  <p className="text-sm text-slate-700 leading-7 whitespace-pre-wrap">{currentAnswerText}</p>
-                </div>
-
-            {sessionId && (
-              <p className="mt-3 text-xs text-slate-400">会话 ID：{answerSessionId || sessionId}</p>
-            )}
-
-                {currentReferences.length > 0 && (
-                  <div className="rounded-2xl border border-slate-200 p-5">
-                    <h3 className="text-sm font-semibold text-slate-900 mb-3">命中片段</h3>
-                    <div className="space-y-3">
-                      {currentReferences.map((ref) => (
-                        <div key={`${ref.chunk_id}-${ref.chunk_index}`} className="rounded-xl border border-slate-100 p-4 bg-white">
-                          <div className="flex items-center justify-between gap-3 mb-2">
-                            <span className="text-xs font-medium text-primary-600">片段 #{ref.chunk_index + 1}</span>
-                            <span className="text-xs text-slate-400">相关度 {(ref.score * 100).toFixed(1)}%</span>
-                          </div>
-                          <p className="text-sm text-slate-600 leading-6">{ref.content_preview}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
 
           <div className="bg-white rounded-2xl border border-slate-200 p-6">
@@ -406,20 +262,33 @@ export default function KnowledgeBaseDetailPage() {
             ) : (
               <div className="space-y-3">
                 {detail.recent_chats.map((chat) => (
-                  <div key={chat.id} className="rounded-xl border border-slate-100 p-4 bg-slate-50">
+                  <button
+                    key={chat.id}
+                    onClick={() => openDrawer(chat.session_id)}
+                    className="w-full text-left rounded-xl border border-slate-100 p-4 bg-slate-50 hover:bg-slate-100 hover:border-primary-200 transition-colors cursor-pointer"
+                  >
                     <p className="text-sm font-medium text-slate-800 line-clamp-2">{chat.question}</p>
                     {chat.answer && <p className="text-xs text-slate-500 mt-2 line-clamp-3">{chat.answer}</p>}
                     <div className="mt-2 flex items-center justify-between text-xs text-slate-400">
                       <span>{chat.status}</span>
                       <span>{new Date(chat.created_at).toLocaleString()}</span>
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {numericKbId && (
+        <RagChatDrawer
+          kbId={numericKbId}
+          open={drawerOpen}
+          onClose={closeDrawer}
+          initialSessionId={drawerSessionId}
+        />
+      )}
     </div>
   );
 }

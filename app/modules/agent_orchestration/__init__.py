@@ -9,10 +9,10 @@ Agent 编排模块
 - 核心 Agent：规划、执行、质检、总结
 """
 
-from .base_agent import BaseAgent, AgentContext, DynamicContext
-from .agent_chain import AgentChain
+from .base_agent import DynamicContext
 from .decision_tree import DecisionTree, ExecutionPath
 from .agent_factory import AgentFactory
+from .schemas import AgentMessage
 from .tool_registry import AgentToolRegistry, AgentTool
 from .cost_controller import CostController
 from .orchestrator import AgentOrchestrator
@@ -25,13 +25,11 @@ from .agents import (
 )
 
 __all__ = [
-    "BaseAgent",
-    "AgentContext",
     "DynamicContext",
-    "AgentChain",
     "DecisionTree",
     "ExecutionPath",
     "AgentFactory",
+    "AgentMessage",
     "AgentToolRegistry",
     "AgentTool",
     "CostController",

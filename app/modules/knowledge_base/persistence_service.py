@@ -131,6 +131,17 @@ class KnowledgeBasePersistenceService(BasePersistenceService[KnowledgeBaseEntity
         )
         return list(result.scalars().all())
 
+    async def find_session_chats(self, db: AsyncSession, kb_id: int, session_id: str, limit: int = 5) -> list[RagChatEntity]:
+        result = await db.execute(
+            select(RagChatEntity)
+            .where(RagChatEntity.knowledge_base_id == kb_id)
+            .where(RagChatEntity.session_id == session_id)
+            .where(RagChatEntity.status == RagChatStatus.COMPLETED)
+            .order_by(RagChatEntity.created_at.asc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
     def to_list_item_dto(self, entity: KnowledgeBaseEntity) -> KnowledgeBaseListItemDTO:
         return KnowledgeBaseListItemDTO(
             id=entity.id,

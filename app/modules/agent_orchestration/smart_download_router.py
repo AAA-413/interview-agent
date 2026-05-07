@@ -18,6 +18,7 @@ from app.infrastructure.redis.redis_service import RedisService, get_redis
 from app.modules.agent_orchestration.orchestrator import AgentOrchestrator
 from app.modules.agent_orchestration.agents.planning_agent import PlanningAgent
 from app.modules.knowledge_base.rag_service import KnowledgeBaseRagService
+from app.modules.knowledge_base.persistence_service import knowledge_base_persistence_service
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,8 @@ class ExecuteDownloadRequest(BaseModel):
 class DownloadProgress(BaseModel):
     """下载进度"""
     task_id: str
-    status: str  # planning, executing, quality_check, completed, failed
+    user_id: int = 0
+    status: str  # planning, executing, quality_check, completed, failed, cancelled
     current_step: int
     total_steps: int
     progress_percent: int
@@ -82,29 +84,53 @@ class DownloadProgress(BaseModel):
 
 # ============ Redis 状态管理 ============
 
-async def _save_plan(plan_id: str, plan_data: dict) -> None:
-    redis = await get_redis()
-    svc = RedisService(redis)
-    await svc.set(REDIS_PLAN_PREFIX + plan_id, json.dumps(plan_data, ensure_ascii=False), ex=STATE_TTL_SECONDS)
+def _plan_key(user_id: int, plan_id: str) -> str:
+    return f"smart_download:{user_id}:plan:{plan_id}"
 
-async def _get_plan(plan_id: str) -> dict | None:
+def _task_key(user_id: int, task_id: str) -> str:
+    return f"smart_download:{user_id}:task:{task_id}"
+
+async def _save_plan(user_id: int, plan_id: str, plan_data: dict) -> None:
     redis = await get_redis()
     svc = RedisService(redis)
-    raw = await svc.get(REDIS_PLAN_PREFIX + plan_id)
+    await svc.set(_plan_key(user_id, plan_id), json.dumps(plan_data, ensure_ascii=False), ex=STATE_TTL_SECONDS)
+
+async def _get_plan(user_id: int, plan_id: str) -> dict | None:
+    redis = await get_redis()
+    svc = RedisService(redis)
+    raw = await svc.get(_plan_key(user_id, plan_id))
     return json.loads(raw) if raw else None
 
-async def _save_task_progress(task_id: str, progress: DownloadProgress) -> None:
+async def _save_task_progress(user_id: int, task_id: str, progress: DownloadProgress) -> None:
     redis = await get_redis()
     svc = RedisService(redis)
-    await svc.set(REDIS_TASK_PREFIX + task_id, json.dumps(progress.model_dump(), ensure_ascii=False, default=str), ex=STATE_TTL_SECONDS)
+    await svc.set(_task_key(user_id, task_id), json.dumps(progress.model_dump(), ensure_ascii=False, default=str), ex=STATE_TTL_SECONDS)
 
-async def _get_task_progress(task_id: str) -> DownloadProgress | None:
+async def _get_task_progress(user_id: int, task_id: str) -> DownloadProgress | None:
     redis = await get_redis()
     svc = RedisService(redis)
-    raw = await svc.get(REDIS_TASK_PREFIX + task_id)
+    raw = await svc.get(_task_key(user_id, task_id))
     if not raw:
         return None
     return DownloadProgress(**json.loads(raw))
+
+
+def _cancel_key(user_id: int, task_id: str) -> str:
+    return f"smart_download:{user_id}:cancel:{task_id}"
+
+
+async def _request_cancel(user_id: int, task_id: str) -> None:
+    """标记任务为已请求取消（Redis flag，24h 过期）"""
+    redis = await get_redis()
+    svc = RedisService(redis)
+    await svc.set(_cancel_key(user_id, task_id), "1", ex=86400)
+
+
+async def _is_cancelled(user_id: int, task_id: str) -> bool:
+    """检查任务是否已被请求取消"""
+    redis = await get_redis()
+    svc = RedisService(redis)
+    return await svc.get(_cancel_key(user_id, task_id)) is not None
 
 
 # ============ API 端点 ============
@@ -174,7 +200,7 @@ async def generate_download_plan(
             total_steps=len(steps),
         )
 
-        await _save_plan(plan_id, plan.model_dump())
+        await _save_plan(user_id, plan_id, plan.model_dump())
 
         logger.info(f"Plan generated successfully: {len(steps)} steps")
         return plan
@@ -201,7 +227,7 @@ async def execute_download_plan(
     """
     try:
         # 检查计划是否存在
-        plan = await _get_plan(request.plan_id)
+        plan = await _get_plan(user_id, request.plan_id)
         if plan is None:
             raise HTTPException(status_code=404, detail="计划不存在")
 
@@ -212,6 +238,7 @@ async def execute_download_plan(
         # 初始化进度
         progress = DownloadProgress(
             task_id=task_id,
+            user_id=user_id,
             status="executing",
             current_step=0,
             total_steps=plan["total_steps"],
@@ -220,7 +247,7 @@ async def execute_download_plan(
             retry_count=0,
             downloaded_files=[],
         )
-        await _save_task_progress(task_id, progress)
+        await _save_task_progress(user_id, task_id, progress)
 
         # 后台执行下载任务
         background_tasks.add_task(
@@ -249,17 +276,42 @@ async def execute_download_plan(
 
 
 @router.get("/progress/{task_id}", response_model=DownloadProgress)
-async def get_download_progress(task_id: str):
+async def get_download_progress(
+    task_id: str,
+    user_id: int = Depends(get_current_user_id),
+):
     """
     查询下载进度
 
     前端可以轮询此接口获取实时进度
     """
-    progress = await _get_task_progress(task_id)
+    progress = await _get_task_progress(user_id, task_id)
     if progress is None:
         raise HTTPException(status_code=404, detail="任务不存在")
 
     return progress
+
+
+@router.post("/cancel/{task_id}")
+async def cancel_download_task(
+    task_id: str,
+    user_id: int = Depends(get_current_user_id),
+):
+    """取消正在执行的下载任务"""
+    progress = await _get_task_progress(user_id, task_id)
+    if progress is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    if progress.status in ("completed", "failed", "cancelled"):
+        return {"message": f"任务已处于 {progress.status} 状态，无需取消"}
+
+    await _request_cancel(user_id, task_id)
+
+    progress.status = "cancelled"
+    progress.message = "用户请求取消"
+    await _save_task_progress(user_id, task_id, progress)
+
+    return {"message": "取消请求已提交", "task_id": task_id}
 
 
 # ============ 辅助函数 ============
@@ -334,7 +386,7 @@ async def _execute_download_with_retry(
     4. Summary: 生成报告
     """
     logger.info("后台任务开始: task_id=%s", task_id)
-    progress = await _get_task_progress(task_id)
+    progress = await _get_task_progress(user_id, task_id)
     if progress is None:
         logger.error("任务进度不存在: task_id=%s", task_id)
         return
@@ -373,10 +425,18 @@ async def _execute_download_with_retry(
                 expanded_steps = []
 
                 for i, step in enumerate(all_steps):
+                    # C-P4: 检查取消请求
+                    if await _is_cancelled(user_id, task_id):
+                        logger.info("任务已取消: task_id=%s", task_id)
+                        progress.status = "cancelled"
+                        progress.message = "任务已取消"
+                        await _save_task_progress(user_id, task_id, progress)
+                        return
+
                     progress.current_step = i + 1
                     progress.progress_percent = int((i + 1) / len(all_steps) * 50)  # 前50%用于初始任务
                     progress.message = f"正在执行: {step['description']}"
-                    await _save_task_progress(task_id, progress)
+                    await _save_task_progress(user_id, task_id, progress)
 
                     # 根据任务类型选择Agent
                     if step.get("action") in ["search_github", "fetch_github_repo", "fetch_github_file"]:
@@ -398,6 +458,10 @@ async def _execute_download_with_retry(
                         }
                         logger.info(f"[CHECK] Execute download task: {download_task}")
                         result = await download_agent.execute(task=download_task, context={})
+
+                    # AgentMessage → dict（统一转换）
+                    if hasattr(result, "model_dump"):
+                        result = result.model_dump()
 
                     # 添加调试日志
                     logger.info(f"[CHECK] Agent result type: {type(result)}")
@@ -433,6 +497,13 @@ async def _execute_download_with_retry(
 
                 # 执行动态生成的任务
                 if expanded_steps:
+                    # C-P4: 检查取消请求
+                    if await _is_cancelled(user_id, task_id):
+                        logger.info("任务已取消: task_id=%s", task_id)
+                        progress.status = "cancelled"
+                        progress.message = "任务已取消"
+                        await _save_task_progress(user_id, task_id, progress)
+                        return
                     logger.info(f"[EXPAND] Dynamically generated {len(expanded_steps)} tasks")
                     progress.total_steps += len(expanded_steps)
 
@@ -448,6 +519,9 @@ async def _execute_download_with_retry(
                             **step.get("params", {})
                         }
                         result = await github_agent.execute(task=github_task, context={})
+                        # AgentMessage → dict
+                        if hasattr(result, "model_dump"):
+                            result = result.model_dump()
                         execution_results.append(result)
 
                         if result and isinstance(result, dict) and result.get("status") == "success":
@@ -460,6 +534,14 @@ async def _execute_download_with_retry(
                             })
 
                 # 质量检查
+                # C-P4: 检查取消请求
+                if await _is_cancelled(user_id, task_id):
+                    logger.info("任务已取消: task_id=%s", task_id)
+                    progress.status = "cancelled"
+                    progress.message = "任务已取消"
+                    await _save_task_progress(user_id, task_id, progress)
+                    return
+
                 logger.info("质量检查开始: task_id=%s, retry=%d", task_id, retry)
                 progress.status = "quality_check"
                 progress.progress_percent = 70
@@ -473,7 +555,7 @@ async def _execute_download_with_retry(
 
                 logger.info("质量检查完成: task_id=%s, score=%.2f, passed=%s", task_id, quality_result['score'], quality_result['passed'])
                 progress.quality_score = quality_result["score"] / 100.0  # 转换为0-1范围
-                await _save_task_progress(task_id, progress)
+                await _save_task_progress(user_id, task_id, progress)
 
                 # 如果质量合格，跳出重试循环
                 if quality_result["passed"]:
@@ -503,7 +585,7 @@ async def _execute_download_with_retry(
         progress.status = "summarizing"
         progress.progress_percent = 85
         progress.message = "正在整合内容..."
-        await _save_task_progress(task_id, progress)
+        await _save_task_progress(user_id, task_id, progress)
 
         # 整合所有内容为一篇文档
         integrated_doc = None
@@ -546,19 +628,23 @@ async def _execute_download_with_retry(
         logger.info(f"  integrated_doc keys: {integrated_doc.keys() if isinstance(integrated_doc, dict) else 'N/A'}")
         logger.info(f"  title: {integrated_doc.get('title', 'N/A') if isinstance(integrated_doc, dict) else 'N/A'}")
 
-        # 注释掉summary_agent调用，因为integrated_doc已经包含了摘要
-        # summary_result = await summary_agent.summarize(
-        #     user_input=plan["user_input"],
-        #     execution_results=execution_results,
-        #     quality_check=quality_result,
-        #     plan=plan,
-        # )
+        # 使用 SummaryAgent 精炼文档（结构化目录+要点提炼）
+        try:
+            refined_content = await summary_agent.refine_document(
+                user_input=plan["user_input"],
+                integrated_doc=integrated_doc,
+            )
+            if refined_content:
+                integrated_doc["integrated_content"] = refined_content
+                logger.info("[SUMMARY] 文档精炼完成，长度: %d", len(refined_content))
+        except Exception as e:
+            logger.warning("[SUMMARY] 文档精炼失败，使用原文: %s", e)
 
         # 添加到知识库
         progress.status = "indexing"
         progress.progress_percent = 90
         progress.message = "正在添加到知识库..."
-        await _save_task_progress(task_id, progress)
+        await _save_task_progress(user_id, task_id, progress)
 
         kb_result = None
         try:
@@ -576,11 +662,22 @@ async def _execute_download_with_retry(
 
             logger.info(f"[KB] _add_to_knowledge_base returned: {kb_result}")
 
+            # 触发索引任务（在_add_to_knowledge_base之外调用，确保Redis连接可用）
+            if kb_result and kb_result.get("kb_id"):
+                try:
+                    from app.modules.knowledge_base.upload_service import knowledge_base_upload_service
+                    kb_id_to_index = kb_result["kb_id"]
+                    logger.info(f"[KB] Calling _enqueue_index for kb_id={kb_id_to_index}")
+                    await knowledge_base_upload_service._enqueue_index(kb_id_to_index)
+                    logger.info(f"[KB] Index task enqueued successfully for kb_id={kb_id_to_index}")
+                except Exception as idx_err:
+                    logger.error(f"[KB] Failed to enqueue index task: {idx_err}", exc_info=True)
+
         except Exception as e:
             logger.error(f"[ERROR] Failed to add to knowledge base: {e}", exc_info=True)
             progress.status = "failed"
             progress.message = f"Failed to add to knowledge base: {str(e)}"
-            await _save_task_progress(task_id, progress)
+            await _save_task_progress(user_id, task_id, progress)
             return
 
         # 完成
@@ -595,6 +692,8 @@ async def _execute_download_with_retry(
             "source_count": integrated_doc.get('source_count', 0),
             "total_length": integrated_doc.get('total_length', 0),
             "sources": integrated_doc.get('sources', []),
+            "content": integrated_doc.get('integrated_content', ''),
+            "source_summaries": integrated_doc.get('source_summaries', []),
         }
 
         # 添加知识库信息
@@ -619,13 +718,13 @@ async def _execute_download_with_retry(
         })
 
         logger.info("下载任务完成: task_id=%s", task_id)
-        await _save_task_progress(task_id, progress)
+        await _save_task_progress(user_id, task_id, progress)
 
     except Exception as e:
         logger.error("下载任务失败: task_id=%s, error=%s", task_id, e, exc_info=True)
         progress.status = "failed"
         progress.message = f"下载失败: {str(e)}"
-        await _save_task_progress(task_id, progress)
+        await _save_task_progress(user_id, task_id, progress)
 
 
 async def _check_download_quality(
@@ -724,6 +823,7 @@ async def _add_to_knowledge_base(
             kb_id = kb.id
             logger.info(f"[KB] Create new knowledge base: {kb_name} (ID: {kb_id})")
         else:
+            await knowledge_base_persistence_service.find_by_id_or_throw(db, kb_id, user_id)
             logger.info(f"[KB] Use existing knowledge base ID: {kb_id}")
 
         await db.commit()

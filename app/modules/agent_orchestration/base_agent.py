@@ -1,36 +1,15 @@
 """
-Agent 基类和上下文定义
+Agent 上下文和结果定义
 """
 
 from __future__ import annotations
 
 import logging
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class AgentContext:
-    """Agent 执行上下文（独立隔离）"""
-
-    task_id: str
-    query: str
-    kb_ids: List[int] = field(default_factory=list)
-    messages: List[Dict[str, str]] = field(default_factory=list)
-    knowledge: List[Dict[str, Any]] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-    def add_message(self, role: str, content: str):
-        """添加消息到独立上下文"""
-        self.messages.append({"role": role, "content": content})
-
-    def load_knowledge(self, knowledge_chunks: List[Dict[str, Any]]):
-        """按需加载知识，不污染主上下文"""
-        self.knowledge = knowledge_chunks
 
 
 @dataclass
@@ -142,49 +121,3 @@ class AgentResult:
             "message": self.message,
             "error": self.error,
         }
-
-
-class BaseAgent(ABC):
-    """Agent 基类"""
-
-    def __init__(self, name: str = None):
-        self.name = name or self.__class__.__name__
-        self.logger = logging.getLogger(f"agent.{self.name}")
-
-    @abstractmethod
-    async def apply(self, context: DynamicContext) -> str:
-        """
-        执行当前节点的逻辑
-
-        Args:
-            context: 动态上下文
-
-        Returns:
-            执行结果字符串
-        """
-        pass
-
-    @abstractmethod
-    async def get_next(self, context: DynamicContext) -> Optional["BaseAgent"]:
-        """
-        决定下一个节点（决策树逻辑）
-
-        Args:
-            context: 动态上下文
-
-        Returns:
-            下一个 Agent 节点，如果是终点则返回 None
-        """
-        pass
-
-    def can_handle(self, context: DynamicContext) -> bool:
-        """
-        判断是否可以处理当前任务
-
-        Args:
-            context: 动态上下文
-
-        Returns:
-            是否可以处理
-        """
-        return True

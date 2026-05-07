@@ -6,13 +6,18 @@ import logging
 import math
 from dataclasses import dataclass
 
+import httpx
+
 from app.modules.knowledge_base.models import KnowledgeChunkEntity
 from app.config import settings
 from app.common.exception import EmbeddingFailedException
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_DIMENSIONS = 1536  # 阿里云百炼 text-embedding-v2 的维度
+EMBEDDING_DIMENSIONS = 1536  # pgvector 列定义维度
+
+# 智谱 Embedding-3 原始维度（需要截断到 1536 以匹配 pgvector 列定义）
+ZHIPU_EMBEDDING_3_RAW_DIM = 2048
 
 
 @dataclass
@@ -26,15 +31,27 @@ class ChunkBuildResult:
 
 class KnowledgeBaseVectorService:
     def __init__(self):
-        self._use_real_embedding = True  # 是否使用真实 Embedding
-        try:
-            from dashscope import TextEmbedding
-            self._text_embedding = TextEmbedding
-            logger.info("向量化服务初始化: 使用阿里云百炼 Embedding API (text-embedding-v2, 1536维)")
-        except ImportError:
-            self._text_embedding = None
-            self._use_real_embedding = False
-            logger.warning("dashscope not installed, fallback to hash vector (16-dim)")
+        self._use_real_embedding = True
+        self._embedding_provider = settings.ai.embedding_provider  # "zhipu" | "dashscope"
+        self._zhipu_api_key = settings.ai.zhipu_api_key
+
+        if self._embedding_provider == "zhipu" and self._zhipu_api_key:
+            logger.info("向量化服务初始化: 使用智谱 Embedding-3 (截断到 %d 维)", EMBEDDING_DIMENSIONS)
+        else:
+            # 回退到 DashScope
+            try:
+                from dashscope import TextEmbedding
+                self._text_embedding = TextEmbedding
+                api_key = settings.ai.embedding_api_key or settings.ai.bailian_api_key
+                if not api_key or api_key.startswith("your-"):
+                    self._use_real_embedding = False
+                    logger.warning("Embedding API key 未配置，降级为哈希向量 (%d维)", EMBEDDING_DIMENSIONS)
+                else:
+                    logger.info("向量化服务初始化: 使用阿里云百炼 Embedding API (text-embedding-v2, %d维)", EMBEDDING_DIMENSIONS)
+            except ImportError:
+                self._text_embedding = None
+                self._use_real_embedding = False
+                logger.warning("dashscope not installed, fallback to hash vector (%d-dim)", EMBEDDING_DIMENSIONS)
 
     def split_text(self, text: str, *, chunk_size: int = 900, overlap: int = 120, doc_type: str = "general") -> list[ChunkBuildResult]:
         """
@@ -183,17 +200,55 @@ class KnowledgeBaseVectorService:
 
     def embed_text(self, text: str) -> list[float]:
         """生成文本向量"""
-        if self._use_real_embedding and self._text_embedding:
+        if not self._use_real_embedding:
+            return self._embed_with_hash(text)
+
+        if self._embedding_provider == "zhipu" and self._zhipu_api_key:
+            try:
+                return self._embed_with_zhipu(text)
+            except Exception as e:
+                logger.warning("智谱 Embedding 调用失败，降级到哈希向量: %s", e)
+                self._use_real_embedding = False
+                return self._embed_with_hash(text)
+        elif self._text_embedding:
             try:
                 return self._embed_with_api(text)
             except Exception as e:
-                logger.warning("Embedding API 调用失败，降级到哈希向量: %s", e)
-                # 如果是关键场景（如用户查询），抛出异常；否则降级
-                if len(text) < 100:  # 短文本（如查询）不降级
-                    raise EmbeddingFailedException(f"文档向量化失败: {str(e)}")
+                logger.warning("DashScope Embedding 调用失败，降级到哈希向量: %s", e)
+                self._use_real_embedding = False
                 return self._embed_with_hash(text)
         else:
             return self._embed_with_hash(text)
+
+    def _embed_with_zhipu(self, text: str) -> list[float]:
+        """使用智谱 Embedding-3 API（截断到 1536 维匹配 pgvector 列定义）"""
+        url = "https://open.bigmodel.cn/api/paas/v4/embeddings"
+        headers = {
+            "Authorization": f"Bearer {self._zhipu_api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": "embedding-3",
+            "input": text,
+        }
+
+        with httpx.Client(timeout=30) as client:
+            response = client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+
+        raw_embedding = data["data"][0]["embedding"]
+        # 截断或填充到 EMBEDDING_DIMENSIONS
+        if len(raw_embedding) > EMBEDDING_DIMENSIONS:
+            embedding = raw_embedding[:EMBEDDING_DIMENSIONS]
+        elif len(raw_embedding) < EMBEDDING_DIMENSIONS:
+            embedding = raw_embedding + [0.0] * (EMBEDDING_DIMENSIONS - len(raw_embedding))
+        else:
+            embedding = raw_embedding
+
+        logger.debug("智谱 Embedding 成功: text_length=%d, raw_dim=%d, final_dim=%d",
+                     len(text), len(raw_embedding), len(embedding))
+        return embedding
 
     def _embed_with_api(self, text: str) -> list[float]:
         """使用阿里云百炼 Embedding API"""

@@ -33,7 +33,7 @@ export interface DownloadPlan {
  */
 export interface DownloadProgress {
   task_id: string;
-  status: 'planning' | 'executing' | 'quality_check' | 'indexing' | 'completed' | 'failed';
+  status: 'planning' | 'executing' | 'quality_check' | 'indexing' | 'completed' | 'failed' | 'cancelled';
   current_step: number;
   total_steps: number;
   progress_percent: number;
@@ -51,6 +51,12 @@ export interface DownloadProgress {
     source_count: number;
     total_length: number;
     sources: string[];
+    content?: string;
+    source_summaries?: Array<{
+      source: string;
+      description: string;
+      summary: string;
+    }>;
   };
   kb_info?: {
     kb_id: number;
@@ -100,4 +106,13 @@ export const executeDownloadPlan = (data: ExecuteDownloadRequest) => {
  */
 export const getDownloadProgress = (taskId: string) => {
   return request.get<DownloadProgress>(`/api/agent/smart-download/progress/${taskId}`);
+};
+
+/**
+ * 取消下载任务
+ */
+export const cancelDownloadTask = (taskId: string) => {
+  return request.post<{ message: string; task_id: string }>(
+    `/api/agent/smart-download/cancel/${taskId}`
+  );
 };

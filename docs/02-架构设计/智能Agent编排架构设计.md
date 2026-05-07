@@ -18,20 +18,22 @@
 
 ## 2. 智能 Agent 编排流程设计
 
-### 2.1 四阶段执行模型
+### 2.1 五阶段执行模型
 
 ```
-用户输入 → [规划阶段] → [执行阶段] → [质检阶段] → [总结阶段] → 用户输出
-              ↓            ↓            ↓
-           任务分解      具体实现      质量验证
-              ↓            ↓            ↓
-           知识检索      Agent调用     结果评估
+用户输入 → [决策阶段] → [规划阶段] → [执行阶段] → [质检阶段] → [总结阶段] → 用户输出
+              ↓            ↓            ↓            ↓
+           路径选择      任务分解      具体实现      质量验证
+              ↓            ↓            ↓            ↓
+           智能/基础     知识检索      Agent调用     结果评估
                                         ↓
                                    [重试机制]
-                                   最多3次循环
+                                   最多2次循环
                                         ↓
                                    [降级策略]
 ```
+
+> **v2.0 更新**：新增决策阶段（SmartDecisionTree），由 LLM 驱动路径选择，输出置信度和预估成本。原四阶段模型升级为五阶段。
 
 #### 阶段 1：规划阶段（Planning Agent）
 **职责**：
@@ -372,279 +374,74 @@ class ComplexPathSelector(ExecutionPath):
 - 知识库覆盖率（高、中、低）
 - 历史成功率（该类任务的历史表现）
 
-### 3.3 责任链模式（借鉴 Java 项目的 RootNode 设计）
+### 3.3 AgentOrchestrator 编排器（v2.0 实现）
+
+> **v2.0 变更**：原 `AgentChain` + `BaseAgent` 责任链模式已废弃，替换为 `AgentOrchestrator` 直接编排模式。原因：责任链模式过度抽象，实际执行路径固定为 决策→规划→执行→质检→总结，无需动态节点跳转。
+
+#### AgentMessage 统一消息协议（A-P1）
+
+所有 ExecutionAgent 子类返回统一的 `AgentMessage` Pydantic 模型，取代之前的裸 dict：
 
 ```python
-class AgentChain:
-    """责任链：串联多个 Agent 协同工作"""
-    
-    def __init__(self):
-        self.root: BaseAgent = None
-        self.agents: List[BaseAgent] = []
-    
-    def set_root(self, agent: BaseAgent):
-        """设置根节点"""
-        self.root = agent
-    
-    def add_agent(self, agent: BaseAgent):
-        """添加责任链节点"""
-        self.agents.append(agent)
-    
-    async def execute(self, context: DynamicContext) -> Result:
-        """从根节点开始执行责任链"""
-        current_agent = self.root
-        
-        while current_agent:
-            # 执行当前节点
-            result = await current_agent.apply(context)
-            
-            # 更新动态上下文
-            context.step += 1
-            context.execution_history.append(result)
-            
-            # 检查终止条件
-            if context.is_completed or context.step > context.max_step:
-                break
-            
-            # 获取下一个节点
-            current_agent = await current_agent.get_next(context)
-        
-        return context.get_final_result()
-
-class BaseAgent(ABC):
-    """Agent 基类：参考 Java 项目的 AbstractExecuteSupport"""
-    
-    @abstractmethod
-    async def apply(self, context: DynamicContext) -> str:
-        """执行当前节点的逻辑"""
-        pass
-    
-    @abstractmethod
-    async def get_next(self, context: DynamicContext) -> Optional['BaseAgent']:
-        """决定下一个节点（决策树逻辑）"""
-        pass
-
-class RootNode(BaseAgent):
-    """根节点：初始化动态上下文"""
-    
-    def __init__(self, step1_agent: BaseAgent):
-        self.step1_agent = step1_agent
-    
-    async def apply(self, context: DynamicContext) -> str:
-        logger.info("=== Agent 编排开始 ===")
-        logger.info(f"用户输入: {context.user_input}")
-        logger.info(f"最大步数: {context.max_step}")
-        
-        # 初始化上下文
-        context.execution_history = []
-        context.current_task = context.user_input
-        context.step = 0
-        
-        return "初始化完成"
-    
-    async def get_next(self, context: DynamicContext) -> BaseAgent:
-        return self.step1_agent
-
-class Step1AnalyzerNode(BaseAgent):
-    """步骤1：任务分析节点"""
-    
-    def __init__(self, step2_agent: BaseAgent, step4_agent: BaseAgent):
-        self.step2_agent = step2_agent
-        self.step4_agent = step4_agent
-    
-    async def apply(self, context: DynamicContext) -> str:
-        logger.info(f"\n🎯 === 执行第 {context.step} 步：任务分析 ===")
-        
-        # 构建分析提示词
-        analysis_prompt = f"""
-        任务状态分析：
-        - 用户需求：{context.user_input}
-        - 当前步骤：{context.step}/{context.max_step}
-        - 执行历史：{context.execution_history if context.execution_history else '[首次执行]'}
-        - 当前任务：{context.current_task}
-        
-        请分析：
-        1. 任务是否已完成？
-        2. 完成度评估（0-100%）
-        3. 下一步应该做什么？
-        """
-        
-        # 调用 LLM 分析
-        analysis_result = await self.llm.generate(analysis_prompt)
-        
-        # 解析分析结果
-        if "任务状态: COMPLETED" in analysis_result or "完成度评估: 100%" in analysis_result:
-            context.is_completed = True
-            logger.info("✅ 任务分析显示已完成！")
-        
-        # 保存分析结果到上下文
-        context.set_value("analysis_result", analysis_result)
-        
-        return analysis_result
-    
-    async def get_next(self, context: DynamicContext) -> BaseAgent:
-        # 决策树逻辑：如果已完成或达到最大步数，进入总结阶段
-        if context.is_completed or context.step > context.max_step:
-            return self.step4_agent
-        
-        # 否则继续执行
-        return self.step2_agent
-
-class Step2ExecutorNode(BaseAgent):
-    """步骤2：精确执行节点"""
-    
-    def __init__(self, step3_agent: BaseAgent):
-        self.step3_agent = step3_agent
-    
-    async def apply(self, context: DynamicContext) -> str:
-        logger.info(f"\n⚙️ === 执行第 {context.step} 步：任务执行 ===")
-        
-        # 获取上一步的分析结果
-        analysis_result = context.get_value("analysis_result")
-        
-        # 构建执行提示词
-        execution_prompt = f"""
-        基于分析结果执行任务：
-        - 分析结果：{analysis_result}
-        - 当前任务：{context.current_task}
-        
-        请执行具体操作并返回结果。
-        """
-        
-        # 调用 LLM 执行
-        execution_result = await self.llm.generate(execution_prompt)
-        
-        # 保存执行结果
-        context.set_value("execution_result", execution_result)
-        
-        return execution_result
-    
-    async def get_next(self, context: DynamicContext) -> BaseAgent:
-        return self.step3_agent
-
-class Step3QualityNode(BaseAgent):
-    """步骤3：质量检测节点"""
-    
-    def __init__(self, step1_agent: BaseAgent, step4_agent: BaseAgent):
-        self.step1_agent = step1_agent
-        self.step4_agent = step4_agent
-    
-    async def apply(self, context: DynamicContext) -> str:
-        logger.info(f"\n🔍 === 执行第 {context.step} 步：质量检测 ===")
-        
-        # 获取执行结果
-        execution_result = context.get_value("execution_result")
-        
-        # 构建质检提示词
-        quality_prompt = f"""
-        质量检测：
-        - 执行结果：{execution_result}
-        - 原始需求：{context.user_input}
-        
-        请评估：
-        1. 是否满足需求？
-        2. 质量评分（0-100）
-        3. 是否需要重试？
-        """
-        
-        # 调用 LLM 质检
-        quality_result = await self.llm.generate(quality_prompt)
-        
-        # 解析质检结果
-        if "质量评分" in quality_result:
-            score = self.extract_score(quality_result)
-            context.set_value("quality_score", score)
-            
-            if score < 70 and context.retry_count < 3:
-                context.retry_count += 1
-                logger.info(f"⚠️ 质量不达标，准备第 {context.retry_count} 次重试")
-        
-        return quality_result
-    
-    async def get_next(self, context: DynamicContext) -> BaseAgent:
-        quality_score = context.get_value("quality_score", 100)
-        
-        # 如果质量不达标且未超过重试次数，回到步骤1
-        if quality_score < 70 and context.retry_count < 3:
-            return self.step1_agent
-        
-        # 否则进入总结阶段
-        return self.step4_agent
-
-class Step4SummaryNode(BaseAgent):
-    """步骤4：总结节点"""
-    
-    async def apply(self, context: DynamicContext) -> str:
-        logger.info(f"\n📝 === 执行第 {context.step} 步：生成总结 ===")
-        
-        # 构建总结提示词
-        summary_prompt = f"""
-        生成执行总结：
-        - 用户需求：{context.user_input}
-        - 执行历史：{context.execution_history}
-        - 重试次数：{context.retry_count}
-        
-        请生成：
-        1. 完成情况总结
-        2. 关键成果
-        3. 后续建议
-        """
-        
-        # 调用 LLM 生成总结
-        summary_result = await self.llm.generate(summary_prompt)
-        
-        return summary_result
-    
-    async def get_next(self, context: DynamicContext) -> BaseAgent:
-        # 总结节点是终点
-        return None
-
-class DynamicContext:
-    """动态上下文：在责任链中传递状态"""
-    
-    def __init__(self, user_input: str, max_step: int = 10):
-        self.user_input = user_input
-        self.max_step = max_step
-        self.step = 0
-        self.retry_count = 0
-        self.is_completed = False
-        
-        # 执行历史
-        self.execution_history: List[str] = []
-        
-        # 当前任务
-        self.current_task = user_input
-        
-        # 动态数据存储
-        self._data: Dict[str, Any] = {}
-    
-    def set_value(self, key: str, value: Any):
-        self._data[key] = value
-    
-    def get_value(self, key: str, default: Any = None) -> Any:
-        return self._data.get(key, default)
-    
-    def get_final_result(self) -> Result:
-        return Result(
-            status="success" if self.is_completed else "partial",
-            summary=self.execution_history[-1] if self.execution_history else "",
-            steps=self.step,
-            retry_count=self.retry_count
-        )
+# app/modules/agent_orchestration/schemas.py
+class AgentMessage(BaseModel):
+    task_id: str
+    agent_type: str
+    status: str  # "success" | "failed"
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 ```
 
-**责任链节点**：
-1. `RootNode`：根节点，初始化上下文
-2. `Step1AnalyzerNode`：任务分析节点
-3. `Step2ExecutorNode`：精确执行节点
-4. `Step3QualityNode`：质量检测节点
-5. `Step4SummaryNode`：总结节点
+**使用注意**：
+- Agent 内部通过 `_build_result()` 创建 `AgentMessage`
+- 编排器通过 `model_dump()` 转为 dict 后传递给下游 Agent（quality_agent、summary_agent 使用 `.get()` 访问）
+- Router 层同样需要转换
 
-**关键特性**：
-- 每个节点通过 `get_next()` 决定下一个节点（决策树逻辑）
-- `DynamicContext` 在链中传递状态
-- 支持循环重试（Step3 → Step1）
-- 支持提前终止（任务完成或超过最大步数）
+#### AgentOrchestrator 核心编排器
+
+```python
+class AgentOrchestrator:
+    """核心编排器：五阶段执行流程"""
+
+    def __init__(self, llm_provider, knowledge_service=None, max_retries=2, max_cost=10.0):
+        self.cost_controller = CostController(budget_limit=max_cost)
+        self.tool_registry = AgentToolRegistry()
+        # 优先使用智能决策树（LLM驱动），失败则降级为基础决策树
+        self.decision_tree = SmartDecisionTree(...) or DecisionTree(...)
+        self.agent_factory = AgentFactory(...)
+
+    async def execute(self, user_input, kb_ids=None, context=None) -> Dict:
+        # 阶段 0：智能决策树选择执行路径
+        decision_result = await self.decision_tree.decide(user_input, kb_ids, context)
+
+        # 阶段 1：规划
+        plan = await self.planning_agent.plan(user_input, kb_ids, context)
+
+        # 阶段 2：执行（带重试）
+        while retry_count <= self.max_retries:
+            raw_results = await self._execute_tasks(subtasks, ...)
+            # AgentMessage → dict 转换
+            execution_results = [r.model_dump() if hasattr(r, "model_dump") else r for r in raw_results]
+
+            # 阶段 3：质检
+            if plan.get("requires_quality_check"):
+                quality_check = await self.quality_agent.check(...)
+                if quality_check.get("passed"):
+                    break
+                plan = await self._adjust_plan(plan, quality_check)
+
+        # 阶段 4：总结
+        summary = await self.summary_agent.summarize(...)
+        return { "final_answer": ..., "sources": ..., "cost_report": ... }
+```
+
+**三种执行策略**：
+- `sequential`：顺序执行，每个任务可依赖前一个的结果
+- `parallel`：并行执行（`asyncio.gather`），带 120s 超时保护
+- `hybrid`：拓扑排序分层并行，有依赖的任务等待前置完成
+
+**A-P4 并行安全**：`parallel` 模式下检测到任务依赖时自动降级为 `hybrid`。
 
 ### 3.4 Agent 工具注册（借鉴 Claude Code 的工具系统）
 
@@ -916,33 +713,34 @@ class CostAwareAgent(BaseAgent):
 
 ```python
 class AgentFactory:
-    """Agent 工厂：根据任务类型动态装配 Agent"""
-    
-    def create_agent_chain(self, task_plan: TaskPlan) -> AgentChain:
-        chain = AgentChain()
-        
-        # 根据任务类型选择 Agent
-        for sub_task in task_plan.sub_tasks:
-            agent_class = self.agent_registry.get(sub_task.agent_type)
-            agent = agent_class(
-                config=self.get_agent_config(sub_task),
-                knowledge_base=self.kb_service
-            )
-            chain.add_agent(agent)
-        
-        return chain
-```
+    """Agent 工厂：创建各种 Agent 实例"""
 
-**Agent 注册表**：
-```python
-AGENT_REGISTRY = {
-    "code_generator": CodeGeneratorAgent,
-    "document_analyzer": DocumentAnalyzerAgent,
-    "data_processor": DataProcessorAgent,
-    "api_caller": APICallerAgent,
-    "test_generator": TestGeneratorAgent,
-    "debugger": DebuggerAgent,
-}
+    def __init__(self, llm_provider, knowledge_service, cost_controller, tool_registry):
+        self.llm_provider = llm_provider
+        self.knowledge_service = knowledge_service
+        self.cost_controller = cost_controller
+        self.tool_registry = tool_registry
+
+    def create_planning_agent(self) -> PlanningAgent:
+        return PlanningAgent(llm_provider=self.llm_provider, knowledge_service=self.knowledge_service)
+
+    def create_quality_agent(self) -> QualityAgent:
+        return QualityAgent(llm_provider=self.llm_provider)
+
+    def create_summary_agent(self) -> SummaryAgent:
+        return SummaryAgent(llm_provider=self.llm_provider)
+
+    def create_execution_agent(self, agent_type: str) -> ExecutionAgent:
+        """根据任务类型创建执行 Agent"""
+        agent_map = {
+            "download": DownloadExecutionAgent,
+            "search": SearchExecutionAgent,
+            "fetch_blog": BlogExecutionAgent,
+            "search_github": GitHubExecutionAgent,
+            ...
+        }
+        agent_class = agent_map.get(agent_type, ExecutionAgent)
+        return agent_class(llm_provider=self.llm_provider, ...)
 ```
 
 ### 3.4 知识库集成
@@ -1061,86 +859,72 @@ CREATE TABLE knowledge_usage (
 
 ## 5. API 设计
 
-### 5.1 智能编排接口
+### 5.1 智能编排接口（v2.0 实际实现）
 
 ```python
-@router.post("/agent/orchestrate")
-async def orchestrate_agent(
-    request: AgentOrchestrationRequest,
+# app/modules/agent_orchestration/router.py
+@router.post("/api/agent/chat", response_model=AgentChatResponse)
+async def agent_chat(
+    request: AgentChatRequest,
+    user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
-) -> Result[AgentOrchestrationResponse]:
+):
     """
-    智能 Agent 编排接口
-    
-    支持：
-    - 自动任务规划
-    - 动态 Agent 装配
-    - 质量检测与重试
-    - 降级策略
+    Agent 聊天接口
+
+    使用 AgentOrchestrator 执行完整流程：
+    决策树 → 规划 → 执行 → 质检 → 总结
     """
-    pass
+    orchestrator = AgentOrchestrator(
+        llm_provider=llm_provider,
+        knowledge_service=knowledge_service,
+        max_cost=request.budget_limit or 10.0,
+    )
+    result = await orchestrator.execute(
+        user_input=request.message,
+        kb_ids=request.kb_ids or [],
+    )
+    # 保存执行记录、成本日志到数据库...
+    return AgentChatResponse(session_id=..., answer=result["final_answer"], ...)
 ```
 
 **请求模型**：
 ```python
-class AgentOrchestrationRequest(BaseModel):
-    user_input: str
-    knowledge_base_ids: List[int] = []  # 指定使用的知识库
-    context: Dict[str, Any] = {}  # 上下文信息
-    
-    # 配置选项
-    max_retry: int = 3
-    enable_quality_check: bool = True
-    execution_mode: str = "auto"  # auto/simple/standard/complex
-    
-    # 约束条件
-    max_tokens: int = 10000
-    timeout_seconds: int = 300
+class AgentChatRequest(BaseModel):
+    message: str          # 用户消息 (1-10000字符)
+    kb_ids: list[int]     # 知识库ID列表（可选）
+    max_step: int = 10    # 最大执行步数
+    model: str = "qwen-plus"
+    budget_limit: float   # 预算限制（美元，可选）
 ```
 
 **响应模型**：
 ```python
-class AgentOrchestrationResponse(BaseModel):
-    session_id: str
-    status: str  # success/failed/degraded
-    
-    # 规划结果
-    task_plan: TaskPlan
-    
-    # 执行结果
-    execution_results: List[SubTaskResult]
-    
-    # 质检报告
-    quality_report: QualityReport
-    
-    # 最终输出
-    summary: str
-    artifacts: List[str]
-    next_steps: List[str]
-    
-    # 元数据
-    total_tokens: int
-    execution_time_ms: int
-    retry_count: int
+class AgentChatResponse(BaseModel):
+    session_id: str          # 会话ID
+    answer: str              # 最终回答
+    execution_path: str      # 执行路径 (simple/standard/complex)
+    total_steps: int         # 总步数
+    quality_score: float     # 质量分数
+    total_tokens: int        # 总Token数
+    total_cost: float        # 总成本（美元）
+    execution_time_ms: int   # 执行时间（毫秒）
 ```
 
-### 5.2 知识库构建接口
+### 5.2 智能知识库构建接口
 
 ```python
-@router.post("/agent/knowledge/build")
-async def build_agent_knowledge(
-    request: BuildKnowledgeRequest,
-    db: AsyncSession = Depends(get_db),
-) -> Result[KnowledgeBaseDetailDTO]:
+@router.post("/api/agent/knowledge-builder", response_model=KnowledgeBuilderResponse)
+async def build_knowledge_base(request: KnowledgeBuilderRequest, ...):
     """
-    为 Agent 构建专用知识库
-    
-    支持：
-    - 从文档构建
-    - 从对话历史构建
-    - 从执行记录构建
+    智能知识库构建接口
+
+    流程：用户输入 → 意图识别 → MCP下载 → 自动入库
+    示例：POST { "message": "帮我下载 FastAPI 官方文档和教程" }
     """
-    pass
+    agent = KnowledgeBuilderAgent(llm_provider=llm_provider, mcp_service=mcp_service, ...)
+    result = await agent.execute(user_input=request.message, kb_id=request.kb_id)
+    return KnowledgeBuilderResponse(success=True, kb_id=..., chunks_count=..., ...)
 ```
 
 ## 6. 优化建议
@@ -1390,37 +1174,33 @@ class ResourceLimiter:
 
 ## 8. 实施路线图
 
-### Phase 1：基础框架（2 周）
-- [ ] 实现 BaseAgent 抽象类
-- [ ] 实现 AgentChain 责任链
-- [ ] 实现 DecisionTree 决策树
-- [ ] 实现 AgentFactory 工厂
-- [ ] 数据库表设计和迁移
+### Phase 1：基础框架 ✅ 已完成
+- [x] 实现 ExecutionAgent 基类 + AgentMessage 协议（A-P1）
+- [x] 实现 AgentOrchestrator 编排器（替代 AgentChain）
+- [x] 实现 SmartDecisionTree 智能决策树 + DecisionTree 基础决策树
+- [x] 实现 AgentFactory 工厂
+- [x] 数据库表设计和迁移（agent_executions, agent_cost_logs, agent_execution_steps）
 
-### Phase 2：核心 Agent（3 周）
-- [ ] PlanningAgent 实现
-- [ ] ExecutionAgent 基类实现
-- [ ] QualityAgent 实现
-- [ ] SummaryAgent 实现
-- [ ] 知识库集成
+### Phase 2：核心 Agent ✅ 已完成
+- [x] PlanningAgent 实现（任务规划 + 下载计划）
+- [x] ExecutionAgent 基类实现（download/search/fetch_blog/github 等子类）
+- [x] QualityAgent 实现（四维度质检）
+- [x] SummaryAgent 实现（总结 + 文档精炼）
+- [x] 知识库集成（RAG 检索 + pgvector）
 
-### Phase 3：专用 Agent（2 周）
-- [ ] CodeGeneratorAgent
-- [ ] DocumentAnalyzerAgent
-- [ ] TestGeneratorAgent
-- [ ] DebuggerAgent
+### Phase 3：优化 ✅ 已完成
+- [x] 并行执行（asyncio.gather + 120s 超时 + A-P4 依赖检测自动降级）
+- [x] 混合执行（拓扑排序分层并行）
+- [x] 成本控制（CostController + 预算检查）
+- [x] 工具注册表（AgentToolRegistry + BUILTIN_TOOLS）
+- [x] 分层合成策略（S-P3：>3 源时分组摘要再合并）
+- [x] 任务取消（C-P4：Redis flag + 检查点）
 
-### Phase 4：优化与测试（2 周）
-- [ ] 流式输出
-- [ ] 并行执行
-- [ ] 缓存机制
-- [ ] 性能测试
-- [ ] 端到端测试
-
-### Phase 5：前端集成（1 周）
-- [ ] Agent 编排界面
-- [ ] 执行过程可视化
-- [ ] 知识库管理界面
+### Phase 4：前端集成 ✅ 已完成
+- [x] Agent 编排界面（AgentChatPage）
+- [x] 智能下载界面（SmartDownloadPage + 取消按钮）
+- [x] 执行历史列表
+- [x] 实时进度轮询
 
 ## 9. 成功指标
 
@@ -1592,13 +1372,13 @@ String result = executeHandler.apply(executeCommandEntity, dynamicContext);
 
 ---
 
-**文档版本**：v2.0  
-**创建时间**：2026-04-18  
-**最后更新**：2026-04-18  
-**作者**：AI Assistant  
+**文档版本**：v2.1
+**创建时间**：2026-04-18
+**最后更新**：2026-05-07
+**作者**：AI Assistant
 **参考项目**：
 - Java ai-agent-station-study（决策树 + 责任链）
 - Claude Code（循环不变 + 工具注册）
 - 当前 Python 项目（知识库集成）
 
-**状态**：已优化，待评审
+**状态**：已实施，v2.1 更新：AgentMessage 协议、AgentOrchestrator 替代 AgentChain、SmartDecisionTree、并行/混合执行、分层合成、任务取消

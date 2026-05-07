@@ -1,6 +1,7 @@
 """
 GitHub API 服务 - 封装GitHub API调用
 """
+import itertools
 import logging
 import httpx
 import base64
@@ -10,16 +11,17 @@ logger = logging.getLogger(__name__)
 
 
 class GitHubService:
-    """GitHub API服务"""
+    """GitHub API服务（支持 token 池轮换）"""
 
-    def __init__(self, token: Optional[str] = None):
+    def __init__(self, tokens: Optional[List[str]] = None):
         """
         初始化GitHub服务
 
         Args:
-            token: GitHub Personal Access Token（可选，但建议提供以提高API限额）
+            tokens: GitHub Personal Access Token 列表（轮换使用，提高 API 限额）
         """
-        self.token = token
+        self.tokens = tokens or []
+        self._token_cycle = itertools.cycle(self.tokens) if self.tokens else None
         self.base_url = "https://api.github.com"
         self.timeout = 30
 
@@ -281,15 +283,25 @@ class GitHubService:
         }
 
     def _get_headers(self) -> Dict[str, str]:
-        """获取请求头"""
+        """获取请求头（轮换 token）"""
         headers = {
             "Accept": "application/vnd.github.v3+json",
             "User-Agent": "AI-Interview-Platform",
         }
-        if self.token:
-            headers["Authorization"] = f"token {self.token}"
+        if self._token_cycle:
+            token = next(self._token_cycle)
+            headers["Authorization"] = f"token {token}"
         return headers
 
 
-# 全局实例（可选配置token）
-github_service = GitHubService()
+# 全局实例（从配置加载 token 池）
+def _create_github_service() -> GitHubService:
+    from app.config import settings
+    tokens = settings.github.token_list
+    if tokens:
+        logger.info("GitHub token 池已加载: %d 个 token", len(tokens))
+    else:
+        logger.info("GitHub 未配置 token，使用未认证模式（60 次/小时限额）")
+    return GitHubService(tokens=tokens)
+
+github_service = _create_github_service()

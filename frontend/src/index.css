@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
+@import "highlight.js/styles/github.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -27,4 +28,13 @@
   #root {
     @apply min-h-screen;
   }
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.3s ease-out;
 }

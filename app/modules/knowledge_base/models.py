@@ -40,9 +40,9 @@ class KnowledgeBaseEntity(Base):
         Enum(AsyncTaskStatus), default=AsyncTaskStatus.PENDING, nullable=False
     )
     index_error: Mapped[str | None] = mapped_column(String(500))
-    last_indexed_at: Mapped[datetime | None] = mapped_column(DateTime)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    last_indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     chunks: Mapped[list["KnowledgeChunkEntity"]] = relationship(
         back_populates="knowledge_base", cascade="all, delete-orphan", lazy="selectin"
@@ -70,7 +70,7 @@ class KnowledgeChunkEntity(Base):
     metadata_json: Mapped[str | None] = mapped_column(Text)
     embedding_json: Mapped[str | None] = mapped_column(Text)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     knowledge_base: Mapped["KnowledgeBaseEntity"] = relationship(back_populates="chunks")
 
@@ -93,6 +93,6 @@ class RagChatEntity(Base):
     references_json: Mapped[str | None] = mapped_column(Text)
     status: Mapped[RagChatStatus] = mapped_column(Enum(RagChatStatus), default=RagChatStatus.PENDING, nullable=False)
     error_message: Mapped[str | None] = mapped_column(String(500))
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     knowledge_base: Mapped["KnowledgeBaseEntity"] = relationship(back_populates="chats")

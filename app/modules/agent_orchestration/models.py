@@ -70,9 +70,9 @@ class AgentExecutionEntity(Base):
     error_message: Mapped[str | None] = mapped_column(Text)
 
     # 时间戳
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
     # 关系
@@ -114,7 +114,7 @@ class AgentExecutionStepEntity(Base):
     error_message: Mapped[str | None] = mapped_column(Text)
 
     # 时间戳
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # 关系
     execution: Mapped["AgentExecutionEntity"] = relationship(back_populates="steps")
@@ -142,7 +142,7 @@ class AgentCostLogEntity(Base):
     estimated_cost: Mapped[float] = mapped_column(Float, default=0.0)
 
     # 时间戳
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # 关系
     execution: Mapped["AgentExecutionEntity"] = relationship(back_populates="cost_logs")
@@ -174,10 +174,10 @@ class AgentPerformanceEntity(Base):
     total_cost: Mapped[float] = mapped_column(Float, default=0.0)
 
     # 时间窗口
-    date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     # 时间戳
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )

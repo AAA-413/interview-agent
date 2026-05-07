@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Loader2, AlertCircle, Download, Play } from 'lucide-react';
+import { ArrowLeft, Loader2, AlertCircle, Play } from 'lucide-react';
 import { resumeApi } from '../api/resume';
 import type { ResumeDetailDTO } from '../types/resume';
 
@@ -19,21 +19,6 @@ export default function ResumeDetailPage() {
       .catch(err => setError(err instanceof Error ? err.message : '加载失败'))
       .finally(() => setLoading(false));
   }, [resumeId]);
-
-  const handleExport = async () => {
-    if (!resumeId) return;
-    try {
-      const blob = await resumeApi.exportPdf(parseInt(resumeId, 10));
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `resume-analysis-${resumeId}.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : '导出失败');
-    }
-  };
 
   if (loading) {
     return (
@@ -79,9 +64,6 @@ export default function ResumeDetailPage() {
           </div>
         </div>
         <div className="flex gap-2">
-          <button onClick={handleExport} className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 text-sm">
-            <Download className="w-4 h-4" /> 导出PDF
-          </button>
           <button
             onClick={() => navigate('/interview-hub', { state: { resumeId: detail.id } })}
             className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-primary-600 to-primary-500 text-white rounded-xl hover:from-primary-700 hover:to-primary-600 text-sm shadow-lg shadow-primary-500/25"

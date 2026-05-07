@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
 from app.common.ai.llm_provider_protocol import LLMProvider
+from app.modules.agent_orchestration.schemas import AgentMessage
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ class ExecutionAgent(ABC):
         self,
         task: Dict[str, Any],
         context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> AgentMessage:
         """
         执行任务
 
@@ -41,12 +42,7 @@ class ExecutionAgent(ABC):
             context: 执行上下文，包含知识、前置任务结果等
 
         Returns:
-            执行结果字典，包含：
-            - task_id: 任务ID
-            - status: 执行状态（success/failed）
-            - result: 执行结果
-            - error: 错误信息（如果失败）
-            - metadata: 元数据（耗时、token等）
+            AgentMessage 统一消息，包含 task_id、agent_type、status、result、error、metadata
         """
         pass
 
@@ -57,16 +53,28 @@ class ExecutionAgent(ABC):
         result: Any = None,
         error: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> AgentMessage:
         """构建标准化的执行结果"""
-        return {
-            "task_id": task_id,
-            "agent_type": self.agent_type,
-            "status": status,
-            "result": result,
-            "error": error,
-            "metadata": metadata or {},
-        }
+        return AgentMessage(
+            task_id=task_id,
+            agent_type=self.agent_type,
+            status=status,
+            result=result,
+            error=error,
+            metadata=metadata or {},
+        )
+
+    async def call_tool(
+        self,
+        context: Optional[Dict[str, Any]],
+        tool_name: str,
+        **kwargs,
+    ) -> Any:
+        """通过 context 中的 tool_registry 调用注册工具"""
+        registry = (context or {}).get("tool_registry")
+        if registry is None:
+            raise RuntimeError(f"tool_registry 未注入上下文，无法调用工具: {tool_name}")
+        return await registry.execute_tool(tool_name, **kwargs)
 
 
 class KnowledgeSearchAgent(ExecutionAgent):
@@ -672,23 +680,40 @@ class DownloadExecutionAgent(ExecutionAgent):
 
         logger.info(f"  有效内容数: {len(contents)}")
 
-        # 限制最多3个来源，优化处理速度
-        if len(contents) > 3:
-            logger.info(f"  内容数超过3个，仅使用前3个来源")
-            contents = contents[:3]
+        # 为每个源生成独立摘要
+        source_summaries = []
+        for i, item in enumerate(contents):
+            try:
+                summary_prompt = f"用50字以内概括以下内容的核心要点：\n\n{item['content'][:1000]}"
+                summary_resp = await self.llm_provider.ainvoke([HumanMessage(content=summary_prompt)])
+                source_summaries.append({
+                    "source": item["source"],
+                    "description": item["description"],
+                    "summary": (summary_resp.content or "")[:200] if summary_resp else "",
+                })
+            except Exception as e:
+                logger.warning("源 %d 摘要生成失败: %s", i + 1, e)
+                source_summaries.append({
+                    "source": item["source"],
+                    "description": item["description"],
+                    "summary": item["content"][:200],
+                })
 
-        # 构建整合提示词
-        content_blocks = []
-        for i, item in enumerate(contents, 1):
-            content_blocks.append(
-                f"## 来源 {i}: {item['description']}\n"
-                f"URL: {item['source']}\n\n"
-                f"{item['content'][:2000]}\n"  # 每个来源限制2000字符（从1000提升）
-            )
+        from langchain_core.messages import HumanMessage
 
-        combined_content = "\n\n---\n\n".join(content_blocks)
+        # S-P3: 分层合成策略 — 超过3源时先分组摘要，再合并
+        if len(contents) <= 3:
+            # 少量来源：直接整合
+            content_blocks = []
+            for i, item in enumerate(contents, 1):
+                content_blocks.append(
+                    f"## 来源 {i}: {item['description']}\n"
+                    f"URL: {item['source']}\n\n"
+                    f"{item['content'][:2000]}\n"
+                )
+            combined_content = "\n\n---\n\n".join(content_blocks)
 
-        prompt = f"""用户需求："{user_input}"
+            prompt = f"""用户需求："{user_input}"
 
 请将以下资料整合为一篇简洁的文档（3000字以内）：
 
@@ -703,11 +728,76 @@ class DownloadExecutionAgent(ExecutionAgent):
 
 输出整合文档："""
 
-        # 调用LLM整合
-        from langchain_core.messages import HumanMessage
-        response = await self.llm_provider.ainvoke(
-            [HumanMessage(content=prompt)]
-        )
+            response = await self.llm_provider.ainvoke(
+                [HumanMessage(content=prompt)]
+            )
+        else:
+            # S-P3: 超过3源 → 分组摘要 → 合并整合
+            logger.info(f"  内容数 {len(contents)} > 3，启用分层合成策略")
+            group_size = 3
+            groups = [contents[i:i + group_size] for i in range(0, len(contents), group_size)]
+            logger.info(f"  分为 {len(groups)} 组，每组最多 {group_size} 个来源")
+
+            group_summaries = []
+            for g_idx, group in enumerate(groups):
+                group_blocks = []
+                for i, item in enumerate(group, 1):
+                    group_blocks.append(
+                        f"## 来源 {i}: {item['description']}\n"
+                        f"URL: {item['source']}\n\n"
+                        f"{item['content'][:2000]}\n"
+                    )
+                group_combined = "\n\n---\n\n".join(group_blocks)
+
+                group_prompt = f"""用户需求："{user_input}"
+
+请将以下 {len(group)} 个来源的资料整合为一段摘要（500字以内），保留关键知识点和代码示例：
+
+{group_combined}
+
+要求：
+1. 提取核心知识点
+2. 保留重要代码示例（Markdown 代码块）
+3. 保留来源引用
+4. 输出纯 Markdown 文本，不要输出标题"""
+
+                logger.info(f"    第 {g_idx + 1}/{len(groups)} 组摘要生成中...")
+                group_resp = await self.llm_provider.ainvoke(
+                    [HumanMessage(content=group_prompt)]
+                )
+                group_text = (group_resp.content or "") if group_resp else ""
+                if group_text.strip():
+                    group_summaries.append(group_text.strip())
+                    logger.info(f"    第 {g_idx + 1} 组摘要完成: {len(group_text)} 字符")
+                else:
+                    logger.warning(f"    第 {g_idx + 1} 组摘要为空，跳过")
+
+            if not group_summaries:
+                raise ValueError("分层合成失败：所有分组摘要均为空")
+
+            # 合并所有分组摘要，进行最终整合
+            merged_content = "\n\n---\n\n".join(
+                f"## 分组 {i + 1} 摘要\n\n{s}" for i, s in enumerate(group_summaries)
+            )
+
+            final_prompt = f"""用户需求："{user_input}"
+
+请将以下多组摘要整合为一篇简洁的文档（3000字以内）：
+
+{merged_content}
+
+要求：
+1. 综合各组信息，提取核心知识点和关键概念
+2. 保留所有代码示例（使用 Markdown 代码块）
+3. 使用清晰的 Markdown 格式（标题、列表、代码块）
+4. 保持结构清晰，便于阅读
+5. 去除重复信息，合并相关主题
+
+输出整合文档："""
+
+            response = await self.llm_provider.ainvoke(
+                [HumanMessage(content=final_prompt)]
+            )
 
         if not response:
             logger.error("❌ LLM返回空响应")
@@ -729,7 +819,6 @@ class DownloadExecutionAgent(ExecutionAgent):
 请以JSON格式输出：
 {{"title": "标题", "summary": "摘要"}}"""
 
-        from langchain_core.messages import HumanMessage
         title_response = await self.llm_provider.ainvoke(
             [HumanMessage(content=title_prompt)]
         )
@@ -759,6 +848,7 @@ class DownloadExecutionAgent(ExecutionAgent):
             "sources": sources,
             "source_count": len(contents),
             "total_length": len(integrated_content),
+            "source_summaries": source_summaries,
         }
 
 
