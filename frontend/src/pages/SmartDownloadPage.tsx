@@ -40,7 +40,7 @@ const SmartDownloadPage: React.FC = () => {
   // 阶段3：执行下载
   const [taskId, setTaskId] = useState<string | null>(null);
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
-  const [progressInterval, setProgressInterval] = useState<NodeJS.Timeout | null>(null);
+  const [progressInterval, setProgressInterval] = useState<ReturnType<typeof setTimeout> | null>(null);
 
   // 生成下载计划
   const handleGeneratePlan = async () => {
