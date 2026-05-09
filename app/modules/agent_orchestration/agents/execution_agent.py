@@ -11,6 +11,8 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
+from langchain_core.messages import HumanMessage
+
 from app.common.ai.llm_provider_protocol import LLMProvider
 from app.modules.agent_orchestration.schemas import AgentMessage
 
@@ -135,7 +137,6 @@ class KnowledgeSearchAgent(ExecutionAgent):
 3. 保持简洁准确
 """
 
-            from langchain_core.messages import HumanMessage
             response = await self.llm_provider.ainvoke(
                 [HumanMessage(content=prompt)]
             )
@@ -210,7 +211,6 @@ class CodeAnalysisAgent(ExecutionAgent):
 4. 遵循最佳实践
 """
 
-            from langchain_core.messages import HumanMessage
             response = await self.llm_provider.ainvoke(
                 [HumanMessage(content=prompt)]
             )
@@ -295,7 +295,6 @@ class DataProcessingAgent(ExecutionAgent):
 3. 生成结构化结果
 """
 
-            from langchain_core.messages import HumanMessage
             response = await self.llm_provider.ainvoke(
                 [HumanMessage(content=prompt)]
             )
@@ -367,7 +366,6 @@ class DesignAgent(ExecutionAgent):
 4. 包含关键技术选型
 """
 
-            from langchain_core.messages import HumanMessage
             response = await self.llm_provider.ainvoke(
                 [HumanMessage(content=prompt)]
             )
@@ -590,7 +588,6 @@ class DownloadExecutionAgent(ExecutionAgent):
 输出清洗后的 Markdown 文档："""
 
         try:
-            from langchain_core.messages import HumanMessage
             response = await self.llm_provider.ainvoke([HumanMessage(content=prompt)])
 
             cleaned = response.content or ""
@@ -698,8 +695,6 @@ class DownloadExecutionAgent(ExecutionAgent):
                     "description": item["description"],
                     "summary": item["content"][:200],
                 })
-
-        from langchain_core.messages import HumanMessage
 
         # S-P3: 分层合成策略 — 超过3源时先分组摘要，再合并
         if len(contents) <= 3:

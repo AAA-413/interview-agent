@@ -3,13 +3,15 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowLeft,
-  BookOpen,
   Clock3,
+  FileText,
   Loader2,
   MessageSquare,
   RefreshCw,
   Trash2,
 } from 'lucide-react';
+import Markdown from 'react-markdown';
+import rehypeHighlight from 'rehype-highlight';
 import { knowledgeBaseApi } from '../api/knowledgeBase';
 import type { AsyncTaskStatus, KnowledgeBaseDetailDTO } from '../types/knowledgeBase';
 import RagChatDrawer from '../components/RagChatDrawer';
@@ -207,23 +209,17 @@ export default function KnowledgeBaseDetailPage() {
 
           <div className="bg-white rounded-2xl border border-slate-200 p-6">
             <div className="flex items-center gap-2 mb-4">
-              <BookOpen className="w-5 h-5 text-primary-500" />
-              <h2 className="text-lg font-semibold text-slate-900">文本片段预览</h2>
+              <FileText className="w-5 h-5 text-primary-500" />
+              <h2 className="text-lg font-semibold text-slate-900">完整文档</h2>
             </div>
-            {detail.chunks.length === 0 ? (
-              <p className="text-sm text-slate-400">当前还没有可展示的片段。</p>
-            ) : (
-              <div className="space-y-3 max-h-[520px] overflow-auto pr-1">
-                {detail.chunks.slice(0, 20).map((chunk) => (
-                  <div key={chunk.id} className="rounded-xl border border-slate-100 p-4 bg-slate-50">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-medium text-primary-600">片段 #{chunk.chunk_index + 1}</span>
-                      {chunk.title && <span className="text-xs text-slate-400">{chunk.title}</span>}
-                    </div>
-                    <p className="text-sm text-slate-600 leading-6 whitespace-pre-wrap">{chunk.content_preview || chunk.content}</p>
-                  </div>
-                ))}
+            {detail.source_text ? (
+              <div className="max-h-[600px] overflow-auto pr-1">
+                <div className="prose prose-sm max-w-none text-slate-700 leading-7">
+                  <Markdown rehypePlugins={[rehypeHighlight]}>{detail.source_text}</Markdown>
+                </div>
               </div>
+            ) : (
+              <p className="text-sm text-slate-400">暂无文档内容。</p>
             )}
           </div>
         </div>

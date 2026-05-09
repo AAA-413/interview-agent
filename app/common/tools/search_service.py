@@ -20,16 +20,13 @@ class SearchService:
         """配置HTTP代理"""
         import os
 
-        self.proxies = None
+        self.proxy = None
         http_proxy = os.getenv("HTTP_PROXY")
         https_proxy = os.getenv("HTTPS_PROXY")
 
-        if http_proxy or https_proxy:
-            self.proxies = {
-                "http://": http_proxy or https_proxy,
-                "https://": https_proxy or http_proxy,
-            }
-            logger.info(f"🌐 已配置HTTP代理: {self.proxies}")
+        if https_proxy or http_proxy:
+            self.proxy = https_proxy or http_proxy
+            logger.info(f"🌐 已配置HTTP代理: {self.proxy}")
 
     async def search(
         self,
@@ -85,7 +82,7 @@ class SearchService:
                 "q": query,
             }
 
-            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True, proxies=self.proxies) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True, proxy=self.proxy) as client:
                 response = await client.post(url, data=params)
                 response.raise_for_status()
 
@@ -181,7 +178,7 @@ class SearchService:
                 "count": num_results,
             }
 
-            async with httpx.AsyncClient(timeout=self.timeout, proxies=self.proxies) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, proxy=self.proxy) as client:
                 response = await client.get(url, headers=headers, params=params)
                 response.raise_for_status()
                 data = response.json()
@@ -244,7 +241,7 @@ class SearchService:
                 "num": num_results,
             }
 
-            async with httpx.AsyncClient(timeout=self.timeout, proxies=self.proxies) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, proxy=self.proxy) as client:
                 response = await client.get(url, params=params)
                 response.raise_for_status()
                 data = response.json()
@@ -309,7 +306,7 @@ class SearchService:
                 "num": num_results,
             }
 
-            async with httpx.AsyncClient(timeout=self.timeout, proxies=self.proxies) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, proxy=self.proxy) as client:
                 response = await client.post(url, headers=headers, json=payload)
                 response.raise_for_status()
                 data = response.json()
@@ -379,7 +376,7 @@ class SearchService:
                 "include_raw_content": False,
             }
 
-            async with httpx.AsyncClient(timeout=self.timeout, proxies=self.proxies) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, proxy=self.proxy) as client:
                 response = await client.post(url, headers=headers, json=payload)
                 response.raise_for_status()
                 data = response.json()

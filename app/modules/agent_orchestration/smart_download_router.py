@@ -78,6 +78,8 @@ class DownloadProgress(BaseModel):
     retry_count: int
     downloaded_files: List[Dict[str, Any]]
     quality_score: Optional[float] = None
+    quality_details: Optional[Dict[str, Any]] = None
+    task_statuses: Dict[int, str] = {}  # step_id -> "success"/"retrying"/"failed"/"new"
     integrated_doc: Optional[Dict[str, Any]] = None
     kb_info: Optional[Dict[str, Any]] = None
 
@@ -367,6 +369,20 @@ def _detect_source_type(task: Dict[str, Any]) -> str:
         return "general"
 
 
+def _get_step_by_index(
+    index: int,
+    all_steps: List[Dict[str, Any]],
+    expanded_steps: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """根据索引获取对应的步骤（支持原始步骤和扩展步骤）"""
+    if index < len(all_steps):
+        return all_steps[index]
+    expanded_idx = index - len(all_steps)
+    if expanded_idx < len(expanded_steps):
+        return expanded_steps[expanded_idx]
+    raise IndexError(f"Step index {index} out of range (all_steps={len(all_steps)}, expanded={len(expanded_steps)})")
+
+
 async def _execute_download_with_retry(
     task_id: str,
     plan: Dict[str, Any],
@@ -413,18 +429,43 @@ async def _execute_download_with_retry(
         quality_agent = QualityAgent(llm_provider=llm_provider)
         summary_agent = SummaryAgent(llm_provider=llm_provider)
 
-        # 执行下载（支持重试）
+        # 执行下载（支持选择性重试）
+        # all_steps_indexed: 记录每个步骤在 execution_results 中的索引位置
+        # successful_results: 跨重试轮次保留成功结果，key=结果索引
+        # expanded_keywords: Phase B 输出的扩展关键词，重试时传入提升匹配率
+        all_steps = plan["steps"].copy()
+        expanded_steps = []
+        successful_results: Dict[int, Dict[str, Any]] = {}
+        execution_results: List[Dict[str, Any]] = []
+        expanded_keywords: List[str] = []
+
         for retry in range(max_retries):
             progress.retry_count = retry
-            progress.message = f"执行下载（attempt {retry + 1} times尝试）..."
+            progress.message = f"执行下载（第 {retry + 1} 次尝试）..."
 
             try:
-                # 执行所有下载步骤（支持动态任务生成）
-                execution_results = []
-                all_steps = plan["steps"].copy()
-                expanded_steps = []
+                if retry == 0:
+                    # 第一轮：执行所有步骤
+                    steps_to_execute = list(enumerate(all_steps))
+                else:
+                    # 重试轮：只执行失败的任务
+                    failed_indices = quality_result.get("failed_task_indices", [])
+                    if not failed_indices:
+                        break
+                    steps_to_execute = [
+                        (idx, _get_step_by_index(idx, all_steps, expanded_steps))
+                        for idx in failed_indices
+                    ]
+                    logger.info("[RETRY] 选择性重试: failed_indices=%s", failed_indices)
+                    # 标记重试中的任务状态
+                    for idx in failed_indices:
+                        step_at_idx = _get_step_by_index(idx, all_steps, expanded_steps)
+                        if step_at_idx:
+                            progress.task_statuses[step_at_idx["step_id"]] = "retrying"
 
-                for i, step in enumerate(all_steps):
+                new_results: Dict[int, Dict[str, Any]] = {}
+
+                for result_idx, step in steps_to_execute:
                     # C-P4: 检查取消请求
                     if await _is_cancelled(user_id, task_id):
                         logger.info("任务已取消: task_id=%s", task_id)
@@ -433,14 +474,14 @@ async def _execute_download_with_retry(
                         await _save_task_progress(user_id, task_id, progress)
                         return
 
-                    progress.current_step = i + 1
-                    progress.progress_percent = int((i + 1) / len(all_steps) * 50)  # 前50%用于初始任务
+                    progress.current_step = result_idx + 1
+                    total = len(all_steps) + len(expanded_steps)
+                    progress.progress_percent = int((result_idx + 1) / max(total, 1) * 50)
                     progress.message = f"正在执行: {step['description']}"
                     await _save_task_progress(user_id, task_id, progress)
 
                     # 根据任务类型选择Agent
                     if step.get("action") in ["search_github", "fetch_github_repo", "fetch_github_file"]:
-                        # 转换为GitHub任务格式
                         github_task = {
                             "id": step["step_id"],
                             "type": step["action"],
@@ -449,43 +490,44 @@ async def _execute_download_with_retry(
                         }
                         result = await github_agent.execute(task=github_task, context={})
                     else:
-                        # 转换为下载任务格式
                         download_task = {
                             "id": str(step.get("step_id")),
                             "type": step.get("action"),
                             "description": step.get("description", ""),
-                            **step.get("params", {})  # 展开 params (query, num_results, url等)
+                            **step.get("params", {})
                         }
-                        logger.info(f"[CHECK] Execute download task: {download_task}")
+                        logger.info("[CHECK] Execute download task: %s", download_task)
                         result = await download_agent.execute(task=download_task, context={})
 
                     # AgentMessage → dict（统一转换）
                     if hasattr(result, "model_dump"):
                         result = result.model_dump()
 
-                    # 添加调试日志
-                    logger.info(f"[CHECK] Agent result type: {type(result)}")
-                    logger.info(f"[CHECK] Agent result: {result}")
+                    logger.info("[CHECK] Agent result type: %s", type(result))
+                    new_results[result_idx] = result
 
-                    execution_results.append(result)
-
-                    # 更新已下载文件列表
+                    # 更新已下载文件列表（仅新增成功的，按 step_id 去重）
                     if result and isinstance(result, dict) and result.get("status") == "success":
                         task_result = result.get("result", {})
-                        logger.info(f"[CHECK] Extracted task_result type: {type(task_result)}")
-                        logger.info(f"[CHECK] Extracted task_result content: {task_result}")
-                        progress.downloaded_files.append({
+                        file_entry = {
                             "step_id": step["step_id"],
                             "description": step["description"],
                             "size": len(task_result.get("content", "")) if isinstance(task_result, dict) else 0,
                             "metadata": task_result.get("metadata", {}) if isinstance(task_result, dict) else {},
-                        })
+                        }
+                        existing_idx = next((i for i, f in enumerate(progress.downloaded_files) if f.get("step_id") == step["step_id"]), None)
+                        if existing_idx is not None:
+                            progress.downloaded_files[existing_idx] = file_entry
+                        else:
+                            progress.downloaded_files.append(file_entry)
+                        progress.task_statuses[step["step_id"]] = "success"
+                    elif result and isinstance(result, dict) and result.get("status") != "success":
+                        progress.task_statuses[step["step_id"]] = "failed"
 
-                        # 动态任务生成：如果是GitHub搜索，根据结果生成抓取任务
-                        if step.get("action") == "search_github" and step.get("dynamic"):
+                        # 动态任务生成（仅第一轮）
+                        if retry == 0 and step.get("action") == "search_github" and step.get("dynamic"):
                             repos = task_result.get("repos", []) if isinstance(task_result, dict) else []
                             max_repos = step.get("max_repos_to_fetch", 3)
-
                             for repo in repos[:max_repos]:
                                 expanded_steps.append({
                                     "step_id": len(all_steps) + len(expanded_steps) + 1,
@@ -495,21 +537,21 @@ async def _execute_download_with_retry(
                                     "source_type": "github",
                                 })
 
-                # 执行动态生成的任务
-                if expanded_steps:
-                    # C-P4: 检查取消请求
+                # 第一轮：执行动态生成的任务
+                if retry == 0 and expanded_steps:
                     if await _is_cancelled(user_id, task_id):
                         logger.info("任务已取消: task_id=%s", task_id)
                         progress.status = "cancelled"
                         progress.message = "任务已取消"
                         await _save_task_progress(user_id, task_id, progress)
                         return
-                    logger.info(f"[EXPAND] Dynamically generated {len(expanded_steps)} tasks")
+                    logger.info("[EXPAND] Dynamically generated %d tasks", len(expanded_steps))
                     progress.total_steps += len(expanded_steps)
 
                     for i, step in enumerate(expanded_steps):
-                        progress.current_step = len(all_steps) + i + 1
-                        progress.progress_percent = 50 + int((i + 1) / len(expanded_steps) * 10)  # 50-60%用于扩展任务
+                        result_idx = len(all_steps) + i
+                        progress.current_step = result_idx + 1
+                        progress.progress_percent = 50 + int((i + 1) / len(expanded_steps) * 10)
                         progress.message = f"正在执行扩展任务: {step['description']}"
 
                         github_task = {
@@ -519,22 +561,33 @@ async def _execute_download_with_retry(
                             **step.get("params", {})
                         }
                         result = await github_agent.execute(task=github_task, context={})
-                        # AgentMessage → dict
                         if hasattr(result, "model_dump"):
                             result = result.model_dump()
-                        execution_results.append(result)
+                        new_results[result_idx] = result
+                        progress.task_statuses[step["step_id"]] = "new"
 
                         if result and isinstance(result, dict) and result.get("status") == "success":
                             task_result = result.get("result", {})
-                            progress.downloaded_files.append({
+                            file_entry = {
                                 "step_id": step["step_id"],
                                 "description": step["description"],
                                 "size": len(task_result.get("content", "")) if isinstance(task_result, dict) else 0,
                                 "metadata": task_result.get("metadata", {}) if isinstance(task_result, dict) else {},
-                            })
+                            }
+                            existing_idx = next((i for i, f in enumerate(progress.downloaded_files) if f.get("step_id") == step["step_id"]), None)
+                            if existing_idx is not None:
+                                progress.downloaded_files[existing_idx] = file_entry
+                            else:
+                                progress.downloaded_files.append(file_entry)
+
+                # 合并结果：保留之前成功的结果，覆盖本次重试的结果
+                successful_results.update(new_results)
+
+                # 按索引顺序重建 execution_results
+                max_idx = max(successful_results.keys()) if successful_results else -1
+                execution_results = [successful_results.get(i, {}) for i in range(max_idx + 1)]
 
                 # 质量检查
-                # C-P4: 检查取消请求
                 if await _is_cancelled(user_id, task_id):
                     logger.info("任务已取消: task_id=%s", task_id)
                     progress.status = "cancelled"
@@ -551,32 +604,54 @@ async def _execute_download_with_retry(
                     user_input=plan["user_input"],
                     execution_results=execution_results,
                     plan=plan,
+                    expanded_keywords=expanded_keywords or None,
                 )
 
-                logger.info("质量检查完成: task_id=%s, score=%.2f, passed=%s", task_id, quality_result['score'], quality_result['passed'])
-                progress.quality_score = quality_result["score"] / 100.0  # 转换为0-1范围
+                logger.info("质量检查完成: task_id=%s, score=%.2f, passed=%s, failed_indices=%s",
+                             task_id, quality_result['score'], quality_result['passed'],
+                             quality_result.get('failed_task_indices', []))
+                # 设置质检详情供前端展示
+                per_task = quality_result.get("per_task_results", [])
+                failed_indices_set = set(quality_result.get("failed_task_indices", []))
+                phase_b_used = bool(quality_result.get("overall_issues") or quality_result.get("expanded_keywords"))
+                progress.quality_details = {
+                    "passed_count": len([t for t in per_task if t.get("passed")]),
+                    "failed_count": len(failed_indices_set),
+                    "phase": "phase_b" if phase_b_used else "phase_a",
+                    "total": len(per_task),
+                }
+                progress.quality_score = quality_result["score"] / 100.0
+                # 保存 Phase B 输出的扩展关键词，供下一轮重试使用
+                if quality_result.get("expanded_keywords"):
+                    expanded_keywords = quality_result["expanded_keywords"]
+                    logger.info("[QA] Phase B 输出扩展关键词: %s", expanded_keywords)
                 await _save_task_progress(user_id, task_id, progress)
 
-                # 如果质量合格，跳出重试循环
                 if quality_result["passed"]:
                     logger.info("质量检查通过: task_id=%s, score=%.1f", task_id, quality_result['score'])
                     progress.retry_count = 0
                     break
                 else:
-                    logger.warning("质量检查未通过: task_id=%s, issues=%s", task_id, quality_result.get('issues', []))
-                    if retry < max_retries - 1:
-                        progress.message = "质量不合格，准备重试..."
-                        # 清空已下载文件列表，准备重试
-                        progress.downloaded_files = []
+                    logger.warning("质量检查未通过: task_id=%s, failed_indices=%s, issues=%s",
+                                   task_id, quality_result.get('failed_task_indices', []),
+                                   quality_result.get('issues', []))
+                    # 诊断日志：每个失败任务的具体原因
+                    for tr in quality_result.get("per_task_results", []):
+                        if not tr.get("passed"):
+                            logger.warning("[QA-DETAIL] Task %d failed: substance=%s, relevance=%s, reason=%s",
+                                           tr.get("task_index"), tr.get("content_substance"),
+                                           tr.get("topic_relevance"), tr.get("reason"))
+                    if retry < max_retries - 1 and quality_result.get("failed_task_indices"):
+                        progress.message = "部分任务质量不合格，准备选择性重试..."
+                        # 不清空 progress.downloaded_files，保留成功结果
                         continue
                     else:
-                        progress.message = "已达到最大重试次数，使用当前结果"
+                        progress.message = "已达到最大重试次数或无失败任务，使用当前结果"
                         break
 
             except Exception as e:
-                logger.error(f"[ERROR] Download failed（attempt {retry + 1} times）: {e}")
+                logger.error("[ERROR] Download failed（attempt %d times）: %s", retry + 1, e)
                 if retry < max_retries - 1:
-                    progress.downloaded_files = []
                     continue
                 else:
                     raise

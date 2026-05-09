@@ -33,7 +33,7 @@ export interface DownloadPlan {
  */
 export interface DownloadProgress {
   task_id: string;
-  status: 'planning' | 'executing' | 'quality_check' | 'indexing' | 'completed' | 'failed' | 'cancelled';
+  status: 'planning' | 'executing' | 'quality_check' | 'summarizing' | 'indexing' | 'completed' | 'failed' | 'cancelled';
   current_step: number;
   total_steps: number;
   progress_percent: number;
@@ -45,6 +45,13 @@ export interface DownloadProgress {
     size: number;
   }>;
   quality_score?: number;
+  quality_details?: {
+    passed_count: number;
+    failed_count: number;
+    phase: string;
+    total: number;
+  };
+  task_statuses?: Record<number, string>;
   integrated_doc?: {
     title: string;
     summary: string;

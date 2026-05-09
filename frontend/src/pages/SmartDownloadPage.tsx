@@ -357,6 +357,7 @@ const SmartDownloadPage: React.FC = () => {
       planning: '规划中',
       executing: '下载中',
       quality_check: '质量检查',
+      summarizing: '整合内容',
       indexing: '建立索引',
       completed: '完成',
       failed: '失败',
@@ -367,6 +368,7 @@ const SmartDownloadPage: React.FC = () => {
       planning: 'text-blue-600',
       executing: 'text-blue-600',
       quality_check: 'text-yellow-600',
+      summarizing: 'text-indigo-600',
       indexing: 'text-purple-600',
       completed: 'text-green-600',
       failed: 'text-red-600',
@@ -403,14 +405,108 @@ const SmartDownloadPage: React.FC = () => {
               </p>
             )}
 
-            {progress.quality_score !== undefined && (
+            {progress.quality_score != null && progress.quality_score > 0 && (
               <p className="text-sm text-gray-600 mt-2">
                 质量评分: {(progress.quality_score * 100).toFixed(0)}%
               </p>
             )}
           </div>
 
-          {progress.integrated_doc && (
+          {/* 任务列表：展示每个步骤的执行状态 */}
+          {progress.downloaded_files.length > 0 && (
+            <div className="mb-6">
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">
+                下载任务 ({progress.downloaded_files.length} / {progress.total_steps})
+              </h3>
+              <div className="space-y-2 max-h-60 overflow-auto">
+                {progress.downloaded_files.map((file, idx) => {
+                  const isCurrentStep = progress.status === 'executing' && file.step_id === progress.current_step;
+                  const taskStatus = progress.task_statuses?.[file.step_id];
+                  const isRetrying = taskStatus === 'retrying';
+                  const isFailed = taskStatus === 'failed';
+                  const isNew = taskStatus === 'new';
+                  return (
+                    <div
+                      key={file.step_id}
+                      className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm ${
+                        isCurrentStep
+                          ? 'bg-blue-50 border border-blue-200'
+                          : isFailed
+                          ? 'bg-red-50 border border-red-200'
+                          : isRetrying
+                          ? 'bg-orange-50 border border-orange-200'
+                          : 'bg-gray-50'
+                      }`}
+                    >
+                      <span className={`flex-shrink-0 ${isFailed ? 'text-red-500' : isRetrying ? 'text-orange-500' : 'text-green-500'}`}>
+                        {isCurrentStep || isRetrying ? (
+                          <span className={`inline-block w-4 h-4 border-2 ${isRetrying ? 'border-orange-500' : 'border-blue-500'} border-t-transparent rounded-full animate-spin`} />
+                        ) : isFailed ? (
+                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                          </svg>
+                        ) : (
+                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                      </span>
+                      <span className="flex-1 text-gray-800 truncate">{file.description}</span>
+                      {isNew && (
+                        <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded flex-shrink-0">新增</span>
+                      )}
+                      {isRetrying && (
+                        <span className="text-xs text-orange-600 flex-shrink-0">重试中</span>
+                      )}
+                      <span className="text-xs text-gray-500 flex-shrink-0">
+                        {file.size > 0 ? `${(file.size / 1024).toFixed(1)} KB` : ''}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 质量检查阶段信息 */}
+          {progress.status === 'quality_check' && (
+            <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p className="text-sm font-medium text-yellow-800 mb-1">
+                {progress.quality_details
+                  ? `正在检查 ${progress.quality_details.passed_count + progress.quality_details.failed_count}/${progress.quality_details.total} 个任务... (${progress.quality_details.phase === 'phase_a' ? '规则检查' : '整体评估'})`
+                  : '正在评估下载内容质量...'}
+              </p>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 bg-yellow-200 rounded-full h-2">
+                  <div className="bg-yellow-500 h-2 rounded-full transition-all" style={{
+                    width: progress.quality_details
+                      ? `${Math.round(((progress.quality_details.passed_count + progress.quality_details.failed_count) / Math.max(progress.quality_details.total, 1)) * 100)}%`
+                      : '30%'
+                  }} />
+                </div>
+                <span className="text-xs text-yellow-700">
+                  {progress.quality_details
+                    ? `${progress.quality_details.passed_count} 通过 / ${progress.quality_details.failed_count} 失败`
+                    : '分析中'}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* 选择性重试信息 */}
+          {progress.retry_count > 0 && progress.status === 'executing' && (
+            <div className="mb-6 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+              <p className="text-sm text-orange-800">
+                <span className="font-semibold">选择性重试</span>
+                <span className="text-orange-600 ml-1">
+                  — 部分任务质量不达标，正在重新下载（第 {progress.retry_count} 次重试）
+                </span>
+              </p>
+            </div>
+          )}
+
+          {/* 整合中：折叠预览 */}
+          {progress.integrated_doc && progress.status !== 'completed' && (
             <div className="mb-6">
               <h3 className="text-lg font-semibold mb-3">📄 整合文档</h3>
               <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
@@ -436,27 +532,88 @@ const SmartDownloadPage: React.FC = () => {
                     </div>
                   </details>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* 完成：完整文档阅读视图 */}
+          {progress.status === 'completed' && progress.integrated_doc && (
+            <div className="mb-6">
+              {/* 完成提示 + 操作引导 */}
+              <div className="p-4 bg-green-50 border border-green-200 rounded-lg mb-4">
+                <p className="text-green-800 font-semibold">✅ 文档整合完成！</p>
+                <p className="text-sm text-green-700 mt-1">
+                  已将 {progress.integrated_doc.source_count} 个来源整合为 {progress.integrated_doc.total_length.toLocaleString()} 字的知识文档
+                </p>
+                {progress.kb_info && (
+                  <p className="text-sm text-green-700 mt-1">
+                    💾 已保存到知识库: {progress.kb_info.kb_name}
+                  </p>
+                )}
+                <div className="flex gap-3 mt-3">
+                  {progress.kb_info && (
+                    <button
+                      onClick={() => navigate(`/knowledgebases/${progress.kb_info!.kb_id}`)}
+                      className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition-colors"
+                    >
+                      📖 前往知识库阅读 & 问答
+                    </button>
+                  )}
+                  <button
+                    onClick={handleReset}
+                    className="px-4 py-2 bg-white text-green-700 text-sm rounded-lg border border-green-300 hover:bg-green-50 transition-colors"
+                  >
+                    🔄 继续下载
+                  </button>
+                </div>
+              </div>
+
+              {/* 完整文档内容 */}
+              <div className="bg-white rounded-lg border border-slate-200">
+                <div className="p-4 border-b border-slate-200">
+                  <h3 className="text-lg font-semibold text-slate-900">
+                    {progress.integrated_doc.title}
+                  </h3>
+                  <p className="text-sm text-slate-500 mt-1">
+                    {progress.integrated_doc.summary}
+                  </p>
+                  <div className="flex gap-4 text-xs text-slate-400 mt-2">
+                    <span>📚 {progress.integrated_doc.source_count} 个来源</span>
+                    <span>📝 {progress.integrated_doc.total_length.toLocaleString()} 字</span>
+                  </div>
+                </div>
+                {progress.integrated_doc.content && (
+                  <div className="p-6 max-h-[70vh] overflow-auto">
+                    <div className="prose prose-sm max-w-none text-slate-700 leading-7">
+                      <Markdown rehypePlugins={[rehypeHighlight]}>{progress.integrated_doc.content}</Markdown>
+                    </div>
+                  </div>
+                )}
+
+                {/* 来源摘要折叠 */}
                 {progress.integrated_doc.source_summaries && progress.integrated_doc.source_summaries.length > 0 && (
-                  <details className="mt-3">
-                    <summary className="text-xs text-blue-600 cursor-pointer hover:underline font-medium">
-                      各来源摘要
+                  <details className="border-t border-slate-200">
+                    <summary className="p-4 text-sm text-slate-600 cursor-pointer hover:bg-slate-50 font-medium">
+                      各来源摘要 ({progress.integrated_doc.source_summaries.length})
                     </summary>
-                    <div className="mt-2 space-y-2">
+                    <div className="px-4 pb-4 space-y-2">
                       {progress.integrated_doc.source_summaries.map((s: {source: string; description: string; summary: string}, idx: number) => (
-                        <div key={idx} className="p-3 bg-white border border-blue-100 rounded-lg">
-                          <p className="text-xs font-medium text-blue-800 mb-1">{s.description || `来源 ${idx + 1}`}</p>
-                          <p className="text-xs text-slate-600">{s.summary}</p>
+                        <div key={idx} className="p-3 bg-slate-50 rounded-lg">
+                          <p className="text-xs font-medium text-slate-700 mb-1">{s.description || `来源 ${idx + 1}`}</p>
+                          <p className="text-xs text-slate-500">{s.summary}</p>
                         </div>
                       ))}
                     </div>
                   </details>
                 )}
+
+                {/* 来源列表折叠 */}
                 {progress.integrated_doc.sources && progress.integrated_doc.sources.length > 0 && (
-                  <details className="mt-3">
-                    <summary className="text-xs text-blue-600 cursor-pointer hover:underline">
-                      查看来源列表
+                  <details className="border-t border-slate-200">
+                    <summary className="p-4 text-sm text-slate-600 cursor-pointer hover:bg-slate-50 font-medium">
+                      来源列表 ({progress.integrated_doc.sources.length})
                     </summary>
-                    <ul className="mt-2 space-y-1 text-xs text-blue-700">
+                    <ul className="px-4 pb-4 space-y-1 text-xs text-slate-500">
                       {progress.integrated_doc.sources.map((source: string, idx: number) => (
                         <li key={idx} className="truncate">• {source}</li>
                       ))}
@@ -464,20 +621,6 @@ const SmartDownloadPage: React.FC = () => {
                   </details>
                 )}
               </div>
-            </div>
-          )}
-
-          {progress.status === 'completed' && (
-            <div className="p-4 bg-green-50 border border-green-200 rounded-lg mb-4">
-              <p className="text-green-800 font-semibold">✅ 整合完成！</p>
-              <p className="text-sm text-green-700 mt-1">
-                已将 {progress.integrated_doc?.source_count || 0} 个来源整合为知识文档
-              </p>
-              {progress.kb_info && (
-                <p className="text-sm text-green-700 mt-1">
-                  💾 已保存到知识库: {progress.kb_info.kb_name}
-                </p>
-              )}
             </div>
           )}
 
@@ -496,7 +639,7 @@ const SmartDownloadPage: React.FC = () => {
           )}
 
           {/* 进行中：显示取消按钮 */}
-          {['planning', 'executing', 'quality_check', 'indexing'].includes(progress.status) && (
+          {['planning', 'executing', 'quality_check', 'summarizing', 'indexing'].includes(progress.status) && (
             <div className="mb-4">
               <button
                 onClick={handleCancel}
@@ -507,16 +650,16 @@ const SmartDownloadPage: React.FC = () => {
             </div>
           )}
 
-          {(progress.status === 'completed' || progress.status === 'failed' || progress.status === 'cancelled') && (
+          {(progress.status === 'failed' || progress.status === 'cancelled') && (
             <div className="flex gap-4">
               <button
                 onClick={handleReset}
                 className="flex-1 bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition-colors"
               >
-                继续下载
+                重新下载
               </button>
               <button
-                onClick={() => navigate('/knowledge-base')}
+                onClick={() => navigate('/knowledgebases')}
                 className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-lg hover:bg-gray-300 transition-colors"
               >
                 返回知识库
