@@ -412,16 +412,17 @@ const SmartDownloadPage: React.FC = () => {
             )}
           </div>
 
-          {/* 任务列表：展示每个步骤的执行状态 */}
-          {progress.downloaded_files.length > 0 && (
+          {/* 任务列表：展示每个步骤的执行状态（含并行下载中） */}
+          {(progress.downloaded_files.length > 0 || Object.keys(progress.task_statuses || {}).length > 0) && (
             <div className="mb-6">
               <h3 className="text-sm font-semibold text-gray-700 mb-3">
                 下载任务 ({progress.downloaded_files.length} / {progress.total_steps})
               </h3>
               <div className="space-y-2 max-h-60 overflow-auto">
-                {progress.downloaded_files.map((file, idx) => {
-                  const isCurrentStep = progress.status === 'executing' && file.step_id === progress.current_step;
+                {/* 已完成/已记录的任务 */}
+                {progress.downloaded_files.map((file) => {
                   const taskStatus = progress.task_statuses?.[file.step_id];
+                  const isDownloading = taskStatus === 'downloading';
                   const isRetrying = taskStatus === 'retrying';
                   const isFailed = taskStatus === 'failed';
                   const isNew = taskStatus === 'new';
@@ -429,7 +430,7 @@ const SmartDownloadPage: React.FC = () => {
                     <div
                       key={file.step_id}
                       className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm ${
-                        isCurrentStep
+                        isDownloading
                           ? 'bg-blue-50 border border-blue-200'
                           : isFailed
                           ? 'bg-red-50 border border-red-200'
@@ -438,8 +439,8 @@ const SmartDownloadPage: React.FC = () => {
                           : 'bg-gray-50'
                       }`}
                     >
-                      <span className={`flex-shrink-0 ${isFailed ? 'text-red-500' : isRetrying ? 'text-orange-500' : 'text-green-500'}`}>
-                        {isCurrentStep || isRetrying ? (
+                      <span className={`flex-shrink-0 ${isFailed ? 'text-red-500' : isRetrying || isDownloading ? 'text-orange-500' : 'text-green-500'}`}>
+                        {isDownloading || isRetrying ? (
                           <span className={`inline-block w-4 h-4 border-2 ${isRetrying ? 'border-orange-500' : 'border-blue-500'} border-t-transparent rounded-full animate-spin`} />
                         ) : isFailed ? (
                           <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
@@ -455,6 +456,9 @@ const SmartDownloadPage: React.FC = () => {
                       {isNew && (
                         <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded flex-shrink-0">新增</span>
                       )}
+                      {isDownloading && (
+                        <span className="text-xs text-blue-600 flex-shrink-0">下载中</span>
+                      )}
                       {isRetrying && (
                         <span className="text-xs text-orange-600 flex-shrink-0">重试中</span>
                       )}
@@ -464,6 +468,22 @@ const SmartDownloadPage: React.FC = () => {
                     </div>
                   );
                 })}
+                {/* 并行下载中但尚未完成的任务（不在 downloaded_files 中） */}
+                {progress.task_statuses && Object.entries(progress.task_statuses)
+                  .filter(([stepId, status]) => status === 'downloading' && !progress.downloaded_files.some(f => f.step_id === Number(stepId)))
+                  .map(([stepId]) => (
+                    <div
+                      key={`dl-${stepId}`}
+                      className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm bg-blue-50 border border-blue-200"
+                    >
+                      <span className="flex-shrink-0 text-blue-500">
+                        <span className="inline-block w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                      </span>
+                      <span className="flex-1 text-gray-800 truncate">任务 #{stepId} 下载中...</span>
+                      <span className="text-xs text-blue-600 flex-shrink-0">下载中</span>
+                    </div>
+                  ))
+                }
               </div>
             </div>
           )}

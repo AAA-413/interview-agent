@@ -447,14 +447,23 @@ question（问答）、code_generation（代码生成）、analysis（分析）�
   "topic": "主题（如：FastAPI、Python、机器学习）",
   "resource_types": ["资源类型列表，可选：official（官方文档）、blog（博客文章）、tutorial（教程）、github（GitHub项目）、arxiv（学术论文）"],
   "keywords": ["关键词列表，用于搜索"],
-  "target_resources": ["具体目标资源列表"]
+  "target_resources": ["具体目标资源列表"],
+  "repo_name": "如果识别到具体 GitHub 仓库名，填写完整仓库名（如 owner/repo 或 repo-name），否则为 null"
 }}
 
 要求：
 1. topic 应该是简洁的主题名称
-2. resource_types 至少包含1个类型
-3. keywords 提取3-5个关键词
-4. target_resources 列出可能的具体资源
+2. 识别 GitHub 仓库名的规则：
+   - "owner/repo" 格式（如 "anthropics/learn-claude-code"）→ 明确是 GitHub 仓库
+   - 连字符命名且包含 learn/starter/boilerplate/template/example 等词（如 "learn-claude-code"、"fastapi-starter"）→ 很可能是 GitHub 仓库
+   - 用户明确提到 "github"、"仓库"、"repo"、"项目" → GitHub 类型
+   - 以上情况 resource_types 必须包含 "github"，repo_name 填写仓库名
+3. 区分"下载特定项目"和"学习某主题"：
+   - "下载/获取/拉取/clone xxx" → github 类型
+   - "学习 xxx 使用方法/教程" → tutorial/official 类型
+4. resource_types 至少包含1个类型
+5. keywords 提取3-5个关键词
+6. target_resources 列出可能的具体资源
 
 只返回 JSON，不要其他内容。"""
 
@@ -531,21 +540,36 @@ question（问答）、code_generation（代码生成）、analysis（分析）�
             topic = intent.get("topic", "")
             resource_types = intent.get("resource_types", [])
             keywords = intent.get("keywords", [])
+            repo_name = intent.get("repo_name")
+
+            # 如果识别到具体仓库名，构造仓库信息提示
+            repo_hint = ""
+            if repo_name:
+                repo_hint = f"\n具体仓库：{repo_name}（用户指定了此仓库，必须用 fetch_github_repo 直接抓取）"
 
             prompt = f"""请为以下主题生成下载任务列表。
 
 主题：{topic}
 资源类型：{', '.join(resource_types)}
 关键词：{', '.join(keywords)}
-最大任务数：{max_downloads}
+最大任务数：{max_downloads}{repo_hint}
 
 请以 JSON 数组格式返回任务列表：
+
+可用的任务类型：
+1. fetch_url — 直接抓取URL，需要 url 字段
+2. search_web — 搜索后抓取，需要 query 和 num_results 字段
+3. fetch_blog — 抓取博客，需要 url 字段
+4. search_github — 搜索 GitHub 仓库，需要 query 和 num_results 字段，可选 dynamic（true=自动抓取结果中的仓库文档）和 max_repos_to_fetch
+5. fetch_github_repo — 直接抓取指定 GitHub 仓库的文档和源码，需要 repo 字段（格式：owner/repo）
+
+示例：
 [
   {{
     "id": "task_1",
-    "type": "fetch_url",
-    "description": "抓取 FastAPI 官方文档",
-    "url": "https://fastapi.tiangolo.com/"
+    "type": "fetch_github_repo",
+    "description": "抓取 learn-claude-code 仓库的文档和源码",
+    "repo": "anthropics/learn-claude-code"
   }},
   {{
     "id": "task_2",
@@ -556,19 +580,21 @@ question（问答）、code_generation（代码生成）、analysis（分析）�
   }},
   {{
     "id": "task_3",
-    "type": "fetch_blog",
-    "description": "抓取 CSDN 上的 FastAPI 文章",
-    "url": "https://blog.csdn.net/xxx/article/xxx"
+    "type": "search_github",
+    "description": "搜索 GitHub 上的 FastAPI 示例项目",
+    "query": "FastAPI example",
+    "num_results": 3,
+    "dynamic": true,
+    "max_repos_to_fetch": 2
   }}
 ]
 
 要求：
-1. type 只能是：fetch_url（直接抓取URL）、search_web（搜索后抓取）、fetch_blog（抓取博客）
-2. 优先生成 official 类型的资源
-3. 任务数量不超过 {max_downloads} 个
-4. 每个任务都要有清晰的 description
-5. fetch_url 和 fetch_blog 必须有 url 字段
-6. search_web 必须有 query 和 num_results 字段
+1. 当 resource_types 包含 "github" 时，必须生成至少一个 GitHub 任务（search_github 或 fetch_github_repo）
+2. 当用户指定了具体仓库名（repo_name 不为空）时，必须用 fetch_github_repo 直接抓取该仓库
+3. 优先生成 official 类型的资源
+4. 任务数量不超过 {max_downloads} 个
+5. 每个任务都要有清晰的 description
 
 只返回 JSON 数组，不要其他内容。"""
 

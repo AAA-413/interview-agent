@@ -1,0 +1,104 @@
+flowchart TD
+    Start(["🚀 用户输入需求\n例：我想学习 FastAPI"]) --> IntentLLM
+
+    subgraph Planning["📋 阶段一：规划 · PlanningAgent"]
+        IntentLLM["🔵 意图分析 LLM · 1次\n_analyze_download_intent()\n输出: topic, keywords, resource_types"]
+        IntentLLM --> TaskLLM["🔵 任务生成 LLM · 1次\n_generate_download_tasks()\n输出: N个下载任务\n(fetch_url / search_web / fetch_blog / search_github)"]
+    end
+
+    TaskLLM --> RetryLoop
+
+    RetryLoop["🔄 重试循环入口\nmax_retries=3 · retry=0,1,2"] --> FirstRound{"retry == 0 ?"}
+
+    FirstRound -->|"是 · 第1轮"| ExecAll["执行全部 N 个任务"]
+    FirstRound -->|"否 · 重试轮"| ExecFailed["选择性重试\n只执行 failed_task_indices"]
+
+    ExecAll --> ExecLoop
+    ExecFailed --> ExecLoop
+
+    subgraph ExecPhase["📥 阶段二：执行 · DownloadExecutionAgent"]
+        ExecLoop["遍历待执行任务"] --> TaskType{"任务类型?"}
+
+        TaskType -->|"fetch_url / search_web / fetch_blog"| WebDL["🌐 网页下载\nMCPService HTTP抓取/搜索\n0次LLM"]
+        TaskType -->|"search_github / fetch_github_repo"| GitHubDL["🐙 GitHub下载\nGitHubExecutionAgent\nGitHub API · 0次LLM"]
+
+        WebDL --> CleanLLM["🔵 内容清洗 LLM · 1次/任务\n_clean_content()\nHTML → Markdown 结构化"]
+        GitHubDL --> NoClean["GitHub内容直接使用\n0次LLM"]
+
+        CleanLLM --> MergeResults["合并结果到 successful_results\n跨轮次保留成功结果"]
+        NoClean --> MergeResults
+    end
+
+    MergeResults --> DynamicCheck{"retry==0 且\n有动态GitHub任务?"}
+
+    DynamicCheck -->|"是"| ExpandTasks["📎 动态任务展开\n搜索结果中的仓库\n自动追加为下载任务"]
+    DynamicCheck -->|"否"| QualityCheck
+
+    ExpandTasks --> ExecExpanded["执行 expanded_steps\nGitHub仓库文档抓取"]
+    ExecExpanded --> QualityCheck
+
+    subgraph QC["🔍 阶段三：质检 · QualityAgent"]
+        QualityCheck["Phase A: 逐任务规则评估\n0次LLM"] --> PhaseAResult{"pass_ratio?"}
+
+        PhaseAResult -->|"&lt; 50%"| DirectFail["❌ 直接判定失败\n不调LLM"]
+        PhaseAResult -->|"= 100%"| DirectPass["✅ 直接判定通过\n不调LLM"]
+        PhaseAResult -->|"50% ~ 99%"| PhaseB["🔵 Phase B 整体评估 LLM · 1次\n评估 coverage + diversity\n输出 expanded_keywords"]
+
+        PhaseB --> PhaseBScore{"综合评分 ≥ 阈值?\n有失败≥60 / 无失败≥50"}
+        PhaseBScore -->|"是"| QCPass["✅ 质检通过"]
+        PhaseBScore -->|"否"| QCFail["❌ 质检未通过"]
+    end
+
+    DirectPass --> QCPass
+    DirectFail --> QCFail
+
+    QCPass --> BreakLoop["退出重试循环"]
+    QCFail --> RetryDecision{"retry &lt; max_retries-1\n且有 failed_indices?"}
+
+    RetryDecision -->|"是"| SaveKW["保存 expanded_keywords\n供下轮 Phase A 使用"]
+    SaveKW --> RetryLoop
+    RetryDecision -->|"否 · 达上限"| BreakLoop
+
+    BreakLoop --> Integration
+
+    subgraph Integrate["📝 阶段四：整合 · integrate_contents()"]
+        Integration["提取所有成功来源\n共 M 个有效来源"] --> PerSource["🔵 逐来源摘要 LLM · M次\n每个来源50字概括"]
+
+        PerSource --> SourceCount{"M ≤ 3 ?"}
+
+        SourceCount -->|"是"| DirectMerge["🔵 直接整合 LLM · 1次\n所有来源合并为文档"]
+        SourceCount -->|"否"| LayeredMerge["🔵 分层合成"]
+        LayeredMerge --> GroupSum["分组摘要 LLM · ceil(M/3)次\n每组≤3个来源"]
+        GroupSum --> FinalMerge["🔵 最终合并 LLM · 1次\n各组摘要合并为文档"]
+
+        DirectMerge --> TitleGen["🔵 标题摘要 LLM · 1次\n生成文档标题+摘要"]
+        FinalMerge --> TitleGen
+    end
+
+    TitleGen --> Refine
+
+    Refine["🔵 文档精炼 LLM · 1次\nSummaryAgent.refine_document()\n生成目录 + 核心要点"] --> Index
+
+    Index["📚 入库 + 触发索引\n_add_to_knowledge_base()\n_enqueue_index()\n0次LLM"] --> End(["✅ 完成\n文档已加入知识库"])
+
+    style Start fill:#4CAF50,color:#fff,stroke:#388E3C
+    style End fill:#4CAF50,color:#fff,stroke:#388E3C
+    style IntentLLM fill:#2196F3,color:#fff,stroke:#1565C0
+    style TaskLLM fill:#2196F3,color:#fff,stroke:#1565C0
+    style CleanLLM fill:#00BCD4,color:#fff,stroke:#00838F
+    style PhaseB fill:#FF9800,color:#fff,stroke:#E65100
+    style PerSource fill:#9C27B0,color:#fff,stroke:#6A1B9A
+    style DirectMerge fill:#9C27B0,color:#fff,stroke:#6A1B9A
+    style GroupSum fill:#9C27B0,color:#fff,stroke:#6A1B9A
+    style FinalMerge fill:#9C27B0,color:#fff,stroke:#6A1B9A
+    style TitleGen fill:#9C27B0,color:#fff,stroke:#6A1B9A
+    style Refine fill:#E91E63,color:#fff,stroke:#AD1457
+    style FirstRound fill:#FFF3E0,stroke:#FF9800
+    style TaskType fill:#FFF3E0,stroke:#FF9800
+    style DynamicCheck fill:#FFF3E0,stroke:#FF9800
+    style PhaseAResult fill:#FFF3E0,stroke:#FF9800
+    style PhaseBScore fill:#FFF3E0,stroke:#FF9800
+    style RetryDecision fill:#FFF3E0,stroke:#FF9800
+    style SourceCount fill:#FFF3E0,stroke:#FF9800
+    style DirectFail fill:#FFCDD2,stroke:#C62828
+    style QCFail fill:#FFCDD2,stroke:#C62828
