@@ -137,3 +137,21 @@ class RedisService:
 
     async def xdel(self, stream: str, *message_ids: str) -> int:
         return await self._redis.xdel(stream, *message_ids)
+
+    async def xpending_range(
+        self, stream: str, groupname: str,
+        min: str = "-", max: str = "+", count: int = 10,
+    ) -> list[dict]:
+        """获取 pending list 中的消息详情。"""
+        return await self._redis.xpending_range(stream, groupname, min=min, max=max, count=count)
+
+    async def xclaim(
+        self, stream: str, groupname: str, consumername: str,
+        min_idle_time: int, message_ids: list[str],
+    ) -> list[tuple[str, dict[str, str]]]:
+        """认领空闲超时的消息。"""
+        return await self._redis.xclaim(
+            stream, groupname, consumername,
+            min_idle_time=min_idle_time,
+            message_ids=message_ids,
+        )

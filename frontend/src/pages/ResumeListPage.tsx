@@ -25,6 +25,16 @@ export default function ResumeListPage() {
 
   useEffect(() => { fetchResumes(); }, []);
 
+  // 当有简历正在分析时，轮询刷新状态
+  const hasProcessing = resumes.some(r => r.analyze_status === 'PROCESSING' || r.analyze_status === 'PENDING');
+  useEffect(() => {
+    if (!hasProcessing) return;
+    const timer = setInterval(() => {
+      fetchResumes();
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [hasProcessing]);
+
   const handleDelete = async (id: number) => {
     if (!confirm('确定要删除这份简历吗？')) return;
     try {
