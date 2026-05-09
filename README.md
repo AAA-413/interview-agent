@@ -12,11 +12,12 @@
 ## 技术栈
 
 - **后端**：FastAPI + SQLAlchemy + PostgreSQL + Redis + LangChain
-- **前端**：React 18 + TypeScript + Ant Design
+- **前端**：React 18 + TypeScript + Tailwind CSS v4 + AntV G6
 - **AI**：DeepSeek（deepseek-chat）+ LangChain Structured Output
-- **Embedding**：阿里云百炼 text-embedding-v2（1536 维）/ 哈希降级
+- **Embedding**：智谱 Embedding-3（2048 维截断至 1536）/ DashScope / 哈希降级
 - **异步任务**：Redis Stream 消费者组模式（xreadgroup + xack）
-- **向量检索**：pgvector + Rerank 重排序
+- **向量检索**：pgvector + Rerank 重排序（BGE Reranker）
+- **知识图谱**：PostgreSQL 三元组表 + LLM 实体关系抽取 + GraphRAG 混合检索
 - **部署**：Docker Compose + Nginx + gunicorn/uvicorn
 
 ## 快速启动
@@ -56,7 +57,6 @@ npm run dev
 - 多格式解析（PDF、DOCX、DOC、TXT）
 - Redis Stream 异步简历分析，实时状态追踪
 - AI 评分报告（内容、结构、技能匹配、表达、项目五个维度）
-- 分析报告 PDF 导出
 
 ### 模拟面试
 
@@ -68,7 +68,6 @@ npm run dev
 - **六档评分体系**：空白(0-19) → 知道名词(20-39) → 知道定义(40-59) → 理解原理(60-74) → 能用能说清(75-89) → 深度掌控(90-100)
 - **知识库集成**：评估时从用户知识库检索相关知识点作为参考
 - 简历结构化提取（项目列表、技术栈、经验等级）
-- 面试评估报告 PDF 导出
 
 ### 知识库 RAG
 
@@ -76,6 +75,14 @@ npm run dev
 - 异步索引：PENDING → PROCESSING → COMPLETED / FAILED
 - pgvector 向量检索 + Rerank 重排序
 - SSE 流式问答接口
+
+### 知识图谱
+
+- PostgreSQL 三元组表存储实体-关系-实体结构
+- LLM 实体关系抽取（DeepSeek 自动从文档中提取技术/概念/工具/框架等实体及关系）
+- 新文档入库自动构建图谱（索引流程集成抽取，失败不影响主流程）
+- 前端 AntV G6 力导向图可视化，支持搜索高亮、类型筛选、实体详情侧栏
+- GraphRAG 混合检索（向量检索 + 图谱三元组遍历双通道并行）
 
 ### Agent 智能下载
 
@@ -95,6 +102,7 @@ python/
 │   │   ├── resume/          # 简历管理
 │   │   ├── interview/       # 模拟面试
 │   │   ├── knowledge_base/  # 知识库 RAG
+│   │   ├── knowledge_graph/ # 知识图谱（实体关系抽取 + GraphRAG）
 │   │   └── agent_orchestration/  # Agent 编排
 │   └── main.py              # 应用入口
 ├── frontend/                # React 前端
