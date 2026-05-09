@@ -3,6 +3,7 @@
 基于大语言模型的简历分析和模拟面试系统。
 
 前端页面展示
+<img width="2469" height="1175" alt="1b737b71-292e-4c7a-bd91-372ac7305278" src="https://github.com/user-attachments/assets/9e721530-91e3-4c20-8c75-f45eb09c9093" />
 <img width="1517" height="927" alt="回答分析" src="https://github.com/user-attachments/assets/feccdaaa-9a57-4199-824e-6111e413af12" />
 <img width="1896" height="1003" alt="知识库管理" src="https://github.com/user-attachments/assets/42611b51-78d2-4f00-82b6-ce42cb023610" />
 <img width="1835" height="761" alt="模拟面试" src="https://github.com/user-attachments/assets/f6d69b6e-8903-4645-8c64-b0326663d78d" />
