@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Loader2, AlertCircle, Download, Award, TrendingUp, Target, Clock3 } from 'lucide-react';
+import { ArrowLeft, Loader2, AlertCircle, Award, TrendingUp, Target, Clock3 } from 'lucide-react';
 import { interviewApi } from '../api/interview';
 import type { InterviewDetailDTO } from '../types/interview';
 
@@ -50,21 +50,6 @@ export default function InterviewDetailPage() {
     }
   };
 
-  const handleExport = async () => {
-    if (!sessionId) return;
-    try {
-      const blob = await interviewApi.exportPdf(sessionId);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `interview-report-${sessionId}.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : '导出失败');
-    }
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[50vh]">
@@ -103,13 +88,6 @@ export default function InterviewDetailPage() {
             {detail.created_at && <span>{new Date(detail.created_at).toLocaleDateString()}</span>}
           </div>
         </div>
-        <button
-          onClick={handleExport}
-          disabled={!hasReport}
-          className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <Download className="w-4 h-4" /> 导出PDF
-        </button>
       </div>
 
       {isEvaluating && (
