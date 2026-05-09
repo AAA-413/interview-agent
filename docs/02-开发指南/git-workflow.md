@@ -15,6 +15,84 @@ tags: [git, workflow, version-control]
 - 文档更新需要版本管理
 - 多人协作需要同步代码
 
+## 部署架构
+
+```
+本地开发 (Windows)  →  GitHub/Gitee (远程仓库)  →  腾讯云服务器 (生产环境)
+     ↑                        ↑                              ↑
+  git push origin main    代码托管                      git pull origin main
+```
+
+## 分支工作流
+
+### 核心原则
+
+- **main 分支**：永远是可运行的稳定版本，腾讯云服务器跑的就是 main
+- **功能/修复分支**：所有改动在分支上做，确认没问题再合并回 main
+- **分支命名规范**：`feat/功能名`（新功能）、`fix/问题名`（修 bug）、`docs/内容`（文档）
+
+### 分支示意图
+
+```
+main (稳定版，服务器部署)
+ ├── feat/smart-download       ← 新功能开发
+ ├── fix/quality-score-bug     ← 修 bug
+ └── docs/update-readme        ← 文档更新
+```
+
+### 日常开发流程（每次改代码前做一遍）
+
+```bash
+# 1. 确保在 main 上，拉最新
+git checkout main
+git pull origin main
+
+# 2. 创建分支，开始改代码
+git checkout -b fix/某个bug     # 修 bug
+# 或
+git checkout -b feat/某个功能   # 新功能
+
+# 3. 改完了，提交到分支
+git add 改动的文件
+git commit -m "fix: 修复xxx问题"
+
+# 4. 合并回 main
+git checkout main
+git merge fix/某个bug
+
+# 5. 推送到远程
+git push origin main
+git push github main    # 如果有多个远程
+
+# 6. 服务器部署
+# ssh 到腾讯云服务器
+git pull origin main
+# 重启服务
+
+# 7. 删掉已合并的分支（可选，保持整洁）
+git branch -d fix/某个bug
+```
+
+### 完整示例
+
+```bash
+# 开始：创建分支修复 quality_score 显示 0% 的 bug
+git checkout main
+git checkout -b fix/quality-score-display
+
+# 修改代码...
+git add frontend/src/pages/SmartDownloadPage.tsx
+git commit -m "fix: 修复 quality_score 显示 0% (null vs undefined)"
+
+# 测试通过，合并回 main
+git checkout main
+git merge fix/quality-score-display
+git push origin main
+
+# 清理分支
+git branch -d fix/quality-score-display
+```
+
 ## 标准工作流程
 
 ### 1. 查看当前状态
@@ -322,6 +400,97 @@ git push origin --delete <wrong-branch>
 git push origin <correct-branch>
 ```
 
+## 版本控制
+
+### 查看历史版本
+
+```bash
+# 查看提交历史（简洁版）
+git log --oneline
+
+# 查看带分支图的历史
+git log --oneline --graph -10
+
+# 查看某个文件的修改历史
+git log --oneline -- frontend/src/pages/SmartDownloadPage.tsx
+```
+
+### 切换到任意历史版本
+
+```bash
+# 切到某个 commit 看看（只读，不影响任何东西）
+git checkout 2de9f57
+
+# 看完了，回到最新
+git checkout main
+```
+
+### 撤销某次提交（安全方式）
+
+```bash
+# 撤销最近一次提交，生成一个新的"撤销提交"
+git revert HEAD
+
+# 撤销指定提交
+git revert 20d259c
+
+# 推送撤销结果
+git push origin main
+```
+
+### 给重要版本打标签
+
+```bash
+# 给当前版本打标签
+git tag v1.0
+
+# 给指定 commit 打标签
+git tag v1.0-beta 2de9f57
+
+# 推送标签到远程
+git push origin v1.0
+
+# 查看所有标签
+git tag -l
+
+# 切到某个标签版本
+git checkout v1.0
+```
+
+### 回退到某个版本（危险操作）
+
+```bash
+# 回退到上一个提交（保留文件修改，只撤销 commit）
+git reset --soft HEAD~1
+
+# 回退到上一个提交（丢弃所有改动，慎用）
+git reset --hard HEAD~1
+
+# 回退到指定提交（丢弃之后的所有改动，慎用）
+git reset --hard 2de9f57
+
+# 如果已经推送，需要强制推送（会覆盖远程历史，慎用）
+git push origin main --force
+```
+
+**注意**：`reset --hard` 和 `--force` 推送会丢失历史，优先用 `revert`。
+
+### 暂存当前工作（临时切走）
+
+```bash
+# 暂存当前未提交的修改
+git stash
+
+# 查看暂存列表
+git stash list
+
+# 恢复暂存
+git stash pop
+
+# 删除暂存
+git stash drop
+```
+
 ## 分支管理
 
 ### 创建分支
@@ -371,6 +540,29 @@ git push origin --delete <branch-name>
 ```
 
 ## 快速参考
+
+### 日常开发速查
+
+```bash
+# === 开始改代码 ===
+git checkout main && git pull origin main   # 切到 main 拉最新
+git checkout -b fix/xxx                     # 创建分支
+
+# === 提交改动 ===
+git add <file>                              # 暂存文件
+git commit -m "fix: 描述"                    # 提交
+
+# === 合并推送 ===
+git checkout main && git merge fix/xxx      # 合并回 main
+git push origin main                        # 推送到 GitHub/Gitee
+
+# === 版本控制 ===
+git log --oneline                           # 查看历史
+git checkout <hash>                         # 切到某个版本查看
+git checkout main                           # 回到最新
+git revert <hash>                           # 撤销某次提交（安全）
+git tag v1.0                                # 打标签
+```
 
 ### 常用命令速查
 
