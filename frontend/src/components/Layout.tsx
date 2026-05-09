@@ -1,11 +1,12 @@
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
-import { LogOut, FileText, MessageSquare, BarChart3, Upload, BookOpen, Database, Sparkles } from 'lucide-react';
+import { LogOut, FileText, MessageSquare, BarChart3, Upload, BookOpen, Database, Sparkles, Network } from 'lucide-react';
 import { authApi } from '../api/auth';
 
 const navItems = [
   { path: '/resumes', label: '简历管理', icon: FileText, gradient: 'from-blue-500 to-cyan-500' },
   { path: '/upload', label: '上传简历', icon: Upload, gradient: 'from-violet-500 to-purple-500' },
   { path: '/knowledgebases', label: '知识库管理', icon: Database, gradient: 'from-emerald-500 to-teal-500' },
+  { path: '/knowledge-graph', label: '知识图谱', icon: Network, gradient: 'from-violet-500 to-purple-500' },
   { path: '/knowledgebases/upload', label: '上传知识库', icon: BookOpen, gradient: 'from-amber-500 to-orange-500' },
   { path: '/interviews', label: '面试记录', icon: MessageSquare, gradient: 'from-pink-500 to-rose-500' },
   { path: '/interview-hub', label: '开始面试', icon: BarChart3, gradient: 'from-indigo-500 to-blue-500' },

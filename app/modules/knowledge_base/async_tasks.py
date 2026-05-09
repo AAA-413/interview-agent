@@ -52,3 +52,11 @@ class KnowledgeBaseIndexTaskHandler(StreamTaskHandler):
         chunk_entities = knowledge_base_vector_service.to_entities(chunks)
         await knowledge_base_persistence_service.save_chunks(db, kb_id, chunk_entities)
         logger.info("知识库索引完成: knowledgeBaseId=%d, chunks=%d", kb_id, len(chunk_entities))
+
+        # 知识图谱抽取（失败不影响主流程）
+        try:
+            from app.modules.knowledge_graph.extraction_service import knowledge_graph_extraction_service
+            await knowledge_graph_extraction_service.extract_and_save(db, kb_id, entity.source_text)
+            logger.info("知识图谱抽取完成: knowledgeBaseId=%d", kb_id)
+        except Exception as e:
+            logger.warning("知识图谱抽取失败（不影响主索引）: knowledgeBaseId=%d, error=%s", kb_id, e)

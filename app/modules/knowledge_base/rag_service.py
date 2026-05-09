@@ -82,8 +82,10 @@ class KnowledgeBaseRagService:
             # 初始化多路检索引擎（如果尚未初始化）
             if self.retrieval_engine is None:
                 vector_channel = VectorSearchChannel(self, knowledge_base_vector_service, db)
-                self.retrieval_engine = MultiChannelRetrievalEngine([vector_channel])
-                logger.info("多路检索引擎初始化: channels=1")
+                from app.modules.knowledge_graph.graph_search_channel import GraphSearchChannel
+                graph_channel = GraphSearchChannel(db)
+                self.retrieval_engine = MultiChannelRetrievalEngine([vector_channel, graph_channel])
+                logger.info("多路检索引擎初始化: channels=2 (Vector + Graph)")
 
             # 使用多路检索引擎
             query_embedding = knowledge_base_vector_service.embed_text(rewritten_query)
@@ -149,7 +151,9 @@ class KnowledgeBaseRagService:
         try:
             if self.retrieval_engine is None:
                 vector_channel = VectorSearchChannel(self, knowledge_base_vector_service, db)
-                self.retrieval_engine = MultiChannelRetrievalEngine([vector_channel])
+                from app.modules.knowledge_graph.graph_search_channel import GraphSearchChannel
+                graph_channel = GraphSearchChannel(db)
+                self.retrieval_engine = MultiChannelRetrievalEngine([vector_channel, graph_channel])
 
             query_embedding = knowledge_base_vector_service.embed_text(rewritten_query)
             context = SearchContext(

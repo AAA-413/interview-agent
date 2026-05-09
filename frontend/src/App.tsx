@@ -16,6 +16,7 @@ const KnowledgeBaseListPage = lazy(() => import('./pages/KnowledgeBaseListPage')
 const KnowledgeBaseDetailPage = lazy(() => import('./pages/KnowledgeBaseDetailPage'));
 const KnowledgeBaseUploadPage = lazy(() => import('./pages/KnowledgeBaseUploadPage'));
 const SmartDownloadPage = lazy(() => import('./pages/SmartDownloadPage'));
+const KnowledgeGraphPage = lazy(() => import('./pages/KnowledgeGraphPage'));
 
 const Loading = () => (
   <div className="flex items-center justify-center min-h-[50vh]">
@@ -37,6 +38,7 @@ export default function App() {
             <Route path="knowledgebases" element={<KnowledgeBaseListPage />} />
             <Route path="knowledgebases/upload" element={<KnowledgeBaseUploadPage />} />
             <Route path="knowledgebases/smart-download" element={<SmartDownloadPage />} />
+            <Route path="knowledge-graph" element={<KnowledgeGraphPage />} />
             <Route path="knowledgebases/:kbId" element={<KnowledgeBaseDetailPage />} />
             <Route path="interviews" element={<InterviewHistoryPage />} />
             <Route path="interviews/:sessionId" element={<InterviewDetailPage />} />
