@@ -18,9 +18,17 @@ tags: [git, workflow, version-control]
 ## 部署架构
 
 ```
-本地开发 (Windows)  →  GitHub/Gitee (远程仓库)  →  腾讯云服务器 (生产环境)
-     ↑                        ↑                              ↑
-  git push origin main    代码托管                      git pull origin main
+本地开发 (Windows)              GitHub/Gitee (远程仓库)           腾讯云服务器 (生产环境)
+     │                              │                                  │
+     │ git push origin main         │                                  │
+     │ ─────────────────────────►   │                                  │
+     │                              │   git fetch origin               │
+     │                              │ ◄────────────────────────────────│
+     │                              │   git checkout v1.0 (切特定版本) │
+     │                              │                                  │
+     │ git tag v1.0                 │                                  │
+     │ git push origin v1.0         │                                  │
+     │ ─────────────────────────►   │                                  │
 ```
 
 ## 分支工作流
@@ -60,17 +68,54 @@ git commit -m "fix: 修复xxx问题"
 git checkout main
 git merge fix/某个bug
 
-# 5. 推送到远程
+# 5. 推送到远程（两个远程都要推）
 git push origin main
-git push github main    # 如果有多个远程
+git push github main
 
-# 6. 服务器部署
-# ssh 到腾讯云服务器
-git pull origin main
-# 重启服务
+# 6. 推送分支到远程（备份，方便回溯）
+git push origin fix/某个bug
 
-# 7. 删掉已合并的分支（可选，保持整洁）
+# 7. 删掉已合并的本地分支（可选，保持整洁）
 git branch -d fix/某个bug
+```
+
+### 发布版本（重要功能上线后打标签）
+
+```bash
+# 当 main 上的功能稳定后，打标签标记版本
+git tag -a v1.1 -m "v1.1: 新增xxx功能"
+
+# 推送标签到远程
+git push origin v1.1
+git push github v1.1
+
+# 查看所有标签
+git tag -l
+```
+
+### 服务器部署
+
+```bash
+# ssh 到腾讯云服务器
+ssh root@你的服务器IP
+cd /path/to/project
+
+# 拉取最新代码和标签
+git fetch origin
+
+# === 方式1：部署最新版（日常更新）===
+git checkout main
+git pull origin main
+
+# === 方式2：部署特定版本（回退或指定版本）===
+git checkout v1.0          # 用标签切到 v1.0
+git checkout 20d259c       # 用 commit hash 切到某次提交
+
+# 重启服务...
+
+# === 想回到最新版 ===
+git checkout main
+git pull origin main
 ```
 
 ### 完整示例
@@ -88,8 +133,22 @@ git commit -m "fix: 修复 quality_score 显示 0% (null vs undefined)"
 git checkout main
 git merge fix/quality-score-display
 git push origin main
+git push github main
 
-# 清理分支
+# 推送分支到远程（备份）
+git push origin fix/quality-score-display
+
+# 功能稳定后，打标签
+git tag -a v1.0.1 -m "v1.0.1: 修复 quality_score 显示"
+git push origin v1.0.1
+
+# 服务器部署
+# ssh 到服务器
+git fetch origin
+git checkout v1.0.1
+# 重启服务
+
+# 清理本地分支
 git branch -d fix/quality-score-display
 ```
 
@@ -554,14 +613,23 @@ git commit -m "fix: 描述"                    # 提交
 
 # === 合并推送 ===
 git checkout main && git merge fix/xxx      # 合并回 main
-git push origin main                        # 推送到 GitHub/Gitee
+git push origin main && git push github main  # 推送到两个远程
+
+# === 发布版本 ===
+git tag -a v1.1 -m "v1.1: 描述"             # 打标签
+git push origin v1.1 && git push github v1.1  # 推送标签
+
+# === 服务器部署 ===
+git fetch origin                            # 拉取远程最新（含标签）
+git checkout main && git pull origin main   # 部署最新版
+git checkout v1.0                           # 或部署特定版本
 
 # === 版本控制 ===
 git log --oneline                           # 查看历史
+git tag -l                                  # 查看所有标签
 git checkout <hash>                         # 切到某个版本查看
 git checkout main                           # 回到最新
 git revert <hash>                           # 撤销某次提交（安全）
-git tag v1.0                                # 打标签
 ```
 
 ### 常用命令速查
@@ -612,9 +680,11 @@ EOF
 
 1. **推送前必须测试**：确保代码可运行
 2. **避免强制推送**：除非确实需要重写历史
-3. **保护主分支**：重要修改应通过 PR 合并
-4. **定期同步**：及时拉取远程更新避免冲突
-5. **清晰的提交信息**：方便后续追溯和回滚
+3. **保护主分支**：所有改动在分支上做，确认没问题再合并回 main
+4. **两个远程都要推**：`git push origin main` 和 `git push github main`
+5. **重要功能上线后打标签**：方便服务器回退到任意版本
+6. **服务器用 `git fetch` + `git checkout tag`**：比 `git pull` 更精确可控
+7. **清晰的提交信息**：方便后续追溯和回滚
 
 ## 相关文档
 
