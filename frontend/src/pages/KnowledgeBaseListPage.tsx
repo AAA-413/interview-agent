@@ -12,9 +12,11 @@ import {
   Upload,
   Link as LinkIcon,
   Sparkles,
+  MessageSquare,
 } from 'lucide-react';
 import { knowledgeBaseApi } from '../api/knowledgeBase';
 import type { AsyncTaskStatus, KnowledgeBaseListItemDTO } from '../types/knowledgeBase';
+import CrossKBChatDrawer from '../components/CrossKBChatDrawer';
 
 const statusMap: Record<AsyncTaskStatus, { label: string; color: string; bgColor: string; icon: string }> = {
   PENDING: { label: '待索引', color: 'text-amber-700', bgColor: 'bg-amber-50 border-amber-200', icon: '⏳' },
@@ -30,6 +32,7 @@ export default function KnowledgeBaseListPage() {
   const [items, setItems] = useState<KnowledgeBaseListItemDTO[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [crossChatOpen, setCrossChatOpen] = useState(false);
 
   const fetchList = async (showLoading = true) => {
     if (showLoading) {
@@ -117,6 +120,16 @@ export default function KnowledgeBaseListPage() {
           </div>
         </div>
         <div className="flex gap-3">
+          <button
+            onClick={() => setCrossChatOpen(true)}
+            className="group relative px-6 py-3 bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-500 text-white rounded-xl font-medium shadow-lg shadow-emerald-500/30 hover:shadow-xl hover:shadow-emerald-500/40 transition-all duration-300 hover:scale-105"
+          >
+            <div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent rounded-xl opacity-0 group-hover:opacity-100 transition-opacity" />
+            <div className="relative flex items-center gap-2">
+              <MessageSquare className="w-4 h-4" />
+              跨知识库问答
+            </div>
+          </button>
           <button
             onClick={() => navigate('/knowledgebases/smart-download')}
             className="group relative px-6 py-3 bg-gradient-to-r from-purple-600 via-purple-500 to-indigo-500 text-white rounded-xl font-medium shadow-lg shadow-purple-500/30 hover:shadow-xl hover:shadow-purple-500/40 transition-all duration-300 hover:scale-105"
@@ -244,6 +257,8 @@ export default function KnowledgeBaseListPage() {
           })}
         </div>
       )}
+
+      <CrossKBChatDrawer open={crossChatOpen} onClose={() => setCrossChatOpen(false)} />
     </div>
   );
 }

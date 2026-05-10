@@ -9,7 +9,6 @@ import {
   MessageSquare,
   ChevronDown,
   ChevronUp,
-  AlertCircle,
   Trash2,
 } from 'lucide-react';
 import { knowledgeBaseApi } from '../api/knowledgeBase';
@@ -29,13 +28,11 @@ interface SessionGroup {
 }
 
 interface Props {
-  kbId: number;
   open: boolean;
   onClose: () => void;
-  initialSessionId?: string | null;
 }
 
-export default function RagChatDrawer({ kbId, open, onClose, initialSessionId }: Props) {
+export default function CrossKBChatDrawer({ open, onClose }: Props) {
   const [sessions, setSessions] = useState<SessionGroup[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -52,11 +49,10 @@ export default function RagChatDrawer({ kbId, open, onClose, initialSessionId }:
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
-  // Load session list
   const loadSessions = useCallback(async () => {
     setLoadingSessions(true);
     try {
-      const chats = await knowledgeBaseApi.listChats(kbId);
+      const chats = await knowledgeBaseApi.listCrossKBChats();
       const grouped: SessionGroup[] = [];
       const seen = new Set<string>();
       for (const chat of chats) {
@@ -75,57 +71,48 @@ export default function RagChatDrawer({ kbId, open, onClose, initialSessionId }:
     } finally {
       setLoadingSessions(false);
     }
-  }, [kbId]);
+  }, []);
 
-  // Load chat history for a session
-  const loadSessionHistory = useCallback(
-    async (sessionId: string) => {
-      setLoadingHistory(true);
-      setMessages([]);
-      try {
-        const chats = await knowledgeBaseApi.getKBSessionHistory(kbId, sessionId);
-        const msgs: Message[] = [];
-        for (const chat of chats) {
-          msgs.push({ role: 'user', content: chat.question, timestamp: chat.created_at });
-          if (chat.answer) {
-            msgs.push({
-              role: 'assistant',
-              content: chat.answer,
-              references: chat.references,
-              timestamp: chat.created_at,
-            });
-          }
+  const loadSessionHistory = useCallback(async (sessionId: string) => {
+    setLoadingHistory(true);
+    setMessages([]);
+    try {
+      const chats = await knowledgeBaseApi.getCrossKBSessionHistory(sessionId);
+      const msgs: Message[] = [];
+      for (const chat of chats) {
+        msgs.push({ role: 'user', content: chat.question, timestamp: chat.created_at });
+        if (chat.answer) {
+          msgs.push({
+            role: 'assistant',
+            content: chat.answer,
+            references: chat.references,
+            timestamp: chat.created_at,
+          });
         }
-        setMessages(msgs);
-      } catch {
-        // silent
-      } finally {
-        setLoadingHistory(false);
       }
-    },
-    [kbId],
-  );
+      setMessages(msgs);
+    } catch {
+      // silent
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, []);
 
-  // Open drawer effect
   useEffect(() => {
     if (open) {
       void loadSessions();
-      if (initialSessionId) {
-        setCurrentSessionId(initialSessionId);
-        void loadSessionHistory(initialSessionId);
-      } else {
-        setCurrentSessionId(null);
-        setMessages([]);
-      }
+      setCurrentSessionId(null);
+      setMessages([]);
+      setStreamedContent('');
+      setStreamedRefs([]);
+      setTimeout(() => inputRef.current?.focus(), 100);
     }
-  }, [open, initialSessionId, loadSessions, loadSessionHistory]);
+  }, [open, loadSessions]);
 
-  // Scroll to bottom when messages change
   useEffect(() => {
     scrollToBottom();
   }, [messages, streamedContent, scrollToBottom]);
 
-  // Focus input when not streaming
   useEffect(() => {
     if (open && !streaming) {
       inputRef.current?.focus();
@@ -150,7 +137,7 @@ export default function RagChatDrawer({ kbId, open, onClose, initialSessionId }:
   const handleDeleteSession = async (sessionId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await knowledgeBaseApi.deleteKBSession(kbId, sessionId);
+      await knowledgeBaseApi.deleteCrossKBSession(sessionId);
       setSessions((prev) => prev.filter((s) => s.session_id !== sessionId));
       if (currentSessionId === sessionId) {
         setCurrentSessionId(null);
@@ -173,8 +160,7 @@ export default function RagChatDrawer({ kbId, open, onClose, initialSessionId }:
     setStreamedRefs([]);
 
     try {
-      await knowledgeBaseApi.streamKnowledgeBaseAnswer(
-        kbId,
+      await knowledgeBaseApi.streamCrossKBAnswer(
         { question: q, session_id: currentSessionId, top_k: 4 },
         {
           onMeta: (data) => {
@@ -231,16 +217,15 @@ export default function RagChatDrawer({ kbId, open, onClose, initialSessionId }:
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
-      {/* Backdrop */}
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
 
-      {/* Drawer */}
       <div className="relative w-full max-w-5xl bg-white shadow-2xl flex flex-col animate-slide-in-right">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
           <div className="flex items-center gap-2">
-            <MessageSquare className="w-5 h-5 text-primary-500" />
-            <h2 className="text-lg font-semibold text-slate-900">知识库问答</h2>
+            <MessageSquare className="w-5 h-5 text-emerald-500" />
+            <h2 className="text-lg font-semibold text-slate-900">跨知识库问答</h2>
+            <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">搜索所有知识库</span>
           </div>
           <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg">
             <X className="w-5 h-5" />
@@ -253,7 +238,7 @@ export default function RagChatDrawer({ kbId, open, onClose, initialSessionId }:
             <div className="p-3">
               <button
                 onClick={handleNewChat}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-primary-500 text-white rounded-xl hover:bg-primary-600 text-sm"
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 text-sm"
               >
                 <Plus className="w-4 h-4" /> 新建对话
               </button>
@@ -271,7 +256,7 @@ export default function RagChatDrawer({ kbId, open, onClose, initialSessionId }:
                     key={s.session_id}
                     className={`group relative w-full text-left px-3 py-2.5 rounded-xl text-sm transition-colors cursor-pointer ${
                       currentSessionId === s.session_id
-                        ? 'bg-primary-50 text-primary-700 border border-primary-200'
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                         : 'text-slate-600 hover:bg-slate-100'
                     }`}
                     onClick={() => handleSelectSession(s.session_id)}
@@ -302,7 +287,7 @@ export default function RagChatDrawer({ kbId, open, onClose, initialSessionId }:
               ) : messages.length === 0 && !streamedContent ? (
                 <div className="flex flex-col items-center justify-center py-12 text-slate-400">
                   <MessageSquare className="w-12 h-12 mb-3" />
-                  <p className="text-sm">输入问题开始对话</p>
+                  <p className="text-sm">输入问题，将从所有知识库中检索回答</p>
                 </div>
               ) : (
                 <>
@@ -336,13 +321,13 @@ export default function RagChatDrawer({ kbId, open, onClose, initialSessionId }:
                   placeholder="输入问题... (Enter 发送, Shift+Enter 换行)"
                   rows={1}
                   disabled={streaming}
-                  className="flex-1 px-4 py-3 rounded-xl border border-slate-200 outline-none focus:border-primary-400 resize-none disabled:bg-slate-50 text-sm"
+                  className="flex-1 px-4 py-3 rounded-xl border border-slate-200 outline-none focus:border-emerald-400 resize-none disabled:bg-slate-50 text-sm"
                   style={{ maxHeight: '120px' }}
                 />
                 <button
                   onClick={() => void handleSend()}
                   disabled={!input.trim() || streaming}
-                  className="flex items-center justify-center w-11 h-11 bg-primary-500 text-white rounded-xl hover:bg-primary-600 disabled:bg-slate-300 disabled:cursor-not-allowed flex-shrink-0"
+                  className="flex items-center justify-center w-11 h-11 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 disabled:bg-slate-300 disabled:cursor-not-allowed flex-shrink-0"
                 >
                   {streaming ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
                 </button>
@@ -365,7 +350,7 @@ function ChatMessage({ message, isStreaming = false }: { message: Message; isStr
         <div
           className={`rounded-2xl px-4 py-3 text-sm leading-7 ${
             isUser
-              ? 'bg-primary-500 text-white'
+              ? 'bg-emerald-500 text-white'
               : 'bg-slate-100 text-slate-800'
           }`}
         >
@@ -394,8 +379,8 @@ function ChatMessage({ message, isStreaming = false }: { message: Message; isStr
                 {message.references.map((ref, idx) => (
                   <div key={`${ref.chunk_id}-${ref.chunk_index}`} className="rounded-lg border border-slate-200 p-3 bg-white text-xs">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="font-medium text-primary-600">
-                        [{idx + 1}] {ref.source_name && <span className="text-slate-400">{ref.source_name}</span>}
+                      <span className="font-medium text-emerald-600">
+                        [{idx + 1}] {ref.source_name && <span className="text-slate-500">{ref.source_name}</span>}
                         {ref.source_name && ref.title ? ' / ' : ''}
                         {ref.title || ''}
                       </span>

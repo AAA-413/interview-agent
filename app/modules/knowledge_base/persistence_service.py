@@ -142,6 +142,94 @@ class KnowledgeBasePersistenceService(BasePersistenceService[KnowledgeBaseEntity
         )
         return list(result.scalars().all())
 
+    async def create_cross_kb_chat(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        session_id: str,
+        question: str,
+        rewritten_query: str | None = None,
+    ) -> RagChatEntity:
+        entity = RagChatEntity(
+            knowledge_base_id=None,
+            user_id=user_id,
+            session_id=session_id,
+            question=question,
+            rewritten_query=rewritten_query,
+            status=RagChatStatus.PENDING,
+        )
+        db.add(entity)
+        await db.flush()
+        return entity
+
+    async def find_user_cross_kb_chats(self, db: AsyncSession, user_id: int, limit: int = 20) -> list[RagChatEntity]:
+        result = await db.execute(
+            select(RagChatEntity)
+            .where(RagChatEntity.user_id == user_id)
+            .where(RagChatEntity.knowledge_base_id.is_(None))
+            .order_by(RagChatEntity.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def find_cross_kb_session_chats(self, db: AsyncSession, user_id: int, session_id: str, limit: int = 10) -> list[RagChatEntity]:
+        result = await db.execute(
+            select(RagChatEntity)
+            .where(RagChatEntity.user_id == user_id)
+            .where(RagChatEntity.knowledge_base_id.is_(None))
+            .where(RagChatEntity.session_id == session_id)
+            .where(RagChatEntity.status == RagChatStatus.COMPLETED)
+            .order_by(RagChatEntity.created_at.asc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def find_cross_kb_session_chat_dtos(self, db: AsyncSession, user_id: int, session_id: str, limit: int = 20) -> list[RagChatDTO]:
+        """返回跨KB会话的完整聊天记录（含 answer + references）"""
+        entities = await self.find_cross_kb_session_chats(db, user_id, session_id, limit)
+        return [self._to_chat_dto(e) for e in entities]
+
+    async def delete_cross_kb_session(self, db: AsyncSession, user_id: int, session_id: str) -> int:
+        """删除跨KB会话的所有聊天记录，返回删除条数"""
+        from sqlalchemy import delete as sa_delete
+        result = await db.execute(
+            sa_delete(RagChatEntity)
+            .where(RagChatEntity.user_id == user_id)
+            .where(RagChatEntity.knowledge_base_id.is_(None))
+            .where(RagChatEntity.session_id == session_id)
+        )
+        await db.flush()
+        return result.rowcount
+
+    async def find_kb_session_chats(self, db: AsyncSession, kb_id: int, session_id: str, limit: int = 10) -> list[RagChatEntity]:
+        """返回单KB会话的完整聊天记录"""
+        result = await db.execute(
+            select(RagChatEntity)
+            .where(RagChatEntity.knowledge_base_id == kb_id)
+            .where(RagChatEntity.session_id == session_id)
+            .where(RagChatEntity.status == RagChatStatus.COMPLETED)
+            .order_by(RagChatEntity.created_at.asc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def find_kb_session_chat_dtos(self, db: AsyncSession, kb_id: int, session_id: str, limit: int = 20) -> list[RagChatDTO]:
+        """返回单KB会话的完整聊天记录（含 answer + references）"""
+        entities = await self.find_kb_session_chats(db, kb_id, session_id, limit)
+        return [self._to_chat_dto(e) for e in entities]
+
+    async def delete_kb_session(self, db: AsyncSession, kb_id: int, session_id: str) -> int:
+        """删除单KB会话的所有聊天记录，返回删除条数"""
+        from sqlalchemy import delete as sa_delete
+        result = await db.execute(
+            sa_delete(RagChatEntity)
+            .where(RagChatEntity.knowledge_base_id == kb_id)
+            .where(RagChatEntity.session_id == session_id)
+        )
+        await db.flush()
+        return result.rowcount
+
     def to_list_item_dto(self, entity: KnowledgeBaseEntity) -> KnowledgeBaseListItemDTO:
         return KnowledgeBaseListItemDTO(
             id=entity.id,

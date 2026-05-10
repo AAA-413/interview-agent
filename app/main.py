@@ -199,6 +199,7 @@ def _register_routers(app: FastAPI) -> None:
     from app.modules.interview.skill_router import router as skill_router
     from app.modules.knowledge_base.router import router as kb_router
     from app.modules.knowledge_base.rag_router import router as rag_router
+    from app.modules.knowledge_base.cross_kb_router import router as cross_kb_router
     from app.modules.agent_orchestration.router import router as agent_router
     from app.modules.agent_orchestration.smart_download_router import router as smart_download_router
     from app.modules.knowledge_graph.router import router as kg_router
@@ -209,6 +210,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(skill_router, prefix="/api/interview/skills", tags=["面试方向"])
     app.include_router(kb_router, prefix="/api/knowledgebase", tags=["知识库管理"])
     app.include_router(rag_router, prefix="/api/knowledgebase", tags=["知识库问答"])
+    app.include_router(cross_kb_router, prefix="/api/cross-knowledgebase", tags=["跨知识库问答"])
     app.include_router(kg_router, prefix="/api/knowledge-graph", tags=["知识图谱"])
     app.include_router(agent_router, tags=["智能Agent"])
     app.include_router(smart_download_router, tags=["智能下载"])

@@ -35,3 +35,6 @@ TEST_BG.txt
 .env.prod
 docker-compose.infra.yml
 DEPLOY_SERVER.md
+
+# Stray files
+-w

@@ -1,0 +1,1376 @@
+{
+  "generated_at": "2026-05-10T12:20:00.761301",
+  "user_id": 1,
+  "total_questions": 74,
+  "kb_count": 15,
+  "samples_per_kb": 5,
+  "questions": [
+    {
+      "id": "q_001",
+      "question": "心理学中认为的“帅”是由哪些核心维度决定的？",
+      "question_type": "factual",
+      "key_terms": [
+        "帅",
+        "社会知觉",
+        "社交吸引力",
+        "核心维度"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 102,
+        "kb_id": 29,
+        "kb_name": "《魅力：影响他人的科学》（Vanessa Van Edwards） - 知识库",
+        "chunk_title": "# 为什么“罗哥这么帅”？——基于心理学实证的吸引力科学解析（3000字精要版）",
+        "chunk_content_preview": "# 为什么“罗哥这么帅”？——基于心理学实证的吸引力科学解析（3000字精要版）\n\n> **说明**：本文件并非赞美个体，而是以“罗哥”为认知锚点，系统解构“被感知为帅气”背后可观察、可理解、可习得的心理学机制。所有结论均严格整合自 *Psychology Today*（2020–2024）与 *Verywell Mind*（2019–2023）发布的、由临床心理学家或社会认知研究者撰写的**经同行评议或实证验证的科普文献**，剔除玄学、刻板印象与商业话术，聚焦“社会知觉如何生成‘帅’这一综合判断”。\n\n---\n\n## 一、“帅”不是主观幻觉，而是三维社会知觉的客观输出\n\n日常所说的“帅”，在"
+      }
+    },
+    {
+      "id": "q_002",
+      "question": "根据研究，一个人被认为“帅”或吸引人的核心原因是什么？",
+      "question_type": "conceptual",
+      "key_terms": [
+        "吸引力",
+        "温暖性",
+        "能力感",
+        "同步性"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 103,
+        "kb_id": 29,
+        "kb_name": "《魅力：影响他人的科学》（Vanessa Van Edwards） - 知识库",
+        "chunk_title": "与他合作/信任他”的内在动机。权威研究（Fiske et al., 2007; Cuddy et al., 2018）证实，这种吸引力**并非由单一特征（如五官",
+        "chunk_content_preview": "与他合作/信任他”的内在动机。权威研究（Fiske et al., 2007; Cuddy et al., 2018）证实，这种吸引力**并非由单一特征（如五官、身高）决定，而是大脑在毫秒级内对三个核心维度进行快速评估后的加权结果**：\n\n| 维度 | 心理学名称 | 占比权重 | 关键作用 | 常见误解 |\n|--------|-------------|------------|------------|------------|\n| **温暖性（Warmth）** | Perceived warmth | **65%** | 触发安全信号、降低防御、开启共情通道 | ≠ “好说话”或“没"
+      }
+    },
+    {
+      "id": "q_003",
+      "question": "根据心理学中的外观管理理论，着装不一致会如何影响他人对你的可信度感知？",
+      "question_type": "factual",
+      "key_terms": [
+        "外观管理",
+        "着装一致性",
+        "可信度",
+        "认知失调"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 105,
+        "kb_id": 29,
+        "kb_name": "《魅力：影响他人的科学》（Vanessa Van Edwards） - 知识库",
+        "chunk_title": "穿出“身份清晰度”，而非“视觉冲击力”",
+        "chunk_content_preview": "穿出“身份清晰度”，而非“视觉冲击力”\n\n心理学中的外观管理（Appearance Management）核心目标是**减少认知负荷，加速他人对你角色与意图的准确归类**。混乱的着装会触发大脑的“不确定性警报”，削弱温暖与能力双重感知。\n\n```markdown\n- ✅ 一致性法则（Congruence Rule）：\n• 着装风格 ≡ 职业身份 + 场合目标 + 个人核心特质\n• 示例：\n- 医疗咨询师穿破洞牛仔裤 → 认知失调 → 温暖性↑但能力感↓（Verywell Mind, 2020）\n- 技术负责人穿全黑机能风出席客户信任会议 → 能力感↑但温暖性↓（Psychology Today"
+      }
+    },
+    {
+      "id": "q_004",
+      "question": "在关系深化中，如何通过自我表露和能力表达来维持‘帅’的持久性？",
+      "question_type": "procedural",
+      "key_terms": [
+        "战略性自我表露",
+        "能力表达的谦抑平衡",
+        "脆弱锚点",
+        "温暖前置"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 106,
+        "kb_id": 29,
+        "kb_name": "《魅力：影响他人的科学》（Vanessa Van Edwards） - 知识库",
+        "chunk_title": "“帅”的持久性，取决于能否在关系深化中持续提供安全感与价值感。关键在于**战略性自我表露（Strategic Self-Disclosure）** 与**能力表",
+        "chunk_content_preview": "“帅”的持久性，取决于能否在关系深化中持续提供安全感与价值感。关键在于**战略性自我表露（Strategic Self-Disclosure）** 与**能力表达的谦抑平衡（Humble Competence Framing）**。\n\n```markdown\n- ✅ 首次互动的“脆弱锚点”（Vulnerability Anchor）：\n• 分享1个**真实、可控、非创伤性**的成长中状态：\n“我正在系统梳理用户反馈的归因逻辑”\n“最近在练习把技术方案讲得更让业务方听得懂”\n• ✅ 不说：“我从不出错” / “这很简单”\n→ Psychology Today (2023)：触发互惠规范（reci"
+      }
+    },
+    {
+      "id": "q_005",
+      "question": "根据这个7天启动计划，第一天和第二天分别需要练习什么内容？",
+      "question_type": "relational",
+      "key_terms": [
+        "7天启动计划",
+        "姿态校准",
+        "微笑训练"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 108,
+        "kb_id": 29,
+        "kb_name": "《魅力：影响他人的科学》（Vanessa Van Edwards） - 知识库",
+        "chunk_title": "—它包含可测量的身体语言、可设计的外观策略、可编程的语言框架。这是一种**可迁移、可训练、可迭代的社交智能（Social Intelligence）**，而非神",
+        "chunk_content_preview": "—它包含可测量的身体语言、可设计的外观策略、可编程的语言框架。这是一种**可迁移、可训练、可迭代的社交智能（Social Intelligence）**，而非神秘天赋。\n\n---\n\n## 四、给想成为“罗哥”的你的行动清单（7天启动版）\n\n| 天数 | 聚焦维度 | 具体行动（≤5分钟/天） | 验证方式 |\n|--------|------------|--------------------------|------------|\n| **Day 1** | 姿态校准 | 对镜练习“开放站姿”2分钟 + “手掌可见坐姿”3分钟 | 拍摄10秒视频，检查双臂是否自然、手掌是否偶现 |\n| *"
+      }
+    },
+    {
+      "id": "q_006",
+      "question": "在Python中，async和await这两个关键字的主要作用是什么？它们与多线程和多进程有什么不同？",
+      "question_type": "conceptual",
+      "key_terms": [
+        "async",
+        "await",
+        "协程",
+        "并发"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 110,
+        "kb_id": 24,
+        "kb_name": "async/await 简明指南",
+        "chunk_title": "# Python `async`/`await` 简明指南（基于 asyncio 官方文档）",
+        "chunk_content_preview": "# Python `async`/`await` 简明指南（基于 asyncio 官方文档）\n\n> ✅ 本文严格依据 [Python 3.14.4 官方文档 `asyncio` 模块](https://docs.python.org/3/library/asyncio.html)，提炼核心概念，聚焦实践本质，全文约 1800 字。\n\n---\n\n## 一、什么是 `async`/`await`？\n\n`async` 和 `await` 是 Python 的**原生语法关键字**（自 Python 3.5 起引入），用于声明和调用 **协程（coroutine）** —— 一种可暂停、可恢复的特殊函"
+      }
+    },
+    {
+      "id": "q_007",
+      "question": "在Python的asyncio中，定义协程函数时有哪些规则？",
+      "question_type": "factual",
+      "key_terms": [
+        "async def",
+        "await",
+        "协程对象",
+        "事件循环"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 111,
+        "kb_id": 24,
+        "kb_name": "async/await 简明指南",
+        "chunk_title": "不能用 `def` + `await`；",
+        "chunk_content_preview": "不能用 `def` + `await`；\n- 函数体中至少包含一个 `await` 表达式（否则警告 `RuntimeWarning`）；\n- 调用后返回一个 **协程对象（coroutine object）**，**不会立即执行**。\n\n### 2. 暂停执行：`await`\n```python\nresult = await fetch_data(\"https://httpbin.org/get\")\n```\n- `await` 只能在 `async def` 函数内部使用；\n- 后接**可等待对象（awaitable）**：协程对象、`asyncio.Task`、`asyncio.Futur"
+      }
+    },
+    {
+      "id": "q_008",
+      "question": "在 asyncio 中，如何并发执行多个协程并等待它们全部完成？",
+      "question_type": "procedural",
+      "key_terms": [
+        "asyncio",
+        "并发执行",
+        "asyncio.gather",
+        "协程"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 112,
+        "kb_id": 24,
+        "kb_name": "async/await 简明指南",
+        "chunk_title": "coro 或 asyncio.run(coro)",
+        "chunk_content_preview": "coro 或 asyncio.run(coro)\n```\n\n---\n\n## 三、运行协程：事件循环（Event Loop）\n\n`asyncio` 的核心是 **事件循环（event loop）** —— 协程的“调度器”与“执行引擎”。\n\n### 关键 API：\n| 函数 | 说明 | 推荐场景 |\n|------|------|----------|\n| `asyncio.run(coro)` | **最简启动方式**：创建新事件循环 → 运行协程 → 关闭循环 | ✅ 脚本入口、主程序唯一调用点（每个程序仅一次） |\n| `loop = asyncio.get_event_loop()` "
+      }
+    },
+    {
+      "id": "q_009",
+      "question": "在异步编程中，如果必须调用一个没有异步版本的同步数据库查询函数，应该如何避免阻塞事件循环？",
+      "question_type": "procedural",
+      "key_terms": [
+        "同步函数",
+        "阻塞事件循环",
+        "run_in_executor",
+        "异步适配"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 114,
+        "kb_id": 24,
+        "kb_name": "async/await 简明指南",
+        "chunk_title": "utures.ProcessPoolExecutor`；",
+        "chunk_content_preview": "utures.ProcessPoolExecutor`；\n- **遗留同步库无异步适配**：强行 `await` 同步函数会阻塞整个事件循环（需 `loop.run_in_executor` 包装）。\n\n---\n\n## 五、关键注意事项\n\n1. **永远不要阻塞事件循环**\n❌ `time.sleep(1)`、`requests.get()`、`json.loads()`（大文件）等同步操作会冻结所有协程。\n✅ 替代方案：`await asyncio.sleep(1)`、`aiohttp.ClientSession.get()`、分块异步读取。2. **避免“假异步”**\n```python\n"
+      }
+    },
+    {
+      "id": "q_010",
+      "question": "在Python异步编程中，如何正确管理异步上下文和迭代异步迭代器？",
+      "question_type": "conceptual",
+      "key_terms": [
+        "async with",
+        "异步上下文",
+        "async for",
+        "异步迭代器"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 115,
+        "kb_id": 24,
+        "kb_name": "async/await 简明指南",
+        "chunk_title": "使用 `async with` 管理异步上下文（如 `async with aiohttp.ClientSession()`）；",
+        "chunk_content_preview": "使用 `async with` 管理异步上下文（如 `async with aiohttp.ClientSession()`）；\n- 使用 `async for` 迭代异步迭代器（如流式响应）。\n\n---\n\n## 六、快速起步检查清单\n\n| 步骤 | 操作 | 示例 |\n|------|------|------|\n| ✅ 1. 定义 | 用 `async def` 写协程 | `async def download(url): ...` |\n| ✅ 2. 调用 | 在 `async def` 内用 `await` | `data = await download(\"...\")` |\n| ✅ "
+      }
+    },
+    {
+      "id": "q_011",
+      "question": "在 Python 中，使用 asyncio 进行异步编程时，哪些类型的任务适合使用它？",
+      "question_type": "factual",
+      "key_terms": [
+        "asyncio",
+        "适用场景",
+        "I/O密集型"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 72,
+        "kb_id": 8,
+        "kb_name": "Python异步最佳实践",
+        "chunk_title": "# Python 异步编程最佳实践（精要指南）",
+        "chunk_content_preview": "# Python 异步编程最佳实践（精要指南）\n\n> 本文基于 Python 官方文档（`asyncio`、`concurrency` 模块及 PEP 492）提炼核心原则，聚焦**实用性、安全性与可维护性**，适用于 Python 3.8+（推荐 3.10+），全文约 1800 字。\n\n---\n\n## 一、明确适用场景：何时用 `asyncio`？\n\n`asyncio` 是为 **I/O 密集型（IO-bound）并发任务**设计的，**非 CPU 密集型（CPU-bound）任务**。\n✅ 推荐场景：\n- HTTP/API 调用（`aiohttp`, `httpx`）\n- 数据库查询（`a"
+      }
+    },
+    {
+      "id": "q_012",
+      "question": "在Python异步编程中，调用一个async函数时如果不加await关键字会有什么后果？",
+      "question_type": "factual",
+      "key_terms": [
+        "async",
+        "await",
+        "协程对象"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 73,
+        "kb_id": 8,
+        "kb_name": "Python异步最佳实践",
+        "chunk_title": "async def 定义协程，await 调用（仅在协程/async context 中）",
+        "chunk_content_preview": "async def 定义协程，await 调用（仅在协程/async context 中）\nasync def fetch_data():\nawait asyncio.sleep(1)  # 模拟异步 I/O\nreturn \"data\"\n\nasync def main():\nresult = await fetch_data()  # 必须 await！\nprint(result)# ✅ 启动：asyncio.run() 是官方推荐入口（自动创建/关闭事件循环）\nasyncio.run(main())\n```\n\n⚠️ 错误示例：\n- `fetch_data()`（不加 `await`）→ 返回"
+      }
+    },
+    {
+      "id": "q_013",
+      "question": "在Python异步编程中，使用asyncio.gather()并发执行多个任务时，如果希望某个任务失败不影响其他任务继续执行，应该怎么做？",
+      "question_type": "procedural",
+      "key_terms": [
+        "asyncio.gather",
+        "return_exceptions"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 74,
+        "kb_id": 8,
+        "kb_name": "Python异步最佳实践",
+        "chunk_title": "lExecutor() as pool:",
+        "chunk_content_preview": "lExecutor() as pool:\nresult = await loop.run_in_executor(pool, cpu_heavy_task, 10)\nreturn result\n```\n\n---\n\n## 三、关键最佳实践\n\n### ✅ 1. 始终使用 `asyncio.run()` 启动主协程\n- 它自动管理事件循环生命周期（创建、运行、关闭、清理）；\n- 避免手动调用 `loop.run_until_complete()`（易漏 `loop.close()`）；\n- **每个程序只调用一次 `asyncio.run()`** —— 用于顶层入口。### ✅ 2. 并发任务：优"
+      }
+    },
+    {
+      "id": "q_014",
+      "question": "在Python异步编程中，如果协程里不小心用了time.sleep()会有什么后果？应该怎么解决？",
+      "question_type": "factual",
+      "key_terms": [
+        "time.sleep",
+        "asyncio.sleep",
+        "事件循环阻塞"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 76,
+        "kb_id": 8,
+        "kb_name": "Python异步最佳实践",
+        "chunk_title": "ions=True)",
+        "chunk_content_preview": "ions=True)\nfor r in results:\nif isinstance(r, Exception):\nlogger.error(\"Task failed: %s\", r)\nelse:\nprocess(r)\n```\n\n---\n\n## 四、常见陷阱与规避策略| 陷阱 | 风险 | 解决方案 |\n|------|------|----------|\n| **混合同步/异步代码**（如在协程中调用 `time.sleep()`） | 阻塞整个事件循环，吞吐骤降 | 全面替换为 `await asyncio.sleep()`；同步库用 `run_in_executor` |\n| **忘记 "
+      }
+    },
+    {
+      "id": "q_015",
+      "question": "在Python中处理高并发I/O任务时，推荐使用哪种并发方案？",
+      "question_type": "factual",
+      "key_terms": [
+        "高并发I/O",
+        "asyncio",
+        "并发方案"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 77,
+        "kb_id": 8,
+        "kb_name": "Python异步最佳实践",
+        "chunk_title": "*全局状态共享（如普通变量、`dict`）** | 多协程并发修改导致竞态 | 使用 `asyncio.Lock` 保护临界区，或改用线程安全结构（如 `asy",
+        "chunk_content_preview": "*全局状态共享（如普通变量、`dict`）** | 多协程并发修改导致竞态 | 使用 `asyncio.Lock` 保护临界区，或改用线程安全结构（如 `asyncio.Queue`） |\n\n---\n\n## 五、选型决策树：并发方案对比\n\n| 场景 | 推荐方案 | 关键理由 |\n|------|----------|----------|\n| **高并发 I/O（Web API、DB、缓存）** | `asyncio` + 异步生态（`httpx`, `asyncpg`） | 单线程高吞吐，内存开销低，生态成熟 |\n| **CPU 密集任务（计算、编码）** | `concurrent.fu"
+      }
+    },
+    {
+      "id": "q_016",
+      "question": "在优化数据库和Redis连接池配置后，PostgreSQL连接池的总连接数是多少？",
+      "question_type": "factual",
+      "key_terms": [
+        "PostgreSQL连接池",
+        "总连接数"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 24,
+        "kb_id": 4,
+        "kb_name": "优化实施记录",
+        "chunk_title": "# 优化实施记录",
+        "chunk_content_preview": "# 优化实施记录\n\n> 实施日期：2026-04-18\n> 实施内容：P0 级优化 + P1 优化（评估并行化、错误提示）\n\n## 一、已完成的优化\n\n### ✅ 1. 数据库和 Redis 连接池配置\n\n**文件：** `app/database.py`, `app/infrastructure/redis/redis_service.py`\n\n**优化内容：**\n\n**PostgreSQL 连接池：**\n```python\npool_size=20              # 常驻连接数（从 10 增加到 20）\nmax_overflow=10           # 最大溢出连接数（从"
+      }
+    },
+    {
+      "id": "q_017",
+      "question": "在RAG服务中，多路检索引擎是如何处理用户问题的？",
+      "question_type": "procedural",
+      "key_terms": [
+        "多路检索引擎",
+        "RAG服务",
+        "向量检索",
+        "结果融合"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 29,
+        "kb_id": 4,
+        "kb_name": "优化实施记录",
+        "chunk_title": "`app/modules/knowledge_base/rag_service.py`（修改）",
+        "chunk_content_preview": "`app/modules/knowledge_base/rag_service.py`（修改）\n\n**优化内容：**\n\n1. **SearchChannel 接口设计**\n- 定义统一的检索通道接口\n- 支持优先级、启用判断、并行执行\n\n2. **VectorSearchChannel 实现**\n- 向量检索通道\n- 优先级：1（最高）3. **MultiChannelRetrievalEngine**\n- 并行执行所有启用的通道\n- 合并结果 → 去重 → Top-K\n\n4. **集成到 RAG 服务**\n- 初始化多路检索引擎\n- 替换原有的单路检索逻辑\n\n**架构设计：**\n```\n用户"
+      }
+    },
+    {
+      "id": "q_018",
+      "question": "在面试评估系统中，如何通过并行处理来提升评估效率？具体能带来多少性能提升？",
+      "question_type": "procedural",
+      "key_terms": [
+        "并行评估",
+        "批次处理",
+        "性能提升",
+        "系统吞吐量"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 34,
+        "kb_id": 4,
+        "kb_name": "优化实施记录",
+        "chunk_title": "= [evaluate_with_limit(batch) for batch in batches]",
+        "chunk_content_preview": "= [evaluate_with_limit(batch) for batch in batches]\nresults = await asyncio.gather(*tasks, return_exceptions=True)\n```\n\n**预期收益：**\n- 评估时间：20-30 秒 → 10-15 秒（减少 50%）\n- 用户等待时间显著降低\n- 系统吞吐量提升**验证方法：**\n```bash\n# 完成面试后查看日志：\n# INFO: 开始批次并行评估: 总批次=2, 最大并发=3\n# INFO: 批次评估完成: batch=1, duration=3.2s\n# INFO: 批次评估完"
+      }
+    },
+    {
+      "id": "q_019",
+      "question": "在RAG系统中，重排序功能是如何集成到召回阶段的？如果模型没有安装，系统会怎么处理？",
+      "question_type": "relational",
+      "key_terms": [
+        "RerankService",
+        "RAG",
+        "重排序",
+        "模型降级"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 39,
+        "kb_id": 4,
+        "kb_name": "优化实施记录",
+        "chunk_title": "1. **RerankService 实现**",
+        "chunk_content_preview": "1. **RerankService 实现**\n- 使用 Cross-Encoder 模型（bge-reranker-base）\n- 计算查询-文档对的相关性分数\n- 在线程池中执行，避免阻塞事件循环\n- 支持降级：模型未安装时自动禁用\n\n2. **集成到 RAG 服务**\n- 召回阶段：Top-K × 2（获取更多候选）\n- 重排序阶段：Cross-Encoder 精排 → Top-K\n- 自动检测：模型未安装时跳过重排序3. **模型选择**\n- 默认：bge-reranker-base（~400MB，性能良好）\n- 可选：bge-reranker-large（~1GB，性能最佳）\n\n**"
+      }
+    },
+    {
+      "id": "q_020",
+      "question": "在后续优化建议中，哪些优化项已经完成实施？",
+      "question_type": "factual",
+      "key_terms": [
+        "后续优化建议",
+        "已完成",
+        "优化项"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 44,
+        "kb_id": 4,
+        "kb_name": "优化实施记录",
+        "chunk_title": "用户满意度显著提升 |",
+        "chunk_content_preview": "用户满意度显著提升 |\n| 网络抖动失败 | 直接失败 | 自动重试 | 失败率降低 80% |\n| 并发支持 | 10 用户 | 50-120 用户 | 支持更多用户 |\n\n## 三、后续优化建议\n\n### 3.1 P0 级（紧急）\n\n- [ ] **安装 pgvector 扩展**\n- 提升检索性能 10x\n- 支持 10,000+ 文档- [ ] **安装 dashscope**\n- 启用真实 Embedding API\n- 当前会降级到哈希向量\n\n### 3.2 P1 级（近期）\n\n✅ **引入 Rerank 重排序**（待实施）\n- 使用 bge-reranker-large\n- T"
+      }
+    },
+    {
+      "id": "q_021",
+      "question": "智能客服在长期运行后回答质量下降，根本原因是什么？",
+      "question_type": "factual",
+      "key_terms": [
+        "智能客服",
+        "回答质量下降",
+        "根本原因"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 124,
+        "kb_id": 30,
+        "kb_name": "智能客服变笨原因",
+        "chunk_title": "# 智能客服变笨原因",
+        "chunk_content_preview": "# 智能客服变笨原因\n\n## 目录\n\n- 一、核心概念\n- 二、主要原因分类\n- 1. 上下文污染与记忆膨胀\n- 2. 知识过时与静态知识库\n- 3. 提示词退化\n- 4. 模型微调副作用\n- 三、智能客服 Agent 最佳实践\n- 四、常见陷阱与解决方案\n- 五、监控与评估体系\n- 六、总结\n\n---\n\n## 核心要点\n\n1. **“变笨”并非模型本身退化**，而是上下文污染、知识过时、提示词失效等外部因素导致。\n2. **上下文管理是关键**：长对话历史会稀释关键信息，需使用滑动窗口或摘要机制控制上下文长度。\n3. **知识更新需持续**：模型知识停留在训练时刻，必须结合 RAG 技术和定"
+      }
+    },
+    {
+      "id": "q_022",
+      "question": "在RAG技术中，如何结合外部知识库来回答用户问题？",
+      "question_type": "procedural",
+      "key_terms": [
+        "RAG",
+        "知识库",
+        "检索增强生成"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 125,
+        "kb_id": 30,
+        "kb_name": "智能客服变笨原因",
+        "chunk_title": "python",
+        "chunk_content_preview": "python\nclass SlidingWindowContext:\ndef __init__(self, max_tokens=4096):\nself.max_tokens = max_tokens\nself.history = []\n\ndef add_message(self, message):\nself.history.append(message)\nwhile self._count_tokens(self.history) > self.max_tokens:\nself.history.pop(0)def _count_tokens(self, messages):\nreturn "
+      }
+    },
+    {
+      "id": "q_023",
+      "question": "在构建智能客服Agent时，如果遇到提示词退化的问题，应该采取哪些措施来解决？",
+      "question_type": "procedural",
+      "key_terms": [
+        "提示词退化",
+        "智能客服Agent",
+        "解决方案"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 126,
+        "kb_id": 30,
+        "kb_name": "智能客服变笨原因",
+        "chunk_title": "回答问题：",
+        "chunk_content_preview": "回答问题：\n{context}\n\n用户问题：{user_input}\n请给出准确、简洁的回答。\"\"\"\nresponse = await llm_call(prompt)\nreturn response\n```\n\n### 3. 提示词退化\n\n**问题表现：**\n- 用户输入中的恶意指令污染了系统提示（指令注入）\n- 提示词过于复杂，多层指令冲突\n- 系统提示词被用户对话历史覆盖或稀释**解决方案：**\n- 使用结构化提示词模板\n- 对用户输入进行清洗和隔离\n\n```python\ndef sanitize_user_input(user_input: str) -> str:\nimport re\n"
+      }
+    },
+    {
+      "id": "q_024",
+      "question": "在LangChain中，如何创建一个带记忆功能的客服Agent？",
+      "question_type": "procedural",
+      "key_terms": [
+        "LangChain",
+        "记忆",
+        "客服Agent",
+        "ConversationBufferMemory"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 127,
+        "kb_id": 30,
+        "kb_name": "智能客服变笨原因",
+        "chunk_title": "from langchain.agents import initialize_agent, Tool",
+        "chunk_content_preview": "from langchain.agents import initialize_agent, Tool\nfrom langchain.llms import OpenAI\nfrom langchain.tools import tool\n\n@tool\ndef get_weather(city: str) -> str:\n\"\"\"获取指定城市的天气\"\"\"\nreturn f\"{city} 的天气是晴天，25°C\"llm = OpenAI(model=\"gpt-4\", temperature=0)\ntools = [get_weather]\nagent = initialize_agent(tools"
+      }
+    },
+    {
+      "id": "q_025",
+      "question": "在构建智能客服Agent时，如果遇到工具调用陷入死循环的问题，应该怎么解决？",
+      "question_type": "factual",
+      "key_terms": [
+        "工具调用循环",
+        "最大迭代次数",
+        "智能客服"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 128,
+        "kb_id": 30,
+        "kb_name": "智能客服变笨原因",
+        "chunk_title": "```python",
+        "chunk_content_preview": "```python\nsystem_prompt = \"\"\"\n你是一个专业的智能客服 Agent。规则：\n1. 始终使用中文回复\n2. 如果无法回答，引导用户转人工\n3. 调用工具前先确认用户意图\n\"\"\"\n```\n\n### 错误处理与回退\n\n```python\ntry:\nresult = agent.run(user_input)\nexcept Exception as e:\nresult = \"抱歉，我暂时无法处理该请求，已为您转接人工客服。\"\n```### 性能优化\n\n```python\nasync def async_agent_run(user_input: str):\nasync fo"
+      }
+    },
+    {
+      "id": "q_026",
+      "question": "大模型智能客服在长期运行中性能下降，主要原因有哪些？",
+      "question_type": "factual",
+      "key_terms": [
+        "大模型智能客服",
+        "性能退化",
+        "原因"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 130,
+        "kb_id": 31,
+        "kb_name": "智能客服变笨原因-真实搜索",
+        "chunk_title": "好的，这是根据您的要求对原始文档进行精炼和结构化处理后的内容。",
+        "chunk_content_preview": "好的，这是根据您的要求对原始文档进行精炼和结构化处理后的内容。\n\n---\n\n## 目录\n\n1.  **核心原因概述**\n2.  **知识时效性问题**\n3.  **上下文管理不当**\n4.  **模型微调副作用**\n5.  **推理性能瓶颈**\n6.  **Prompt漂移与用户输入变化**\n7.  **监控与诊断体系**\n8.  **修复与预防策略**\n9.  **总结与排查优先级**\n\n## 核心要点\n\n1.  **知识滞后是首要原因**：大模型训练数据有截止日期，业务知识更新后，模型无法自动同步。**引入RAG（检索增强生成）** 是解决此问题的最有效手段。\n2.  **上下文管理不当导"
+      }
+    },
+    {
+      "id": "q_027",
+      "question": "当模型训练数据过时导致回答错误时，有什么方法可以解决这个问题？",
+      "question_type": "conceptual",
+      "key_terms": [
+        "模型训练数据",
+        "RAG",
+        "检索增强生成"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 131,
+        "kb_id": 31,
+        "kb_name": "智能客服变笨原因-真实搜索",
+        "chunk_title": "模型训练数据存在截止日期，当业务知识（如产品信息、政策法规）更新后，模型无法自动获取最新内容，导致回答过时或错误。",
+        "chunk_content_preview": "模型训练数据存在截止日期，当业务知识（如产品信息、政策法规）更新后，模型无法自动获取最新内容，导致回答过时或错误。\n\n### 2.2 解决方案：RAG（检索增强生成）\n通过引入外部实时知识库，在生成回答前检索最新文档，弥补模型知识滞后。\n\n```python\n# 示例：RAG 检索流程\nfrom langchain.embeddings import OpenAIEmbeddings\nfrom langchain.vectorstores import Chroma# 初始化向量数据库\nembeddings = OpenAIEmbeddings()\nvectorstore = Chroma(c"
+      }
+    },
+    {
+      "id": "q_028",
+      "question": "当多轮对话历史超出模型上下文窗口时，有哪些常见表现？",
+      "question_type": "factual",
+      "key_terms": [
+        "多轮对话",
+        "上下文窗口",
+        "历史信息",
+        "意图识别"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 132,
+        "kb_id": 31,
+        "kb_name": "智能客服变笨原因-真实搜索",
+        "chunk_title": "表现",
+        "chunk_content_preview": "表现\n- 多轮对话历史超出模型上下文窗口（如4K/8K tokens）\n- 无关历史信息干扰当前意图识别\n- 长对话中早期关键信息丢失\n\n### 3.2 最佳实践：滑动窗口截断\n通过保留最近N轮对话，同时保留系统提示词，控制上下文长度。\n\n```python\ndef trim_context(messages, max_turns=10):\n\"\"\"\n保留系统提示 + 最近 max_turns 轮对话\nmessages: [{\"role\": \"system\", \"content\": \"...\"}, {\"role\": \"user\", \"content\": \"...\"}, ...]\n\"\"\"\nif l"
+      }
+    },
+    {
+      "id": "q_029",
+      "question": "当用户提问模式随时间变化导致模型理解偏差时，有哪些诊断方法可以识别这个问题？",
+      "question_type": "factual",
+      "key_terms": [
+        "Prompt漂移",
+        "诊断方法",
+        "用户输入变化"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 134,
+        "kb_id": 31,
+        "kb_name": "智能客服变笨原因-真实搜索",
+        "chunk_title": "3\"]",
+        "chunk_content_preview": "3\"]\nsampling_params = SamplingParams(temperature=0.7, max_tokens=512)\noutputs = llm.generate(prompts, sampling_params)\n\nfor output in outputs:\nprint(output.outputs[0].text)\n```### 5.3 监控与告警\n建立性能仪表盘，监控以下指标：\n- GPU利用率\n- 请求排队长度\n- 平均响应时间\n- Token生成速度\n\n## 六、Prompt漂移与用户输入变化\n\n### 6.1 问题描述\n用户提问模式随时间变化（如新术语、新场"
+      }
+    },
+    {
+      "id": "q_030",
+      "question": "在监控大模型智能客服性能时，哪些指标达到什么阈值会触发警告级别的告警？",
+      "question_type": "factual",
+      "key_terms": [
+        "响应时间",
+        "用户满意度",
+        "警告",
+        "阈值"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 135,
+        "kb_id": 31,
+        "kb_name": "智能客服变笨原因-真实搜索",
+        "chunk_title": "---|------|----------|",
+        "chunk_content_preview": "---|------|----------|\n| 准确率 | <80% | 严重 |\n| 响应时间 | >3秒 | 警告 |\n| 用户满意度 | <4.0/5.0 | 警告 |\n| Token消耗异常 | 环比增长>20% | 提示 |\n\n### 7.2 诊断工具链\n- **模型监控**：关键词 `LLM observability`, `model monitoring`\n- **响应延迟优化**：`latency optimization`, `streaming response`\n- **成本控制**：`token usage tracking`, `cost optimization"
+      }
+    },
+    {
+      "id": "q_031",
+      "question": "在CodeQL中，如何对自定义查询进行本地化和自动化的测试？",
+      "question_type": "procedural",
+      "key_terms": [
+        "CodeQL",
+        "自定义查询",
+        "测试",
+        "本地化"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 137,
+        "kb_id": 38,
+        "kb_name": "indexing-test",
+        "chunk_title": "好的，遵照您的要求，以下是对原始文档的精炼版本，保留了核心信息、技术细节和代码示例，并生成了目录和核心要点章节。",
+        "chunk_content_preview": "好的，遵照您的要求，以下是对原始文档的精炼版本，保留了核心信息、技术细节和代码示例，并生成了目录和核心要点章节。\n\n---\n\n## 目录\n\n1.  [概述](#概述)\n2.  [CodeQL 自定义查询测试](#1-codeql-自定义查询测试)\n3.  [阿里云 OpenSearch 查询测试](#2-阿里云-opensearch-查询测试)\n4.  [Google Cloud Identity 成员资格查询测试](#3-google-cloud-identity-成员资格查询测试)\n5.  [总结对比](#总结对比)\n6.  [最佳实践](#最佳实践)\n\n## 核心要点\n\n1.  **三种"
+      }
+    },
+    {
+      "id": "q_032",
+      "question": "在CodeQL中，如何验证自定义查询的正确性？",
+      "question_type": "procedural",
+      "key_terms": [
+        "CodeQL",
+        "自定义查询",
+        "测试"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 138,
+        "kb_id": 38,
+        "kb_name": "indexing-test",
+        "chunk_title": "5.  **最佳实践的核心是“先测试，后集成”**：无论是代码查询、搜索语句还是身份规则，都建议先在对应的测试环境（CLI、控制台、构建器）中验证其正确性，再应",
+        "chunk_content_preview": "5.  **最佳实践的核心是“先测试，后集成”**：无论是代码查询、搜索语句还是身份规则，都建议先在对应的测试环境（CLI、控制台、构建器）中验证其正确性，再应用到生产环境或代码中。\n\n---\n\n## 1. CodeQL 自定义查询测试\n\n### 核心概念\n- **CodeQL 自定义查询**：一种用于在代码库中搜索特定模式（如安全漏洞、代码异味）的查询语言。\n- **测试文件**：用于验证自定义查询是否返回预期结果的 `.ql` 和 `.qlref` 文件。### 使用方法\n1.  **创建自定义查询**：编写 `.ql` 文件定义搜索模式。\n2.  **创建测试文件**：在 `test` "
+      }
+    },
+    {
+      "id": "q_033",
+      "question": "在阿里云 OpenSearch 中，有哪些方式可以用来测试搜索查询效果？",
+      "question_type": "factual",
+      "key_terms": [
+        "阿里云 OpenSearch",
+        "查询测试",
+        "SQL",
+        "HA3",
+        "REST API"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 139,
+        "kb_id": 38,
+        "kb_name": "indexing-test",
+        "chunk_title": "ava",
+        "chunk_content_preview": "ava\n```\n\n### 运行测试命令\n```bash\ncodeql test run --search-path=<queries-dir> <test-dir>\n```\n\n---\n\n## 2. 阿里云 OpenSearch 查询测试\n\n### 核心概念\n- **查询测试**：在 OpenSearch 控制台直接验证搜索效果，无需编写客户端代码。\n- **支持查询类型**：SQL、HA3、REST API。### 使用方法\n1.  登录 OpenSearch 控制台，进入“查询测试”页面。\n2.  选择查询类型（SQL/HA3/REST API）。\n3.  输入查询语句并执行。\n\n### 示"
+      }
+    },
+    {
+      "id": "q_034",
+      "question": "在Google Cloud Identity中，如何通过查询表达式创建一个包含所有部门为'Engineering'且职位为'Senior'的用户的动态群组？",
+      "question_type": "procedural",
+      "key_terms": [
+        "Google Cloud Identity",
+        "成员资格查询",
+        "动态群组",
+        "Groups API"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 140,
+        "kb_id": 38,
+        "kb_name": "indexing-test",
+        "chunk_title": "## 3. Google Cloud Identity 成员资格查询测试",
+        "chunk_content_preview": "## 3. Google Cloud Identity 成员资格查询测试\n\n### 核心概念\n- **成员资格查询**：用于定义动态群组成员规则的查询表达式。\n- **简单查询构建器**：通过下拉菜单和文本字段构建查询的可视化工具。\n\n### 使用方法\n1.  使用简单查询构建器输入查询条件。\n2.  测试查询返回的成员结果。\n3.  确认结果正确后，通过 Groups API 创建动态群组。### 示例查询构建\n**条件组合**：\n- 部门 = \"Engineering\" AND 职位 = \"Senior\"\n- 位置 = \"US\" OR 位置 = \"Canada\"\n\n**API 创建动态群组"
+      }
+    },
+    {
+      "id": "q_035",
+      "question": "在测试查询时，对于OpenSearch和Cloud Identity这两种不同的查询方式，分别推荐使用什么工具或方法来验证查询语句的正确性？",
+      "question_type": "relational",
+      "key_terms": [
+        "OpenSearch",
+        "Cloud Identity",
+        "查询测试",
+        "最佳实践"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 141,
+        "kb_id": 38,
+        "kb_name": "indexing-test",
+        "chunk_title": "询 | 搜索引擎、全文检索 | OpenSearch 控制台 | 在线控制台测试 |",
+        "chunk_content_preview": "询 | 搜索引擎、全文检索 | OpenSearch 控制台 | 在线控制台测试 |\n| Cloud Identity 查询 | 动态群组管理、用户属性筛选 | Groups API | API 调用测试 |\n\n---\n\n## 最佳实践\n\n1.  **CodeQL 查询**：始终为自定义查询编写对应的测试文件，确保查询逻辑正确。\n2.  **OpenSearch 查询**：先在控制台测试查询语句，确认结果后再集成到客户端代码。\n3.  **Cloud Identity 查询**：使用简单查询构建器验证条件组合，避免 API 调用错误。"
+      }
+    },
+    {
+      "id": "q_036",
+      "question": "辛庆宇在熙牛医疗实习期间主要负责了哪些工作？",
+      "question_type": "factual",
+      "key_terms": [
+        "辛庆宇",
+        "熙牛医疗",
+        "实习",
+        "工作内容"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 142,
+        "kb_id": 39,
+        "kb_name": "辛庆宇-杭州电子科技大学-控制工程",
+        "chunk_title": "辛庆宇                             求职意向：AI 大模型研发",
+        "chunk_content_preview": "辛庆宇                             求职意向：AI 大模型研发\n手机号码：18360991278                                 邮箱：1339260251@qq.com\n出生年月：2001.02                                          籍贯：江苏淮安\n教育背景\n2024.9-2027.6                                         杭州电子科技大学                                     电子信息工程（硕士）\n2020.09"
+      }
+    },
+    {
+      "id": "q_037",
+      "question": "这个AI Agent智能助手系统是如何实现不停机热更新的？",
+      "question_type": "procedural",
+      "key_terms": [
+        "AI Agent",
+        "热更新",
+        "Spring BeanDefinition",
+        "组件装配"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 143,
+        "kb_id": 39,
+        "kb_name": "辛庆宇-杭州电子科技大学-控制工程",
+        "chunk_title": "问题处理：负责维护用户交付群，利用AI 工具快速上手陌生医疗流程，打通现场交付与后端开发的",
+        "chunk_content_preview": "问题处理：负责维护用户交付群，利用AI 工具快速上手陌生医疗流程，打通现场交付与后端开发的\n沟通壁垒，高效响应线上用户反馈的功能异常与流程问题。同时建立标准化的故障排查文档，沉淀了发药、号\n源池排班及退费处理规范，显著提升了团队排障效率。\n项目经历2025.11-2026.01                                   Ai agent 智能助手系统\n后端开发\n⚫\n项目介绍：本项目是一套面向业务应用系统提效的综合智能体解决方案，支持将执行过程中的各项能力（如\nAdvisor、RAG、MCP）抽象并存储于数据库，实现自由配置和灵活编排。用户可根据实际业务场景，动态组\n合"
+      }
+    },
+    {
+      "id": "q_038",
+      "question": "在系统稳定性保障中，使用了什么技术来实现故障隔离，以及它的触发条件是什么？",
+      "question_type": "factual",
+      "key_terms": [
+        "Resilience4j",
+        "熔断器",
+        "故障隔离",
+        "滑动窗口"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 144,
+        "kb_id": 39,
+        "kb_name": "辛庆宇-杭州电子科技大学-控制工程",
+        "chunk_title": "的内容共享和",
+        "chunk_content_preview": "的内容共享和\n动态路由。\n⚫\n系统稳定性保障：引入 Resilience4j 熔断器实现 4 个执行节点的故障隔离，基于滑动窗口失败率统计（50% 阈\n值）和慢调用检测（3s 阈值）触发熔断，并配合降级策略防止单节点故障导致链路崩溃。\n⚫\nMCP 工具：基于 Stdio/SSE 两种通信方式，将CSDN 自动发文、ELK 日志检索通知等业务能力进行配置对接，拓展 agent 业务能力。\n⚫\nRAG 知识库：基于 pgvector 实现向量数据库。通过 tenant_id 元数据过滤实现多租户隔离，在检索阶段前置\n权限过滤，并配合动态 Top-K，提高检索精度。\n2025.09-2025.11 "
+      }
+    },
+    {
+      "id": "q_039",
+      "question": "在项目中，如何解决缓存穿透和缓存击穿问题？",
+      "question_type": "factual",
+      "key_terms": [
+        "缓存穿透",
+        "缓存击穿",
+        "布隆过滤器",
+        "互斥锁"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 145,
+        "kb_id": 39,
+        "kb_name": "辛庆宇-杭州电子科技大学-控制工程",
+        "chunk_title": "⚫ 异步秒杀:使用RocketMQ 异步处理订单落库，将响应时间从460ms 优化至140ms，显著降低数据库压力",
+        "chunk_content_preview": "⚫ 异步秒杀:使用RocketMQ 异步处理订单落库，将响应时间从460ms 优化至140ms，显著降低数据库压力\n⚫ 超卖控制:使用Redisson 分布式可重入锁+数据库乐观锁机制，确保一人一单有效防止库存超卖\n⚫ 智能客服:对接GLM 大模型，实现意图识别、工具调用、重试收敛的复杂交互，保障用户体验\n⚫ 缓存设计：针对高频查询场景，设计并实现基于Redis 集群的多级缓存架构，优化缓存策略以提升性能。通过\n缓存空对象和布隆过滤器解决缓存穿透问题，结合互斥锁和缓存预热有效防止缓存击穿，显著降低数据库负载\n并提升响应效率。\n2025.04-2025.09                   "
+      }
+    },
+    {
+      "id": "q_040",
+      "question": "在构建AI Agent时，如果项目需要多个智能体协同工作，应该选择哪个框架？",
+      "question_type": "relational",
+      "key_terms": [
+        "AI Agent",
+        "多Agent协作",
+        "CrewAI"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 146,
+        "kb_id": 40,
+        "kb_name": "LangChain agent教程 - 知识库",
+        "chunk_title": "好的，这是根据您的要求对原始文档进行精炼和结构化后的版本。",
+        "chunk_content_preview": "好的，这是根据您的要求对原始文档进行精炼和结构化后的版本。\n\n---\n\n## 目录\n\n1.  **核心概念**\n2.  **主流框架对比**\n3.  **核心开发技巧**\n4.  **记忆管理**\n5.  **最佳实践**\n6.  **学习路径建议**\n7.  **部署建议**\n\n## 核心要点\n\n1.  **Agent 核心四要素**：一个完整的 AI Agent 由**感知模块**、**推理引擎**、**执行模块**和**记忆系统**构成，缺一不可。\n2.  **框架选择取决于场景**：\n-   **快速原型**：选 LangChain。\n-   **多 Agent 协作**：选 Crew"
+      }
+    },
+    {
+      "id": "q_041",
+      "question": "在构建一个需要多Agent协作完成任务的系统时，CrewAI和AutoGen哪个框架更合适？它们各自的核心特点是什么？",
+      "question_type": "comparative",
+      "key_terms": [
+        "CrewAI",
+        "AutoGen",
+        "多Agent协作",
+        "框架对比"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 147,
+        "kb_id": 40,
+        "kb_name": "LangChain agent教程 - 知识库",
+        "chunk_title": "**感知模块**：接收用户输入和环境信息。",
+        "chunk_content_preview": "**感知模块**：接收用户输入和环境信息。\n-   **推理引擎**：处理信息、制定计划、做出决策。\n-   **执行模块**：调用工具、API 或执行代码。\n-   **记忆系统**：存储上下文和对话历史。\n\n## 二、主流框架对比\n\n| 框架 | 核心特点 | 适用场景 | 调试难度 |\n| :--- | :--- | :--- | :--- |\n| **LangChain / LangGraph** | LangChain 高层级，快速开发；LangGraph 低层级，支持持久化与人工介入 | 快速原型 / 复杂工作流 | 中等 |\n| **CrewAI** | 角色-任务-团队模式，强"
+      }
+    },
+    {
+      "id": "q_042",
+      "question": "在e_agent的示例中，如何定义一个工具函数来获取天气信息？",
+      "question_type": "procedural",
+      "key_terms": [
+        "e_agent",
+        "工具函数",
+        "get_weather"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 149,
+        "kb_id": 40,
+        "kb_name": "LangChain agent教程 - 知识库",
+        "chunk_title": "e_agent",
+        "chunk_content_preview": "e_agent\n\ndef get_weather(city: str) -> str:\n\"\"\"Get weather for a given city.\"\"\"\nreturn f\"It's always sunny in {city}!\"\n\nagent = create_agent(\nmodel=\"openai:gpt-5.4\",\ntools=[get_weather],\nsystem_prompt=\"You are a helpful assistant\",\n)\nresult = agent.invoke({\"messages\": [{\"role\": \"user\", \"content\": \"W"
+      }
+    },
+    {
+      "id": "q_043",
+      "question": "在AutoGen中，如何让一个助手代理能够执行用户指定的任务，比如编写Python脚本？",
+      "question_type": "procedural",
+      "key_terms": [
+        "AutoGen",
+        "AssistantAgent",
+        "UserProxyAgent",
+        "initiate_chat"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 151,
+        "kb_id": 40,
+        "kb_name": "LangChain agent教程 - 知识库",
+        "chunk_title": "(",
+        "chunk_content_preview": "(\nagents=[researcher],\ntasks=[research_task],\nprocess=\"sequential\"\n)\nresult = crew.kickoff()\n```\n\n### 3.4 CrewAI 自定义工具\n\n```python\nfrom crewai_tools import tool@tool(\"计算器\")\ndef calculator(expression: str) -> str:\nreturn str(eval(expression))\n\nagent_with_tool = Agent(\nrole=\"计算助手\",\ngoal=\"执行数学计算\",\ntools"
+      }
+    },
+    {
+      "id": "q_044",
+      "question": "在构建AI Agent时，短期记忆和长期记忆分别通过什么方式实现？",
+      "question_type": "factual",
+      "key_terms": [
+        "短期记忆",
+        "长期记忆",
+        "滑动窗口",
+        "向量数据库"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 153,
+        "kb_id": 40,
+        "kb_name": "LangChain agent教程 - 知识库",
+        "chunk_title": ":",
+        "chunk_content_preview": ":\nreturn func()\nexcept Exception as e:\nif i == max_retries - 1:\nreturn f\"Error: {str(e)}\"\ntime.sleep(1)\n```\n\n## 四、记忆管理\n\n| 记忆类型 | 实现方式 | 用途 |\n| :--- | :--- | :--- |\n| **短期记忆** | 滑动窗口保留最近 N 轮对话 | 保持当前会话上下文 |\n| **长期记忆** | 向量数据库（Pinecone、Chroma）实现语义检索 | 跨会话知识持久化 |## 五、最佳实践\n\n### 5.1 系统提示设计\n\n-   **明确职责边界*"
+      }
+    },
+    {
+      "id": "q_045",
+      "question": "FastAPI 在异步编程中，决定使用 async def 还是普通 def 的核心原则是什么？",
+      "question_type": "conceptual",
+      "key_terms": [
+        "FastAPI",
+        "async def",
+        "异步编程",
+        "决策原则"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 155,
+        "kb_id": 41,
+        "kb_name": "FastAPI异步编程最佳实践",
+        "chunk_title": "好的，遵照您的要求，以下是对原始文档进行精炼和结构化处理后的版本。",
+        "chunk_content_preview": "好的，遵照您的要求，以下是对原始文档进行精炼和结构化处理后的版本。\n\n---\n\n## 目录\n\n1.  [概述与安装](#1-概述与安装)\n2.  [核心概念](#2-核心概念)\n3.  [异步编程决策指南](#3-异步编程决策指南)\n4.  [异步实践：数据库与HTTP](#4-异步实践数据库与http)\n5.  [并发与中间件](#5-并发与中间件)\n6.  [部署与项目结构](#6-部署与项目结构)\n7.  [关键要点与最佳实践](#7-关键要点与最佳实践)\n8.  [常见陷阱与注意事项](#8-常见陷阱与注意事项)\n\n---\n\n## 核心要点\n\n1.  **性能与生产力**：FastAP"
+      }
+    },
+    {
+      "id": "q_046",
+      "question": "FastAPI 框架的核心优势有哪些？",
+      "question_type": "factual",
+      "key_terms": [
+        "FastAPI",
+        "核心优势"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 156,
+        "kb_id": 41,
+        "kb_name": "FastAPI异步编程最佳实践",
+        "chunk_title": "以最大化 I/O 密集型操作的吞吐量。",
+        "chunk_content_preview": "以最大化 I/O 密集型操作的吞吐量。\n5.  **结构化与依赖注入**：遵循模块化项目结构，并充分利用 FastAPI 的 `Depends` 依赖注入系统，实现逻辑复用、参数共享和清晰的代码组织。\n\n---\n\n## 1. 概述与安装\n\nFastAPI 是一个现代、高性能的 Python Web 框架，核心优势包括：\n- **高性能**：与 NodeJS 和 Go 相当。\n- **高效率**：开发速度提升 200%-300%，减少约 40% 的人为错误。\n- **自动文档**：原生支持 Swagger UI 和 ReDoc。\n- **异步原生**：基于 `async/await` 构建。##"
+      }
+    },
+    {
+      "id": "q_047",
+      "question": "在FastAPI中，如果要实现异步数据库操作，应该使用什么驱动和会话类？",
+      "question_type": "factual",
+      "key_terms": [
+        "异步数据库操作",
+        "asyncpg",
+        "AsyncSession"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 158,
+        "kb_id": 41,
+        "kb_name": "FastAPI异步编程最佳实践",
+        "chunk_title": "# 同步路由（自动在线程池运行）",
+        "chunk_content_preview": "# 同步路由（自动在线程池运行）\n@app.get(\"/sync\")\ndef read_sync():\nreturn {\"message\": \"This is sync\"}\n```\n\n---\n\n## 4. 异步实践：数据库与HTTP\n\n### 4.1 异步数据库操作（SQLAlchemy）\n必须使用异步驱动（如 `asyncpg`）和 `AsyncSession`。```python\nfrom sqlalchemy.ext.asyncio import create_async_engine, AsyncSession\nfrom sqlalchemy.orm import sessionmak"
+      }
+    },
+    {
+      "id": "q_048",
+      "question": "在FastAPI中，如何同时执行多个没有依赖关系的I/O任务？",
+      "question_type": "procedural",
+      "key_terms": [
+        "FastAPI",
+        "asyncio.gather",
+        "并发任务"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 159,
+        "kb_id": 41,
+        "kb_name": "FastAPI异步编程最佳实践",
+        "chunk_title": "d == user_id))",
+        "chunk_content_preview": "d == user_id))\nreturn result.scalar_one_or_none()\n```\n\n### 4.2 异步 HTTP 请求（httpx）\n使用 `httpx.AsyncClient` 发起非阻塞 HTTP 请求。\n\n```python\nimport httpx\nfrom fastapi import FastAPIapp = FastAPI()\n\n@app.get(\"/external-data\")\nasync def fetch_external_data():\nasync with httpx.AsyncClient() as client:\nresponse = "
+      }
+    },
+    {
+      "id": "q_049",
+      "question": "在FastAPI中，如何实现可复用的逻辑以避免重复定义参数？",
+      "question_type": "procedural",
+      "key_terms": [
+        "FastAPI",
+        "依赖注入",
+        "Depends"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 161,
+        "kb_id": 41,
+        "kb_name": "FastAPI异步编程最佳实践",
+        "chunk_title": "# Pydantic 模式（请求/响应）",
+        "chunk_content_preview": "# Pydantic 模式（请求/响应）\n│   └── dependencies/        # 依赖注入\n├── tests/\n└── requirements.txt\n```\n\n---\n\n## 7. 关键要点与最佳实践\n\n### 7.1 依赖注入\n使用 `Depends` 实现可复用逻辑，避免重复定义参数。```python\nfrom fastapi import Depends\n\nasync def common_parameters(q: str = None, skip: int = 0, limit: int = 100):\nreturn {\"q\": q, \"skip\": s"
+      }
+    },
+    {
+      "id": "q_050",
+      "question": "AI Agent 的核心特征是什么？",
+      "question_type": "factual",
+      "key_terms": [
+        "AI Agent",
+        "核心特征"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 171,
+        "kb_id": 43,
+        "kb_name": "Agent面试常见问题与解答 - 知识库",
+        "chunk_title": "好的，遵照您的要求，我已将原始文档精炼并重构为以下结构化内容。",
+        "chunk_content_preview": "好的，遵照您的要求，我已将原始文档精炼并重构为以下结构化内容。\n\n---\n\n## 目录\n\n-   [一、核心概念：什么是 AI Agent？](#一核心概念什么是-ai-agent)\n-   [二、Agent 架构与工作流程](#二agent-架构与工作流程)\n-   [三、推理与决策机制](#三推理与决策机制)\n-   [四、工具调用与工程实践](#四工具调用与工程实践)\n-   [五、面试高频问题分类](#五面试高频问题分类)\n-   [六、学习路径建议](#六学习路径建议)\n\n## 核心要点\n\n1.  **Agent 核心特征**：AI Agent 区别于传统 AI 的关键在于其**高自"
+      }
+    },
+    {
+      "id": "q_051",
+      "question": "AI Agent 和传统的被动响应式AI相比，主要区别是什么？",
+      "question_type": "comparative",
+      "key_terms": [
+        "AI Agent",
+        "被动响应式AI",
+        "自主性"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 172,
+        "kb_id": 43,
+        "kb_name": "Agent面试常见问题与解答 - 知识库",
+        "chunk_title": "工具链 → 实战”的路径系统学习。",
+        "chunk_content_preview": "工具链 → 实战”的路径系统学习。\n\n---\n\n## 一、核心概念：什么是 AI Agent？\n\nAI Agent（智能体）是能够**感知环境、自主决策并执行动作**以达成特定目标的系统。其核心特征为：**感知、推理、行动、反馈**。\n\n与传统的被动响应式AI（输入→处理→输出）不同，AI Agent具有**高自主性**，能够主动、目标导向地与环境进行持续交互。### LLM Agent 的五大核心能力\n1.  **工具调用（Function Calling）**：调用外部API、数据库等。\n2.  **记忆管理**：管理短期（对话上下文）与长期（持久化存储）记忆。\n3.  **规划与推理**"
+      }
+    },
+    {
+      "id": "q_052",
+      "question": "在构建AI Agent时，如果任务环境是动态且需要探索的，应该选择哪种推理与决策机制？",
+      "question_type": "factual",
+      "key_terms": [
+        "ReAct",
+        "推理与决策机制",
+        "动态环境",
+        "探索性任务"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 173,
+        "kb_id": 43,
+        "kb_name": "Agent面试常见问题与解答 - 知识库",
+        "chunk_title": "误。 |",
+        "chunk_content_preview": "误。 |\n\n### 工程实践分层架构\n-   **接入层**：对接多渠道（网页、APP、公众号）。\n-   **Agent核心层**：包含规划、工具调用、反思、记忆等模块。\n-   **工具层**：封装外部API、数据库、代码执行器等。\n\n### 典型 Agent 工作流程（伪代码）\n```python\ndef agent_loop(user_input):\n# 1. 理解用户意图\nintent = parse_intent(user_input)\n# 2. 选择工具\ntool = select_tool(intent)\n# 3. 调用工具并获取结果\nresult = tool.execute"
+      }
+    },
+    {
+      "id": "q_053",
+      "question": "在 LlamaIndex 中，如何创建一个能够查询天气的 ReAct Agent？",
+      "question_type": "procedural",
+      "key_terms": [
+        "LlamaIndex",
+        "ReAct Agent",
+        "FunctionTool",
+        "天气查询"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 174,
+        "kb_id": 43,
+        "kb_name": "Agent面试常见问题与解答 - 知识库",
+        "chunk_title": "amaIndex ReAct Agent）**：",
+        "chunk_content_preview": "amaIndex ReAct Agent）**：\n```python\nfrom llama_index.agent import ReActAgent\nfrom llama_index.tools import FunctionTool\n\ndef get_weather(city: str) -> str:\nreturn f\"Weather in {city} is sunny.\"weather_tool = FunctionTool.from_defaults(fn=get_weather)\nagent = ReActAgent.from_tools([weather_tool], llm="
+      }
+    },
+    {
+      "id": "q_054",
+      "question": "在AI Agent中，当主API调用失败时，通常会采用什么机制来处理异常？",
+      "question_type": "factual",
+      "key_terms": [
+        "降级策略",
+        "异常处理",
+        "备用方案"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 175,
+        "kb_id": 43,
+        "kb_name": "Agent面试常见问题与解答 - 知识库",
+        "chunk_title": "re a helpful assistant. Use tools when needed.\")",
+        "chunk_content_preview": "re a helpful assistant. Use tools when needed.\")\nagent_executor = AgentExecutor.from_agent_and_tools(agent, tools)\n```\n\n### 关键协议与策略\n-   **MCP协议**：Agent调用外部工具的**标准化协议**，相当于“通用接口标准”。\n-   **降级策略**：处理异常时的备用方案，如：主API → 备用API → 缓存数据 → 请求人工介入。\n-   **数据来源优先级**：直接数据 > 间接数据 > 用户输入。### Memory 管理\n管理对话历史，维持上下文。示"
+      }
+    },
+    {
+      "id": "q_055",
+      "question": "在Python异步编程中，协程、事件循环和可等待对象之间是什么关系？",
+      "question_type": "relational",
+      "key_terms": [
+        "协程",
+        "事件循环",
+        "可等待对象"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 163,
+        "kb_id": 42,
+        "kb_name": "asyncio协程基础",
+        "chunk_title": "好的，这是根据您的要求对原始文档进行精炼和结构化处理后的结果。",
+        "chunk_content_preview": "好的，这是根据您的要求对原始文档进行精炼和结构化处理后的结果。\n\n---\n\n## 目录\n\n1.  **概述**\n2.  **核心概念**\n-   协程 (Coroutine)\n-   事件循环 (Event Loop)\n-   可等待对象 (Awaitables)\n-   Task 对象\n3.  **基础代码示例**\n-   Hello World\n-   顺序执行\n-   并发执行 (`create_task`)\n-   并发执行 (`gather`)\n-   TaskGroup (Python 3.11+)\n4.  **进阶用法**\n-   异步 HTTP 请求\n-   超时控制\n5.  "
+      }
+    },
+    {
+      "id": "q_056",
+      "question": "asyncio 实现的是并发还是并行？它适合处理什么类型的任务？",
+      "question_type": "factual",
+      "key_terms": [
+        "asyncio",
+        "并发",
+        "并行",
+        "I/O密集型任务"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 164,
+        "kb_id": 42,
+        "kb_name": "asyncio协程基础",
+        "chunk_title": "阻塞调用",
+        "chunk_content_preview": "阻塞调用\n-   忘记 `await`\n-   并发限制\n-   同步 I/O\n6.  **处理阻塞代码**\n7.  **调试模式**\n8.  **协程 vs 多线程/多进程**\n9.  **注意事项**\n\n---\n\n## 核心要点\n\n1.  **单线程并发**：`asyncio` 通过事件循环在**单线程**内高效调度 I/O 密集型任务，避免了多线程的锁竞争和上下文切换开销。\n2.  **核心三要素**：理解 `async def` 定义的**协程**、作为调度核心的**事件循环**、以及通过 `await` 等待执行的**可等待对象**（协程、Task、Future）。\n3.  **并发"
+      }
+    },
+    {
+      "id": "q_057",
+      "question": "在Python的asyncio中，顺序执行协程和并发执行协程（如使用create_task或gather）有什么主要区别？",
+      "question_type": "comparative",
+      "key_terms": [
+        "顺序执行协程",
+        "并发执行协程",
+        "create_task",
+        "gather"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 166,
+        "kb_id": 42,
+        "kb_name": "asyncio协程基础",
+        "chunk_title": ")",
+        "chunk_content_preview": ")\n```\n\n#### 顺序执行协程\n\n```python\nimport asyncio\n\nasync def say_after(delay, what):\nawait asyncio.sleep(delay)\nprint(what)\n\nasync def main():\nawait say_after(1, 'hello')\nawait say_after(2, 'world')asyncio.run(main())\n```\n\n#### 并发执行多个协程（使用 `create_task`）\n\n```python\nimport asyncio\n\nasync def say_after(del"
+      }
+    },
+    {
+      "id": "q_058",
+      "question": "在Python 3.11及以上版本中，如何使用TaskGroup来管理多个异步任务？",
+      "question_type": "procedural",
+      "key_terms": [
+        "TaskGroup",
+        "asyncio",
+        "Python 3.11"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 167,
+        "kb_id": 42,
+        "kb_name": "asyncio协程基础",
+        "chunk_title": "ne', 'Task B done', 'Task C done']",
+        "chunk_content_preview": "ne', 'Task B done', 'Task C done']\n\nasyncio.run(main())\n```\n\n#### 使用 TaskGroup（Python 3.11+）\n\n```python\nimport asyncio\n\nasync def main():\nasync with asyncio.TaskGroup() as tg:\ntask1 = tg.create_task(say_after(1, \"Hello\"))\ntask2 = tg.create_task(say_after(2, \"World\"))\n# 所有任务在退出 with 块时自动等待完成\n```### 4"
+      }
+    },
+    {
+      "id": "q_059",
+      "question": "在Python的asyncio中，协程、多线程和多进程在调度方式、并发模型和适用场景上有什么主要区别？",
+      "question_type": "comparative",
+      "key_terms": [
+        "协程",
+        "多线程",
+        "多进程",
+        "asyncio"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 169,
+        "kb_id": 42,
+        "kb_name": "asyncio协程基础",
+        "chunk_title": "fetch_url(url)",
+        "chunk_content_preview": "fetch_url(url)\n```\n-   **陷阱 4：在协程中使用同步 I/O**：应使用异步库（如 `aiohttp`、`aiofiles`）替代同步库（如 `requests`、`open`）。\n\n### 6. 处理阻塞代码\n\n任何可能阻塞事件循环的同步代码都应通过 `run_in_executor()` 在线程池或进程池中执行。```python\nimport asyncio\nimport time\n\nasync def main():\nloop = asyncio.get_running_loop()\n# 在线程池中执行阻塞函数\nresult = await loop.run_i"
+      }
+    },
+    {
+      "id": "q_060",
+      "question": "在启动前后端服务之前，需要先启动哪些基础设施服务？",
+      "question_type": "factual",
+      "key_terms": [
+        "基础设施服务",
+        "Docker",
+        "PostgreSQL",
+        "Redis",
+        "MinIO"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 188,
+        "kb_id": 46,
+        "kb_name": "service-startup",
+        "chunk_title": "skill: service-startup",
+        "chunk_content_preview": "skill: service-startup\ndescription: 前后端服务标准启动流程\ntags: [startup, backend, frontend, troubleshooting]\n\n# 服务启动 Skill\n\n规范化的前后端服务启动流程，包含环境检查、缓存清理、服务启动和功能验证。\n\n## 使用场景\n\n- 开发环境启动服务\n- 代码更新后重启服务\n- 故障排查需要重启\n- 新环境首次部署\n\n## 快速启动\n\n### 前置条件：启动 Docker 基础设施\n\n```bash\ndocker compose up -d\n```\n\n### 后端启动（一键命令）\n\n```bash\n#"
+      }
+    },
+    {
+      "id": "q_061",
+      "question": "在启动后端服务之前，为什么要清理 Python 缓存？",
+      "question_type": "factual",
+      "key_terms": [
+        "Python 缓存",
+        "__pycache__",
+        "清理缓存"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 190,
+        "kb_id": 46,
+        "kb_name": "service-startup",
+        "chunk_title": "检查 Python 版本",
+        "chunk_content_preview": "检查 Python 版本\npython --version  # 需要 3.11+\n\n# 检查虚拟环境\n.venv\\Scripts\\python.exe --version\n\n# 检查 PostgreSQL\npsql --version\n\n# 检查 Redis\nredis-cli ping# 检查 Node.js\nnode --version  # 需要 18+\n```\n\n### 步骤 2：端口检查\n\n```bash\n# 检查后端端口（8002）\nnetstat -ano | findstr :8002\n\n# 检查前端端口（5173）\nnetstat -ano | findstr :5173\n"
+      }
+    },
+    {
+      "id": "q_062",
+      "question": "在PowerShell脚本中，启动后端服务时使用了什么命令？",
+      "question_type": "factual",
+      "key_terms": [
+        "PowerShell脚本",
+        "后端服务",
+        "启动命令"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 193,
+        "kb_id": 46,
+        "kb_name": "service-startup",
+        "chunk_title": "pi/resumes/ | python -m json.tool",
+        "chunk_content_preview": "pi/resumes/ | python -m json.tool\n```\n\n## 一键启动脚本\n\n### PowerShell 脚本\n\n创建 `start-services.ps1`：\n\n```powershell\n# 启动前后端服务\n\nWrite-Host \"=== 启动基础设施 (Docker) ===\" -ForegroundColor Green\ndocker compose up -d\nStart-Sleep -Seconds 3Write-Host \"=== 清理 Python 字节码缓存 ===\" -ForegroundColor Green\nGet-ChildItem -Pa"
+      }
+    },
+    {
+      "id": "q_063",
+      "question": "启动服务时，如果遇到端口被占用的问题，应该怎么解决？",
+      "question_type": "procedural",
+      "key_terms": [
+        "端口被占用",
+        "解决方案",
+        "netstat",
+        "taskkill"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 195,
+        "kb_id": 46,
+        "kb_name": "service-startup",
+        "chunk_title": "CKEND_PID=$!",
+        "chunk_content_preview": "CKEND_PID=$!\n\necho -e \"\\n=== 等待后端启动 ===\"\nsleep 5\n\necho -e \"\\n=== 启动前端服务 ===\"\ncd frontend\nnpm run dev &\nFRONTEND_PID=$!\n\necho -e \"\\n=== 服务启动完成 ===\"\necho \"后端地址: http://localhost:8002\"\necho \"前端地址: http://localhost:5173\"\necho \"API 文档: http://localhost:8002/docs\"\necho -e \"\\n后端 PID: $BACKEND_PID\"\necho \"前端"
+      }
+    },
+    {
+      "id": "q_064",
+      "question": "bcrypt 版本不兼容会导致什么登录错误？",
+      "question_type": "factual",
+      "key_terms": [
+        "bcrypt",
+        "版本不兼容",
+        "登录500错误"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 198,
+        "kb_id": 46,
+        "kb_name": "service-startup",
+        "chunk_title": "依赖",
+        "chunk_content_preview": "依赖\nrm -rf node_modules package-lock.json\n\n# 重新安装\nnpm install\n\n# 启动服务\nnpm run dev\n```\n\n### 问题 7：bcrypt 版本不兼容导致登录 500 错误\n\n**现象：**\n```\nPOST /api/auth/login HTTP/1.1\" 500 Internal Server Error\nValueError: password cannot be longer than 72 bytes, truncate manually if necessary\nAttributeError: module 'bcr"
+      }
+    },
+    {
+      "id": "q_065",
+      "question": "Claude Code 的核心优势是什么？",
+      "question_type": "factual",
+      "key_terms": [
+        "Claude Code",
+        "核心优势"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 177,
+        "kb_id": 44,
+        "kb_name": "https://github.com/anthropics/claude-code - 知识库",
+        "chunk_title": "好的，这是根据您的要求，对原始文档进行精炼和结构化处理后的内容。",
+        "chunk_content_preview": "好的，这是根据您的要求，对原始文档进行精炼和结构化处理后的内容。\n\n---\n\n# Claude Code 学习指南\n\n## 目录\n\n-   [概述](#概述)\n-   [安装与启动](#安装与启动)\n-   [核心概念](#核心概念)\n-   [知识库与学习技能（核心机制）](#知识库与学习技能核心机制)\n-   [关键特性](#关键特性)\n-   [常见工作流](#常见工作流)\n-   [注意事项](#注意事项)\n-   [关键术语](#关键术语)\n-   [资源](#资源)\n-   [最佳实践建议](#最佳实践建议)\n\n## 核心要点\n\n1.  **代理式编码工具**：Claude Cod"
+      }
+    },
+    {
+      "id": "q_066",
+      "question": "Claude Code 的核心机制是什么？它有什么作用？",
+      "question_type": "factual",
+      "key_terms": [
+        "Claude Code",
+        "核心机制",
+        "持久化记忆"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 178,
+        "kb_id": 44,
+        "kb_name": "https://github.com/anthropics/claude-code - 知识库",
+        "chunk_title": "处理 Git 工作流，是 AI 辅助开发的强大工具。",
+        "chunk_content_preview": "处理 Git 工作流，是 AI 辅助开发的强大工具。\n\n## 安装与启动\n\n### macOS / Linux（推荐）\n```bash\ncurl -fsSL https://claude.ai/install.sh | bash\n```\n\n### Windows（推荐）\n```powershell\nirm https://claude.ai/install.ps1 | iex\n```### Homebrew\n```bash\nbrew install --cask claude-code\n```\n\n**启动方式**：进入项目目录运行 `claude`，首次使用需登录。\n\n## 核心概念\n\n###"
+      }
+    },
+    {
+      "id": "q_067",
+      "question": "Claude Code 中的持久化记忆机制是如何工作的？",
+      "question_type": "conceptual",
+      "key_terms": [
+        "持久化记忆",
+        "知识存储",
+        "Learn skill"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 179,
+        "kb_id": 44,
+        "kb_name": "https://github.com/anthropics/claude-code - 知识库",
+        "chunk_title": "### 5. 子代理（Subagents）",
+        "chunk_content_preview": "### 5. 子代理（Subagents）\n创建独立子代理并行处理测试、文档生成等任务。\n\n## 知识库与学习技能（核心机制）\n\nClaude Code 的核心机制之一是**持久化记忆**，它为 AI 代理构建了跨会话的上下文一致性。\n\n### 知识存储\n项目特定的知识存储在 `.shinchan-docs/learnings.md` 文件中，每次启动时自动加载。### 知识分类\n知识会被自动归类为：\n-   **偏好（preferences）**：个人编码风格和习惯\n-   **模式（patterns）**：常用的代码结构和设计模式\n-   **约定（conventions）**：团队或项目"
+      }
+    },
+    {
+      "id": "q_068",
+      "question": "Claude Code 有哪些主要特性？",
+      "question_type": "factual",
+      "key_terms": [
+        "Claude Code",
+        "特性",
+        "全代码库理解",
+        "Git 工作流支持"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 180,
+        "kb_id": 44,
+        "kb_name": "https://github.com/anthropics/claude-code - 知识库",
+        "chunk_title": "内容作为动态知识源：",
+        "chunk_content_preview": "内容作为动态知识源：\n\n```bash\n# 示例：使用 git diff 获取变更\ngit diff main...feature-branch\n\n# 将 diff 输出传递给 Claude Code 进行分析\n```\n\n## 关键特性\n\n-   **全代码库理解**：跨多个文件和工具工作，理解项目整体结构。\n-   **Git 工作流支持**：处理提交、分支、合并等 Git 操作。\n-   **插件扩展**：支持自定义命令和代理。\n-   **权限模式**：控制操作范围，可存储指令和记忆。\n-   **项目配置示例**：一个完整的项目配置包含 hooks、skills、agents、comm"
+      }
+    },
+    {
+      "id": "q_069",
+      "question": "在复杂项目中，建议在哪个文件中明确结构和规范？",
+      "question_type": "factual",
+      "key_terms": [
+        "CLAUDE.md",
+        "复杂项目",
+        "结构",
+        "规范"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 181,
+        "kb_id": 44,
+        "kb_name": "https://github.com/anthropics/claude-code - 知识库",
+        "chunk_title": "**：复杂项目建议在 `CLAUDE.md` 中明确结构和规范。",
+        "chunk_content_preview": "**：复杂项目建议在 `CLAUDE.md` 中明确结构和规范。\n3.  **版本控制**：使用版本控制跟踪修改。\n4.  **数据隐私**：数据收集包括使用数据、对话数据和 `/bug` 反馈，明确禁止用于模型训练。\n\n## 关键术语\n\n| 术语 | 说明 |\n| :--- | :--- |\n| **hooks** | 事件触发逻辑 |\n| **skills** | AI 能力模块 |\n| **agents** | 任务执行实体 |\n| **commands** | 预定义操作 |\n| **anti-patterns** | 应避免的错误做法 |\n| **persistent memory*"
+      }
+    },
+    {
+      "id": "q_070",
+      "question": "learn-claude-code 项目最大的教学特色是什么？",
+      "question_type": "factual",
+      "key_terms": [
+        "learn-claude-code",
+        "沉浸式学习",
+        "Claude Code"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 183,
+        "kb_id": 45,
+        "kb_name": "https://github.com/learn-claude-code/learn-claude-code - 知识库",
+        "chunk_title": "好的，这是根据您的要求对原始文档进行精炼和结构化后的版本。",
+        "chunk_content_preview": "好的，这是根据您的要求对原始文档进行精炼和结构化后的版本。\n\n---\n\n## 目录\n\n1.  **项目概述**\n2.  **核心教学内容**\n3.  **推荐学习路径**\n4.  **关键术语表**\n5.  **相关资源与社区**\n6.  **注意事项与最佳实践**\n\n## 核心要点\n\n1.  **沉浸式学习体验**：`learn-claude-code` 项目的最大特色是“用 Claude Code 学习 Claude Code”，学习者直接在 Claude Code 环境中通过对话式教学完成所有课程。\n2.  **结构化课程体系**：教程包含 12 节循序渐进的课程，核心覆盖 **AI A"
+      }
+    },
+    {
+      "id": "q_071",
+      "question": "这个关于 Claude Code 的教程项目主要教哪些内容？",
+      "question_type": "factual",
+      "key_terms": [
+        "Claude Code",
+        "教程",
+        "核心教学内容"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 184,
+        "kb_id": 45,
+        "kb_name": "https://github.com/learn-claude-code/learn-claude-code - 知识库",
+        "chunk_title": "/delbaoliveira/learn-claude-code`",
+        "chunk_content_preview": "/delbaoliveira/learn-claude-code`\n- **项目标星**：26.7K\n- **教程结构**：12 节课，循序渐进\n- **主要语言**：Python\n- **许可证**：MIT\n\n## 2. 核心教学内容\n\n教程通过对话式教学，逐步讲解概念并配有动手练习，覆盖以下核心主题：- **AI Agent 核心原理**：理解智能体的基本概念与工作方式。\n- **基础循环（Basic Loop）**：Agent 的核心运行机制，包括感知、思考、行动。\n- **多 Agent 协作（Multi-Agent Collaboration）**：多个智能体如何协同完成任务。\n- "
+      }
+    },
+    {
+      "id": "q_072",
+      "question": "在智能体的运行循环中，感知、思考和行动这三个步骤是如何依次执行的？",
+      "question_type": "procedural",
+      "key_terms": [
+        "感知",
+        "思考",
+        "行动",
+        "运行循环"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 185,
+        "kb_id": 45,
+        "kb_name": "https://github.com/learn-claude-code/learn-claude-code - 知识库",
+        "chunk_title": "perceive(self, environment):",
+        "chunk_content_preview": "perceive(self, environment):\nobservation = environment.get_state()\nself.memory.append(observation)\nreturn observation\n\ndef think(self, observation):\naction = self.decide_action(observation)\nreturn actiondef act(self, action, environment):\nresult = environment.apply_action(action)\nreturn result\n\ndef "
+      }
+    },
+    {
+      "id": "q_073",
+      "question": "在多智能体协作中，如何将复杂任务拆解并分配给不同的智能体？",
+      "question_type": "procedural",
+      "key_terms": [
+        "Multi-Agent Collaboration",
+        "Task Decomposition",
+        "Agent"
+      ],
+      "difficulty": "medium",
+      "ground_truth": {
+        "chunk_id": 186,
+        "kb_id": 45,
+        "kb_name": "https://github.com/learn-claude-code/learn-claude-code - 知识库",
+        "chunk_title": "m:",
+        "chunk_content_preview": "m:\ndef __init__(self):\nself.agents = []\nself.shared_memory = {}\n\ndef add_agent(self, agent):\nself.agents.append(agent)\n\ndef coordinate(self, task):\nsubtasks = self.decompose_task(task)\nfor agent, subtask in zip(self.agents, subtasks):\nagent.assign_task(subtask)\nresults = [agent.execute() for agent i"
+      }
+    },
+    {
+      "id": "q_074",
+      "question": "学习这个课程需要具备哪些基础知识？",
+      "question_type": "factual",
+      "key_terms": [
+        "学习前提",
+        "编程基础",
+        "Python",
+        "命令行操作"
+      ],
+      "difficulty": "easy",
+      "ground_truth": {
+        "chunk_id": 187,
+        "kb_id": 45,
+        "kb_name": "https://github.com/learn-claude-code/learn-claude-code - 知识库",
+        "chunk_title": "的可运行代码。 |",
+        "chunk_content_preview": "的可运行代码。 |\n| **Shared Memory** | 共享记忆，多 Agent 间的信息交换机制。 |\n| **Task Decomposition** | 任务分解，将复杂任务拆解为子任务。 |\n\n## 5. 相关资源与社区\n\n- **GitHub Topics 聚合**：搜索 `learn-claude-code` 主题标签，可找到 17 个相关仓库（累计 500k+ 星标），包含 176 条实用技巧。\n- **官方文档**：Claude Code 使用手册。\n- **社区讨论**：GitHub Issues 和 Discussions。\n- **示例项目**：其他基于 Clau"
+      }
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -7,7 +7,7 @@ from app.database import get_db
 from app.modules.auth.dependencies import get_current_user_id
 from app.modules.knowledge_base.persistence_service import knowledge_base_persistence_service
 from app.modules.knowledge_base.rag_service import knowledge_base_rag_service
-from app.modules.knowledge_base.schemas import AskKnowledgeBaseRequest, RagAnswerDTO, RagChatListItemDTO
+from app.modules.knowledge_base.schemas import AskKnowledgeBaseRequest, RagAnswerDTO, RagChatDTO, RagChatListItemDTO
 
 router = APIRouter()
 
@@ -57,3 +57,27 @@ async def list_knowledge_base_chats(
     await knowledge_base_persistence_service.find_by_id_or_throw(db, kb_id, user_id)
     items = await knowledge_base_rag_service.list_chats(db, kb_id)
     return Result.success(items)
+
+
+@router.get("/{kb_id}/chat/history", response_model=Result[list[RagChatDTO]])
+async def get_knowledge_base_session_history(
+    kb_id: int,
+    session_id: str = Query(..., min_length=1),
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    await knowledge_base_persistence_service.find_by_id_or_throw(db, kb_id, user_id)
+    items = await knowledge_base_persistence_service.find_kb_session_chat_dtos(db, kb_id, session_id)
+    return Result.success(items)
+
+
+@router.delete("/{kb_id}/chats/{session_id}")
+async def delete_knowledge_base_session(
+    kb_id: int,
+    session_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    await knowledge_base_persistence_service.find_by_id_or_throw(db, kb_id, user_id)
+    count = await knowledge_base_persistence_service.delete_kb_session(db, kb_id, session_id)
+    return Result.success({"deleted": count})

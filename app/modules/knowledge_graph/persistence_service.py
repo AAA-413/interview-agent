@@ -148,13 +148,19 @@ class KnowledgeGraphPersistenceService:
         entity_types: list[str] | None = None,
         limit: int = 200,
     ) -> GraphDataDTO:
-        triple_stmt = select(KnowledgeTriple).options(
-            selectinload(KnowledgeTriple.subject_entity),
-            selectinload(KnowledgeTriple.object_entity),
+        triple_stmt = (
+            select(KnowledgeTriple)
+            .options(
+                selectinload(KnowledgeTriple.subject_entity),
+                selectinload(KnowledgeTriple.object_entity),
+            )
+            .join(KnowledgeGraphEntity, KnowledgeTriple.subject_id == KnowledgeGraphEntity.id)
         )
         if kb_id is not None:
             triple_stmt = triple_stmt.where(KnowledgeTriple.source_kb_id == kb_id)
-        triple_stmt = triple_stmt.limit(limit)
+        triple_stmt = triple_stmt.order_by(
+            (KnowledgeGraphEntity.mention_count + KnowledgeTriple.confidence * 10).desc()
+        ).limit(limit)
 
         result = await db.execute(triple_stmt)
         triples = list(result.scalars().all())

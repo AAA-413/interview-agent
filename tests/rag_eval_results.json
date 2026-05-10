@@ -1,0 +1,1913 @@
+{
+  "evaluated_at": "2026-05-10T16:06:14.822499",
+  "dataset_size": 74,
+  "user_id": 1,
+  "scopes": {
+    "single_kb": {
+      "strategies": {
+        "vector_only": {
+          "config": {
+            "name": "vector_only",
+            "use_vector": true,
+            "use_graph": false,
+            "use_rerank": false,
+            "top_k": 4,
+            "graph_weight": 0.5,
+            "scope": "single_kb"
+          },
+          "metrics": {
+            "recall": 0.7973,
+            "mrr": 0.5676,
+            "precision": 0.1993,
+            "hit@1": 0.4054,
+            "hit@3": 0.7162,
+            "hit@5": 0.7973,
+            "avg_latency_ms": 502.4,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.8108,
+              "mrr": 0.5811,
+              "precision": 0.2027,
+              "hit@1": 0.4054,
+              "hit@3": 0.7568,
+              "hit@5": 0.8108,
+              "avg_latency_ms": 506.1,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 0.6667,
+              "mrr": 0.5,
+              "precision": 0.1667,
+              "hit@1": 0.3333,
+              "hit@3": 0.6667,
+              "hit@5": 0.6667,
+              "avg_latency_ms": 497.2,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.8636,
+              "mrr": 0.6212,
+              "precision": 0.2159,
+              "hit@1": 0.5,
+              "hit@3": 0.6818,
+              "hit@5": 0.8636,
+              "avg_latency_ms": 492.3,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.6,
+              "mrr": 0.3667,
+              "precision": 0.15,
+              "hit@1": 0.2,
+              "hit@3": 0.6,
+              "hit@5": 0.6,
+              "avg_latency_ms": 534.6,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 0.75,
+              "mrr": 0.5,
+              "precision": 0.1875,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 0.75,
+              "avg_latency_ms": 491.2,
+              "count": 4
+            }
+          }
+        },
+        "vector_rerank": {
+          "config": {
+            "name": "vector_rerank",
+            "use_vector": true,
+            "use_graph": false,
+            "use_rerank": true,
+            "top_k": 4,
+            "graph_weight": 0.5,
+            "scope": "single_kb"
+          },
+          "metrics": {
+            "recall": 0.7973,
+            "mrr": 0.5676,
+            "precision": 0.1993,
+            "hit@1": 0.4054,
+            "hit@3": 0.7162,
+            "hit@5": 0.7973,
+            "avg_latency_ms": 522.4,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.8108,
+              "mrr": 0.5811,
+              "precision": 0.2027,
+              "hit@1": 0.4054,
+              "hit@3": 0.7568,
+              "hit@5": 0.8108,
+              "avg_latency_ms": 519.1,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 0.6667,
+              "mrr": 0.5,
+              "precision": 0.1667,
+              "hit@1": 0.3333,
+              "hit@3": 0.6667,
+              "hit@5": 0.6667,
+              "avg_latency_ms": 539.7,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.8636,
+              "mrr": 0.6212,
+              "precision": 0.2159,
+              "hit@1": 0.5,
+              "hit@3": 0.6818,
+              "hit@5": 0.8636,
+              "avg_latency_ms": 529.5,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.6,
+              "mrr": 0.3667,
+              "precision": 0.15,
+              "hit@1": 0.2,
+              "hit@3": 0.6,
+              "hit@5": 0.6,
+              "avg_latency_ms": 524.6,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 0.75,
+              "mrr": 0.5,
+              "precision": 0.1875,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 0.75,
+              "avg_latency_ms": 485.8,
+              "count": 4
+            }
+          }
+        },
+        "graph_only": {
+          "config": {
+            "name": "graph_only",
+            "use_vector": false,
+            "use_graph": true,
+            "use_rerank": false,
+            "top_k": 4,
+            "graph_weight": 0.5,
+            "scope": "single_kb"
+          },
+          "metrics": {
+            "recall": 0.6216,
+            "mrr": 0.4212,
+            "precision": 0.1554,
+            "hit@1": 0.2838,
+            "hit@3": 0.5676,
+            "hit@5": 0.6216,
+            "avg_latency_ms": 459.3,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.5946,
+              "mrr": 0.3941,
+              "precision": 0.1486,
+              "hit@1": 0.2432,
+              "hit@3": 0.5676,
+              "hit@5": 0.5946,
+              "avg_latency_ms": 460.1,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 0.5,
+              "mrr": 0.3889,
+              "precision": 0.125,
+              "hit@1": 0.3333,
+              "hit@3": 0.5,
+              "hit@5": 0.5,
+              "avg_latency_ms": 465.8,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.6818,
+              "mrr": 0.4318,
+              "precision": 0.1705,
+              "hit@1": 0.2727,
+              "hit@3": 0.5909,
+              "hit@5": 0.6818,
+              "avg_latency_ms": 462.6,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.6,
+              "mrr": 0.6,
+              "precision": 0.15,
+              "hit@1": 0.6,
+              "hit@3": 0.6,
+              "hit@5": 0.6,
+              "avg_latency_ms": 474.6,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 0.75,
+              "mrr": 0.4375,
+              "precision": 0.1875,
+              "hit@1": 0.25,
+              "hit@3": 0.5,
+              "hit@5": 0.75,
+              "avg_latency_ms": 404.2,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_no_rerank": {
+          "config": {
+            "name": "hybrid_no_rerank",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": false,
+            "top_k": 4,
+            "graph_weight": 0.5,
+            "scope": "single_kb"
+          },
+          "metrics": {
+            "recall": 0.8784,
+            "mrr": 0.6284,
+            "precision": 0.2196,
+            "hit@1": 0.4595,
+            "hit@3": 0.7703,
+            "hit@5": 0.8784,
+            "avg_latency_ms": 515.5,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.8649,
+              "mrr": 0.6014,
+              "precision": 0.2162,
+              "hit@1": 0.4054,
+              "hit@3": 0.7838,
+              "hit@5": 0.8649,
+              "avg_latency_ms": 503.5,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 1.0,
+              "mrr": 0.7083,
+              "precision": 0.25,
+              "hit@1": 0.5,
+              "hit@3": 0.8333,
+              "hit@5": 1.0,
+              "avg_latency_ms": 507.7,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.9091,
+              "mrr": 0.6894,
+              "precision": 0.2273,
+              "hit@1": 0.5909,
+              "hit@3": 0.7273,
+              "hit@5": 0.9091,
+              "avg_latency_ms": 537.8,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.8,
+              "mrr": 0.5667,
+              "precision": 0.2,
+              "hit@1": 0.4,
+              "hit@3": 0.8,
+              "hit@5": 0.8,
+              "avg_latency_ms": 503.8,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 0.75,
+              "mrr": 0.5,
+              "precision": 0.1875,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 0.75,
+              "avg_latency_ms": 530.8,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_rerank": {
+          "config": {
+            "name": "hybrid_rerank",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": true,
+            "top_k": 4,
+            "graph_weight": 0.5,
+            "scope": "single_kb"
+          },
+          "metrics": {
+            "recall": 0.8784,
+            "mrr": 0.6284,
+            "precision": 0.2196,
+            "hit@1": 0.4595,
+            "hit@3": 0.7703,
+            "hit@5": 0.8784,
+            "avg_latency_ms": 506.9,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.8649,
+              "mrr": 0.6014,
+              "precision": 0.2162,
+              "hit@1": 0.4054,
+              "hit@3": 0.7838,
+              "hit@5": 0.8649,
+              "avg_latency_ms": 508.6,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 1.0,
+              "mrr": 0.7083,
+              "precision": 0.25,
+              "hit@1": 0.5,
+              "hit@3": 0.8333,
+              "hit@5": 1.0,
+              "avg_latency_ms": 544.0,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.9091,
+              "mrr": 0.6894,
+              "precision": 0.2273,
+              "hit@1": 0.5909,
+              "hit@3": 0.7273,
+              "hit@5": 0.9091,
+              "avg_latency_ms": 494.0,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.8,
+              "mrr": 0.5667,
+              "precision": 0.2,
+              "hit@1": 0.4,
+              "hit@3": 0.8,
+              "hit@5": 0.8,
+              "avg_latency_ms": 510.0,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 0.75,
+              "mrr": 0.5,
+              "precision": 0.1875,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 0.75,
+              "avg_latency_ms": 502.2,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_rerank_top2": {
+          "config": {
+            "name": "hybrid_rerank_top2",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": true,
+            "top_k": 2,
+            "graph_weight": 0.5,
+            "scope": "single_kb"
+          },
+          "metrics": {
+            "recall": 0.7162,
+            "mrr": 0.5878,
+            "precision": 0.3581,
+            "hit@1": 0.4595,
+            "hit@3": 0.7162,
+            "hit@5": 0.7162,
+            "avg_latency_ms": 512.1,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.7297,
+              "mrr": 0.5676,
+              "precision": 0.3649,
+              "hit@1": 0.4054,
+              "hit@3": 0.7297,
+              "hit@5": 0.7297,
+              "avg_latency_ms": 513.5,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 1.0,
+              "mrr": 0.75,
+              "precision": 0.5,
+              "hit@1": 0.5,
+              "hit@3": 1.0,
+              "hit@5": 1.0,
+              "avg_latency_ms": 525.2,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.6364,
+              "mrr": 0.6136,
+              "precision": 0.3182,
+              "hit@1": 0.5909,
+              "hit@3": 0.6364,
+              "hit@5": 0.6364,
+              "avg_latency_ms": 509.8,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.6,
+              "mrr": 0.5,
+              "precision": 0.3,
+              "hit@1": 0.4,
+              "hit@3": 0.6,
+              "hit@5": 0.6,
+              "avg_latency_ms": 495.2,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 0.75,
+              "mrr": 0.5,
+              "precision": 0.375,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 0.75,
+              "avg_latency_ms": 512.5,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_rerank_top4": {
+          "config": {
+            "name": "hybrid_rerank_top4",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": true,
+            "top_k": 4,
+            "graph_weight": 0.5,
+            "scope": "single_kb"
+          },
+          "metrics": {
+            "recall": 0.8784,
+            "mrr": 0.6284,
+            "precision": 0.2196,
+            "hit@1": 0.4595,
+            "hit@3": 0.7703,
+            "hit@5": 0.8784,
+            "avg_latency_ms": 533.1,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.8649,
+              "mrr": 0.6014,
+              "precision": 0.2162,
+              "hit@1": 0.4054,
+              "hit@3": 0.7838,
+              "hit@5": 0.8649,
+              "avg_latency_ms": 532.5,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 1.0,
+              "mrr": 0.7083,
+              "precision": 0.25,
+              "hit@1": 0.5,
+              "hit@3": 0.8333,
+              "hit@5": 1.0,
+              "avg_latency_ms": 508.2,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.9091,
+              "mrr": 0.6894,
+              "precision": 0.2273,
+              "hit@1": 0.5909,
+              "hit@3": 0.7273,
+              "hit@5": 0.9091,
+              "avg_latency_ms": 535.1,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.8,
+              "mrr": 0.5667,
+              "precision": 0.2,
+              "hit@1": 0.4,
+              "hit@3": 0.8,
+              "hit@5": 0.8,
+              "avg_latency_ms": 534.0,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 0.75,
+              "mrr": 0.5,
+              "precision": 0.1875,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 0.75,
+              "avg_latency_ms": 564.8,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_rerank_top6": {
+          "config": {
+            "name": "hybrid_rerank_top6",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": true,
+            "top_k": 6,
+            "graph_weight": 0.5,
+            "scope": "single_kb"
+          },
+          "metrics": {
+            "recall": 0.9189,
+            "mrr": 0.6347,
+            "precision": 0.1532,
+            "hit@1": 0.4595,
+            "hit@3": 0.7703,
+            "hit@5": 0.9054,
+            "avg_latency_ms": 527.7,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.8919,
+              "mrr": 0.6059,
+              "precision": 0.1486,
+              "hit@1": 0.4054,
+              "hit@3": 0.7838,
+              "hit@5": 0.8649,
+              "avg_latency_ms": 511.8,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 1.0,
+              "mrr": 0.7,
+              "precision": 0.1667,
+              "hit@1": 0.5,
+              "hit@3": 0.8333,
+              "hit@5": 1.0,
+              "avg_latency_ms": 524.0,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.9545,
+              "mrr": 0.6962,
+              "precision": 0.1591,
+              "hit@1": 0.5909,
+              "hit@3": 0.7273,
+              "hit@5": 0.9545,
+              "avg_latency_ms": 550.0,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.8,
+              "mrr": 0.5667,
+              "precision": 0.1333,
+              "hit@1": 0.4,
+              "hit@3": 0.8,
+              "hit@5": 0.8,
+              "avg_latency_ms": 539.2,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 1.0,
+              "mrr": 0.55,
+              "precision": 0.1667,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 1.0,
+              "avg_latency_ms": 543.5,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_rerank_top8": {
+          "config": {
+            "name": "hybrid_rerank_top8",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": true,
+            "top_k": 8,
+            "graph_weight": 0.5,
+            "scope": "single_kb"
+          },
+          "metrics": {
+            "recall": 0.9595,
+            "mrr": 0.64,
+            "precision": 0.1199,
+            "hit@1": 0.4595,
+            "hit@3": 0.7703,
+            "hit@5": 0.9054,
+            "avg_latency_ms": 531.9,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.9459,
+              "mrr": 0.6131,
+              "precision": 0.1182,
+              "hit@1": 0.4054,
+              "hit@3": 0.7838,
+              "hit@5": 0.8649,
+              "avg_latency_ms": 537.5,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 1.0,
+              "mrr": 0.7,
+              "precision": 0.125,
+              "hit@1": 0.5,
+              "hit@3": 0.8333,
+              "hit@5": 1.0,
+              "avg_latency_ms": 530.3,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.9545,
+              "mrr": 0.6962,
+              "precision": 0.1193,
+              "hit@1": 0.5909,
+              "hit@3": 0.7273,
+              "hit@5": 0.9545,
+              "avg_latency_ms": 535.2,
+              "count": 22
+            },
+            "relational": {
+              "recall": 1.0,
+              "mrr": 0.5917,
+              "precision": 0.125,
+              "hit@1": 0.4,
+              "hit@3": 0.8,
+              "hit@5": 0.8,
+              "avg_latency_ms": 486.2,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 1.0,
+              "mrr": 0.55,
+              "precision": 0.125,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 1.0,
+              "avg_latency_ms": 522.0,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_rerank_top10": {
+          "config": {
+            "name": "hybrid_rerank_top10",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": true,
+            "top_k": 10,
+            "graph_weight": 0.5,
+            "scope": "single_kb"
+          },
+          "metrics": {
+            "recall": 0.9595,
+            "mrr": 0.64,
+            "precision": 0.0959,
+            "hit@1": 0.4595,
+            "hit@3": 0.7703,
+            "hit@5": 0.9054,
+            "avg_latency_ms": 524.5,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.9459,
+              "mrr": 0.6131,
+              "precision": 0.0946,
+              "hit@1": 0.4054,
+              "hit@3": 0.7838,
+              "hit@5": 0.8649,
+              "avg_latency_ms": 518.1,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 1.0,
+              "mrr": 0.7,
+              "precision": 0.1,
+              "hit@1": 0.5,
+              "hit@3": 0.8333,
+              "hit@5": 1.0,
+              "avg_latency_ms": 521.7,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.9545,
+              "mrr": 0.6962,
+              "precision": 0.0955,
+              "hit@1": 0.5909,
+              "hit@3": 0.7273,
+              "hit@5": 0.9545,
+              "avg_latency_ms": 539.1,
+              "count": 22
+            },
+            "relational": {
+              "recall": 1.0,
+              "mrr": 0.5917,
+              "precision": 0.1,
+              "hit@1": 0.4,
+              "hit@3": 0.8,
+              "hit@5": 0.8,
+              "avg_latency_ms": 485.0,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 1.0,
+              "mrr": 0.55,
+              "precision": 0.1,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 1.0,
+              "avg_latency_ms": 557.2,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_rerank_weight0.3": {
+          "config": {
+            "name": "hybrid_rerank_weight0.3",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": true,
+            "top_k": 4,
+            "graph_weight": 0.3,
+            "scope": "single_kb"
+          },
+          "metrics": {
+            "recall": 0.8784,
+            "mrr": 0.6306,
+            "precision": 0.2196,
+            "hit@1": 0.4595,
+            "hit@3": 0.7703,
+            "hit@5": 0.8784,
+            "avg_latency_ms": 552.5,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.8649,
+              "mrr": 0.6014,
+              "precision": 0.2162,
+              "hit@1": 0.4054,
+              "hit@3": 0.7838,
+              "hit@5": 0.8649,
+              "avg_latency_ms": 536.7,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 1.0,
+              "mrr": 0.7083,
+              "precision": 0.25,
+              "hit@1": 0.5,
+              "hit@3": 0.8333,
+              "hit@5": 1.0,
+              "avg_latency_ms": 530.2,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.9091,
+              "mrr": 0.697,
+              "precision": 0.2273,
+              "hit@1": 0.5909,
+              "hit@3": 0.7273,
+              "hit@5": 0.9091,
+              "avg_latency_ms": 594.9,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.8,
+              "mrr": 0.5667,
+              "precision": 0.2,
+              "hit@1": 0.4,
+              "hit@3": 0.8,
+              "hit@5": 0.8,
+              "avg_latency_ms": 503.0,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 0.75,
+              "mrr": 0.5,
+              "precision": 0.1875,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 0.75,
+              "avg_latency_ms": 560.0,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_rerank_weight0.5": {
+          "config": {
+            "name": "hybrid_rerank_weight0.5",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": true,
+            "top_k": 4,
+            "graph_weight": 0.5,
+            "scope": "single_kb"
+          },
+          "metrics": {
+            "recall": 0.8784,
+            "mrr": 0.6284,
+            "precision": 0.2196,
+            "hit@1": 0.4595,
+            "hit@3": 0.7703,
+            "hit@5": 0.8784,
+            "avg_latency_ms": 515.4,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.8649,
+              "mrr": 0.6014,
+              "precision": 0.2162,
+              "hit@1": 0.4054,
+              "hit@3": 0.7838,
+              "hit@5": 0.8649,
+              "avg_latency_ms": 515.1,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 1.0,
+              "mrr": 0.7083,
+              "precision": 0.25,
+              "hit@1": 0.5,
+              "hit@3": 0.8333,
+              "hit@5": 1.0,
+              "avg_latency_ms": 516.7,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.9091,
+              "mrr": 0.6894,
+              "precision": 0.2273,
+              "hit@1": 0.5909,
+              "hit@3": 0.7273,
+              "hit@5": 0.9091,
+              "avg_latency_ms": 515.2,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.8,
+              "mrr": 0.5667,
+              "precision": 0.2,
+              "hit@1": 0.4,
+              "hit@3": 0.8,
+              "hit@5": 0.8,
+              "avg_latency_ms": 506.2,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 0.75,
+              "mrr": 0.5,
+              "precision": 0.1875,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 0.75,
+              "avg_latency_ms": 529.0,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_rerank_weight0.7": {
+          "config": {
+            "name": "hybrid_rerank_weight0.7",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": true,
+            "top_k": 4,
+            "graph_weight": 0.7,
+            "scope": "single_kb"
+          },
+          "metrics": {
+            "recall": 0.8514,
+            "mrr": 0.6318,
+            "precision": 0.2128,
+            "hit@1": 0.4865,
+            "hit@3": 0.7568,
+            "hit@5": 0.8514,
+            "avg_latency_ms": 531.9,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.8649,
+              "mrr": 0.6036,
+              "precision": 0.2162,
+              "hit@1": 0.4054,
+              "hit@3": 0.8108,
+              "hit@5": 0.8649,
+              "avg_latency_ms": 529.1,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 1.0,
+              "mrr": 0.6667,
+              "precision": 0.25,
+              "hit@1": 0.5,
+              "hit@3": 0.6667,
+              "hit@5": 1.0,
+              "avg_latency_ms": 517.7,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.8182,
+              "mrr": 0.6629,
+              "precision": 0.2045,
+              "hit@1": 0.5909,
+              "hit@3": 0.6818,
+              "hit@5": 0.8182,
+              "avg_latency_ms": 532.5,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.8,
+              "mrr": 0.7,
+              "precision": 0.2,
+              "hit@1": 0.6,
+              "hit@3": 0.8,
+              "hit@5": 0.8,
+              "avg_latency_ms": 574.6,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 0.75,
+              "mrr": 0.5833,
+              "precision": 0.1875,
+              "hit@1": 0.5,
+              "hit@3": 0.75,
+              "hit@5": 0.75,
+              "avg_latency_ms": 523.0,
+              "count": 4
+            }
+          }
+        }
+      }
+    },
+    "cross_kb": {
+      "strategies": {
+        "vector_only": {
+          "config": {
+            "name": "vector_only",
+            "use_vector": true,
+            "use_graph": false,
+            "use_rerank": false,
+            "top_k": 4,
+            "graph_weight": 0.5,
+            "scope": "cross_kb"
+          },
+          "metrics": {
+            "recall": 0.6486,
+            "mrr": 0.4673,
+            "precision": 0.1622,
+            "hit@1": 0.3243,
+            "hit@3": 0.5811,
+            "hit@5": 0.6486,
+            "avg_latency_ms": 575.9,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.7027,
+              "mrr": 0.4752,
+              "precision": 0.1757,
+              "hit@1": 0.2973,
+              "hit@3": 0.6216,
+              "hit@5": 0.7027,
+              "avg_latency_ms": 556.6,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 0.5,
+              "mrr": 0.3333,
+              "precision": 0.125,
+              "hit@1": 0.1667,
+              "hit@3": 0.5,
+              "hit@5": 0.5,
+              "avg_latency_ms": 568.8,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.6364,
+              "mrr": 0.5227,
+              "precision": 0.1591,
+              "hit@1": 0.4545,
+              "hit@3": 0.5455,
+              "hit@5": 0.6364,
+              "avg_latency_ms": 621.5,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.4,
+              "mrr": 0.3,
+              "precision": 0.1,
+              "hit@1": 0.2,
+              "hit@3": 0.4,
+              "hit@5": 0.4,
+              "avg_latency_ms": 505.6,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 0.75,
+              "mrr": 0.5,
+              "precision": 0.1875,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 0.75,
+              "avg_latency_ms": 602.5,
+              "count": 4
+            }
+          }
+        },
+        "vector_rerank": {
+          "config": {
+            "name": "vector_rerank",
+            "use_vector": true,
+            "use_graph": false,
+            "use_rerank": true,
+            "top_k": 4,
+            "graph_weight": 0.5,
+            "scope": "cross_kb"
+          },
+          "metrics": {
+            "recall": 0.6486,
+            "mrr": 0.4673,
+            "precision": 0.1622,
+            "hit@1": 0.3243,
+            "hit@3": 0.5811,
+            "hit@5": 0.6486,
+            "avg_latency_ms": 525.5,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.7027,
+              "mrr": 0.4752,
+              "precision": 0.1757,
+              "hit@1": 0.2973,
+              "hit@3": 0.6216,
+              "hit@5": 0.7027,
+              "avg_latency_ms": 523.2,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 0.5,
+              "mrr": 0.3333,
+              "precision": 0.125,
+              "hit@1": 0.1667,
+              "hit@3": 0.5,
+              "hit@5": 0.5,
+              "avg_latency_ms": 501.8,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.6364,
+              "mrr": 0.5227,
+              "precision": 0.1591,
+              "hit@1": 0.4545,
+              "hit@3": 0.5455,
+              "hit@5": 0.6364,
+              "avg_latency_ms": 540.9,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.4,
+              "mrr": 0.3,
+              "precision": 0.1,
+              "hit@1": 0.2,
+              "hit@3": 0.4,
+              "hit@5": 0.4,
+              "avg_latency_ms": 510.6,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 0.75,
+              "mrr": 0.5,
+              "precision": 0.1875,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 0.75,
+              "avg_latency_ms": 515.8,
+              "count": 4
+            }
+          }
+        },
+        "graph_only": {
+          "config": {
+            "name": "graph_only",
+            "use_vector": false,
+            "use_graph": true,
+            "use_rerank": false,
+            "top_k": 4,
+            "graph_weight": 0.5,
+            "scope": "cross_kb"
+          },
+          "metrics": {
+            "recall": 0.4189,
+            "mrr": 0.2466,
+            "precision": 0.1047,
+            "hit@1": 0.1351,
+            "hit@3": 0.3784,
+            "hit@5": 0.4189,
+            "avg_latency_ms": 490.3,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.4054,
+              "mrr": 0.2568,
+              "precision": 0.1014,
+              "hit@1": 0.1622,
+              "hit@3": 0.3514,
+              "hit@5": 0.4054,
+              "avg_latency_ms": 477.5,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 0.1667,
+              "mrr": 0.0556,
+              "precision": 0.0417,
+              "hit@1": 0.0,
+              "hit@3": 0.1667,
+              "hit@5": 0.1667,
+              "avg_latency_ms": 466.7,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.5,
+              "mrr": 0.2765,
+              "precision": 0.125,
+              "hit@1": 0.1364,
+              "hit@3": 0.4545,
+              "hit@5": 0.5,
+              "avg_latency_ms": 511.8,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.2,
+              "mrr": 0.2,
+              "precision": 0.05,
+              "hit@1": 0.2,
+              "hit@3": 0.2,
+              "hit@5": 0.2,
+              "avg_latency_ms": 491.2,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 0.75,
+              "mrr": 0.3333,
+              "precision": 0.1875,
+              "hit@1": 0.0,
+              "hit@3": 0.75,
+              "hit@5": 0.75,
+              "avg_latency_ms": 525.5,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_no_rerank": {
+          "config": {
+            "name": "hybrid_no_rerank",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": false,
+            "top_k": 4,
+            "graph_weight": 0.5,
+            "scope": "cross_kb"
+          },
+          "metrics": {
+            "recall": 0.6622,
+            "mrr": 0.4628,
+            "precision": 0.1655,
+            "hit@1": 0.3108,
+            "hit@3": 0.5946,
+            "hit@5": 0.6622,
+            "avg_latency_ms": 565.8,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.7297,
+              "mrr": 0.4842,
+              "precision": 0.1824,
+              "hit@1": 0.2973,
+              "hit@3": 0.6486,
+              "hit@5": 0.7297,
+              "avg_latency_ms": 567.3,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 0.5,
+              "mrr": 0.3333,
+              "precision": 0.125,
+              "hit@1": 0.1667,
+              "hit@3": 0.5,
+              "hit@5": 0.5,
+              "avg_latency_ms": 549.3,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.6364,
+              "mrr": 0.4924,
+              "precision": 0.1591,
+              "hit@1": 0.4091,
+              "hit@3": 0.5455,
+              "hit@5": 0.6364,
+              "avg_latency_ms": 574.3,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.4,
+              "mrr": 0.3,
+              "precision": 0.1,
+              "hit@1": 0.2,
+              "hit@3": 0.4,
+              "hit@5": 0.4,
+              "avg_latency_ms": 566.2,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 0.75,
+              "mrr": 0.5,
+              "precision": 0.1875,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 0.75,
+              "avg_latency_ms": 530.0,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_rerank": {
+          "config": {
+            "name": "hybrid_rerank",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": true,
+            "top_k": 4,
+            "graph_weight": 0.5,
+            "scope": "cross_kb"
+          },
+          "metrics": {
+            "recall": 0.6622,
+            "mrr": 0.4628,
+            "precision": 0.1655,
+            "hit@1": 0.3108,
+            "hit@3": 0.5946,
+            "hit@5": 0.6622,
+            "avg_latency_ms": 546.3,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.7297,
+              "mrr": 0.4842,
+              "precision": 0.1824,
+              "hit@1": 0.2973,
+              "hit@3": 0.6486,
+              "hit@5": 0.7297,
+              "avg_latency_ms": 540.6,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 0.5,
+              "mrr": 0.3333,
+              "precision": 0.125,
+              "hit@1": 0.1667,
+              "hit@3": 0.5,
+              "hit@5": 0.5,
+              "avg_latency_ms": 566.0,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.6364,
+              "mrr": 0.4924,
+              "precision": 0.1591,
+              "hit@1": 0.4091,
+              "hit@3": 0.5455,
+              "hit@5": 0.6364,
+              "avg_latency_ms": 557.6,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.4,
+              "mrr": 0.3,
+              "precision": 0.1,
+              "hit@1": 0.2,
+              "hit@3": 0.4,
+              "hit@5": 0.4,
+              "avg_latency_ms": 504.8,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 0.75,
+              "mrr": 0.5,
+              "precision": 0.1875,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 0.75,
+              "avg_latency_ms": 559.0,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_rerank_top2": {
+          "config": {
+            "name": "hybrid_rerank_top2",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": true,
+            "top_k": 2,
+            "graph_weight": 0.5,
+            "scope": "cross_kb"
+          },
+          "metrics": {
+            "recall": 0.5541,
+            "mrr": 0.4324,
+            "precision": 0.277,
+            "hit@1": 0.3108,
+            "hit@3": 0.5541,
+            "hit@5": 0.5541,
+            "avg_latency_ms": 539.6,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.5946,
+              "mrr": 0.4459,
+              "precision": 0.2973,
+              "hit@1": 0.2973,
+              "hit@3": 0.5946,
+              "hit@5": 0.5946,
+              "avg_latency_ms": 535.6,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 0.5,
+              "mrr": 0.3333,
+              "precision": 0.25,
+              "hit@1": 0.1667,
+              "hit@3": 0.5,
+              "hit@5": 0.5,
+              "avg_latency_ms": 584.5,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.5,
+              "mrr": 0.4545,
+              "precision": 0.25,
+              "hit@1": 0.4091,
+              "hit@3": 0.5,
+              "hit@5": 0.5,
+              "avg_latency_ms": 536.6,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.4,
+              "mrr": 0.3,
+              "precision": 0.2,
+              "hit@1": 0.2,
+              "hit@3": 0.4,
+              "hit@5": 0.4,
+              "avg_latency_ms": 520.8,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 0.75,
+              "mrr": 0.5,
+              "precision": 0.375,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 0.75,
+              "avg_latency_ms": 548.2,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_rerank_top4": {
+          "config": {
+            "name": "hybrid_rerank_top4",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": true,
+            "top_k": 4,
+            "graph_weight": 0.5,
+            "scope": "cross_kb"
+          },
+          "metrics": {
+            "recall": 0.6622,
+            "mrr": 0.4628,
+            "precision": 0.1655,
+            "hit@1": 0.3108,
+            "hit@3": 0.5946,
+            "hit@5": 0.6622,
+            "avg_latency_ms": 554.7,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.7297,
+              "mrr": 0.4842,
+              "precision": 0.1824,
+              "hit@1": 0.2973,
+              "hit@3": 0.6486,
+              "hit@5": 0.7297,
+              "avg_latency_ms": 565.9,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 0.5,
+              "mrr": 0.3333,
+              "precision": 0.125,
+              "hit@1": 0.1667,
+              "hit@3": 0.5,
+              "hit@5": 0.5,
+              "avg_latency_ms": 561.2,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.6364,
+              "mrr": 0.4924,
+              "precision": 0.1591,
+              "hit@1": 0.4091,
+              "hit@3": 0.5455,
+              "hit@5": 0.6364,
+              "avg_latency_ms": 537.8,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.4,
+              "mrr": 0.3,
+              "precision": 0.1,
+              "hit@1": 0.2,
+              "hit@3": 0.4,
+              "hit@5": 0.4,
+              "avg_latency_ms": 540.6,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 0.75,
+              "mrr": 0.5,
+              "precision": 0.1875,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 0.75,
+              "avg_latency_ms": 553.2,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_rerank_top6": {
+          "config": {
+            "name": "hybrid_rerank_top6",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": true,
+            "top_k": 6,
+            "graph_weight": 0.5,
+            "scope": "cross_kb"
+          },
+          "metrics": {
+            "recall": 0.7162,
+            "mrr": 0.4721,
+            "precision": 0.1194,
+            "hit@1": 0.3108,
+            "hit@3": 0.5946,
+            "hit@5": 0.6892,
+            "avg_latency_ms": 553.9,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.7297,
+              "mrr": 0.4829,
+              "precision": 0.1216,
+              "hit@1": 0.2973,
+              "hit@3": 0.6486,
+              "hit@5": 0.7297,
+              "avg_latency_ms": 552.2,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 0.5,
+              "mrr": 0.3333,
+              "precision": 0.0833,
+              "hit@1": 0.1667,
+              "hit@3": 0.5,
+              "hit@5": 0.5,
+              "avg_latency_ms": 543.7,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.7273,
+              "mrr": 0.5091,
+              "precision": 0.1212,
+              "hit@1": 0.4091,
+              "hit@3": 0.5455,
+              "hit@5": 0.6818,
+              "avg_latency_ms": 549.6,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.6,
+              "mrr": 0.3333,
+              "precision": 0.1,
+              "hit@1": 0.2,
+              "hit@3": 0.4,
+              "hit@5": 0.4,
+              "avg_latency_ms": 557.2,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 1.0,
+              "mrr": 0.55,
+              "precision": 0.1667,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 1.0,
+              "avg_latency_ms": 604.8,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_rerank_top8": {
+          "config": {
+            "name": "hybrid_rerank_top8",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": true,
+            "top_k": 8,
+            "graph_weight": 0.5,
+            "scope": "cross_kb"
+          },
+          "metrics": {
+            "recall": 0.7297,
+            "mrr": 0.4738,
+            "precision": 0.0912,
+            "hit@1": 0.3108,
+            "hit@3": 0.5946,
+            "hit@5": 0.6892,
+            "avg_latency_ms": 553.3,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.7568,
+              "mrr": 0.4863,
+              "precision": 0.0946,
+              "hit@1": 0.2973,
+              "hit@3": 0.6486,
+              "hit@5": 0.7297,
+              "avg_latency_ms": 550.6,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 0.5,
+              "mrr": 0.3333,
+              "precision": 0.0625,
+              "hit@1": 0.1667,
+              "hit@3": 0.5,
+              "hit@5": 0.5,
+              "avg_latency_ms": 554.2,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.7273,
+              "mrr": 0.5091,
+              "precision": 0.0909,
+              "hit@1": 0.4091,
+              "hit@3": 0.5455,
+              "hit@5": 0.6818,
+              "avg_latency_ms": 554.2,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.6,
+              "mrr": 0.3333,
+              "precision": 0.075,
+              "hit@1": 0.2,
+              "hit@3": 0.4,
+              "hit@5": 0.4,
+              "avg_latency_ms": 514.4,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 1.0,
+              "mrr": 0.55,
+              "precision": 0.125,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 1.0,
+              "avg_latency_ms": 620.5,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_rerank_top10": {
+          "config": {
+            "name": "hybrid_rerank_top10",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": true,
+            "top_k": 10,
+            "graph_weight": 0.5,
+            "scope": "cross_kb"
+          },
+          "metrics": {
+            "recall": 0.7297,
+            "mrr": 0.4738,
+            "precision": 0.073,
+            "hit@1": 0.3108,
+            "hit@3": 0.5946,
+            "hit@5": 0.6892,
+            "avg_latency_ms": 587.5,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.7568,
+              "mrr": 0.4863,
+              "precision": 0.0757,
+              "hit@1": 0.2973,
+              "hit@3": 0.6486,
+              "hit@5": 0.7297,
+              "avg_latency_ms": 599.7,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 0.5,
+              "mrr": 0.3333,
+              "precision": 0.05,
+              "hit@1": 0.1667,
+              "hit@3": 0.5,
+              "hit@5": 0.5,
+              "avg_latency_ms": 621.3,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.7273,
+              "mrr": 0.5091,
+              "precision": 0.0727,
+              "hit@1": 0.4091,
+              "hit@3": 0.5455,
+              "hit@5": 0.6818,
+              "avg_latency_ms": 567.7,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.6,
+              "mrr": 0.3333,
+              "precision": 0.06,
+              "hit@1": 0.2,
+              "hit@3": 0.4,
+              "hit@5": 0.4,
+              "avg_latency_ms": 555.2,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 1.0,
+              "mrr": 0.55,
+              "precision": 0.1,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 1.0,
+              "avg_latency_ms": 572.5,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_rerank_weight0.3": {
+          "config": {
+            "name": "hybrid_rerank_weight0.3",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": true,
+            "top_k": 4,
+            "graph_weight": 0.3,
+            "scope": "cross_kb"
+          },
+          "metrics": {
+            "recall": 0.6486,
+            "mrr": 0.4673,
+            "precision": 0.1622,
+            "hit@1": 0.3243,
+            "hit@3": 0.5811,
+            "hit@5": 0.6486,
+            "avg_latency_ms": 553.7,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.7027,
+              "mrr": 0.4752,
+              "precision": 0.1757,
+              "hit@1": 0.2973,
+              "hit@3": 0.6216,
+              "hit@5": 0.7027,
+              "avg_latency_ms": 548.6,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 0.5,
+              "mrr": 0.3333,
+              "precision": 0.125,
+              "hit@1": 0.1667,
+              "hit@3": 0.5,
+              "hit@5": 0.5,
+              "avg_latency_ms": 567.5,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.6364,
+              "mrr": 0.5227,
+              "precision": 0.1591,
+              "hit@1": 0.4545,
+              "hit@3": 0.5455,
+              "hit@5": 0.6364,
+              "avg_latency_ms": 558.3,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.4,
+              "mrr": 0.3,
+              "precision": 0.1,
+              "hit@1": 0.2,
+              "hit@3": 0.4,
+              "hit@5": 0.4,
+              "avg_latency_ms": 558.0,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 0.75,
+              "mrr": 0.5,
+              "precision": 0.1875,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 0.75,
+              "avg_latency_ms": 550.5,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_rerank_weight0.5": {
+          "config": {
+            "name": "hybrid_rerank_weight0.5",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": true,
+            "top_k": 4,
+            "graph_weight": 0.5,
+            "scope": "cross_kb"
+          },
+          "metrics": {
+            "recall": 0.6622,
+            "mrr": 0.4628,
+            "precision": 0.1655,
+            "hit@1": 0.3108,
+            "hit@3": 0.5946,
+            "hit@5": 0.6622,
+            "avg_latency_ms": 569.9,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.7297,
+              "mrr": 0.4842,
+              "precision": 0.1824,
+              "hit@1": 0.2973,
+              "hit@3": 0.6486,
+              "hit@5": 0.7297,
+              "avg_latency_ms": 565.2,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 0.5,
+              "mrr": 0.3333,
+              "precision": 0.125,
+              "hit@1": 0.1667,
+              "hit@3": 0.5,
+              "hit@5": 0.5,
+              "avg_latency_ms": 577.8,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.6364,
+              "mrr": 0.4924,
+              "precision": 0.1591,
+              "hit@1": 0.4091,
+              "hit@3": 0.5455,
+              "hit@5": 0.6364,
+              "avg_latency_ms": 571.9,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.4,
+              "mrr": 0.3,
+              "precision": 0.1,
+              "hit@1": 0.2,
+              "hit@3": 0.4,
+              "hit@5": 0.4,
+              "avg_latency_ms": 587.8,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 0.75,
+              "mrr": 0.5,
+              "precision": 0.1875,
+              "hit@1": 0.25,
+              "hit@3": 0.75,
+              "hit@5": 0.75,
+              "avg_latency_ms": 567.2,
+              "count": 4
+            }
+          }
+        },
+        "hybrid_rerank_weight0.7": {
+          "config": {
+            "name": "hybrid_rerank_weight0.7",
+            "use_vector": true,
+            "use_graph": true,
+            "use_rerank": true,
+            "top_k": 4,
+            "graph_weight": 0.7,
+            "scope": "cross_kb"
+          },
+          "metrics": {
+            "recall": 0.5946,
+            "mrr": 0.4336,
+            "precision": 0.1486,
+            "hit@1": 0.3243,
+            "hit@3": 0.5541,
+            "hit@5": 0.5946,
+            "avg_latency_ms": 559.3,
+            "count": 74
+          },
+          "per_type": {
+            "factual": {
+              "recall": 0.6757,
+              "mrr": 0.4685,
+              "precision": 0.1689,
+              "hit@1": 0.3243,
+              "hit@3": 0.6216,
+              "hit@5": 0.6757,
+              "avg_latency_ms": 554.9,
+              "count": 37
+            },
+            "conceptual": {
+              "recall": 0.3333,
+              "mrr": 0.25,
+              "precision": 0.0833,
+              "hit@1": 0.1667,
+              "hit@3": 0.3333,
+              "hit@5": 0.3333,
+              "avg_latency_ms": 532.7,
+              "count": 6
+            },
+            "procedural": {
+              "recall": 0.4545,
+              "mrr": 0.4015,
+              "precision": 0.1136,
+              "hit@1": 0.3636,
+              "hit@3": 0.4545,
+              "hit@5": 0.4545,
+              "avg_latency_ms": 558.1,
+              "count": 22
+            },
+            "relational": {
+              "recall": 0.6,
+              "mrr": 0.3667,
+              "precision": 0.15,
+              "hit@1": 0.2,
+              "hit@3": 0.6,
+              "hit@5": 0.6,
+              "avg_latency_ms": 590.8,
+              "count": 5
+            },
+            "comparative": {
+              "recall": 1.0,
+              "mrr": 0.6458,
+              "precision": 0.25,
+              "hit@1": 0.5,
+              "hit@3": 0.75,
+              "hit@5": 1.0,
+              "avg_latency_ms": 606.5,
+              "count": 4
+            }
+          }
+        }
+      }
+    }
+  }
+}

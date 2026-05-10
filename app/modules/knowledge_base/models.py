@@ -80,13 +80,15 @@ class RagChatEntity(Base):
     __table_args__ = (
         Index("idx_rag_chat_kb_created", "knowledge_base_id", "created_at"),
         Index("idx_rag_chat_session", "session_id"),
+        Index("idx_rag_chat_user_session", "user_id", "session_id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     session_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    knowledge_base_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False
+    knowledge_base_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=True
     )
+    user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     question: Mapped[str] = mapped_column(Text, nullable=False)
     rewritten_query: Mapped[str | None] = mapped_column(Text)
     answer: Mapped[str | None] = mapped_column(Text)
@@ -95,4 +97,4 @@ class RagChatEntity(Base):
     error_message: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    knowledge_base: Mapped["KnowledgeBaseEntity"] = relationship(back_populates="chats")
+    knowledge_base: Mapped["KnowledgeBaseEntity | None"] = relationship(back_populates="chats")

@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,63 +11,49 @@ from app.modules.knowledge_graph.persistence_service import knowledge_graph_pers
 
 logger = logging.getLogger(__name__)
 
-EXTRACT_SYSTEM_PROMPT = """你是知识图谱抽取助手。从文本中提取实体和关系三元组。
-
-实体类型枚举：
-- 技术：编程语言、数据库、中间件、协议等（如 Redis、MySQL、Java、HTTP）
-- 概念：抽象概念、设计理念、架构模式（如 缓存、微服务、事务、CAP理论）
-- 工具：开发工具、运维工具（如 Docker、Git、Maven）
-- 框架：应用框架、库（如 Spring Boot、MyBatis、React）
-- 公司：企业、组织（如 阿里巴巴、字节跳动）
-- 人：技术人物（如 Linus Torvalds、Martin Fowler）
-- 面试题：具体的面试问题类型（如 系统设计题、算法题）
-
-关系类型枚举：
-- 属于：A 是 B 的一种（Redis 属于 缓存技术）
-- 使用：A 使用 B（Spring Boot 使用 Tomcat）
-- 前置知识：学 A 之前要先学 B（Spring Boot 前置知识 Spring Core）
-- 常配合：A 和 B 经常一起使用（Redis 常配合 MySQL）
-- 包含：A 包含 B（Spring Cloud 包含 Gateway）
-- 解决：A 解决 B 问题（Redis 解决 缓存穿透）
-- 对比：A 和 B 是对比关系（Redis 对比 Memcached）
-- 优缺点：A 的某个优缺点（Redis 优缺点 持久化支持）
-- 适用场景：A 适用于 B（Redis 适用场景 高并发读写）
-
-规则：
-1. 只提取文本中明确陈述的关系，不要推断或编造
-2. 实体名称用最常用的简称（如 "Redis" 而非 "Remote Dictionary Server"）
-3. 同义实体统一为一个名称
-4. 每个三元组必须包含 subject、predicate、object、subject_type、object_type
-5. 输出纯 JSON 数组，不要任何其他文字、解释或 markdown 标记"""
-
-EXTRACT_USER_PROMPT = """从以下文本中提取知识图谱三元组：
-
-{text}
-
-直接输出 JSON 数组，格式：
-[{{"subject": "...", "predicate": "...", "object": "...", "subject_type": "...", "object_type": "..."}}]
-
-如果没有可提取的三元组，输出空数组：[]"""
+PROMPT_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
 
 
 class KnowledgeGraphExtractionService:
 
-    async def extract_and_save(self, db: AsyncSession, kb_id: int, source_text: str) -> dict:
+    def __init__(self) -> None:
+        self._system_prompt: str | None = None
+        self._user_prompt_template: str | None = None
+
+    def _load_prompts(self) -> tuple[str, str]:
+        if self._system_prompt is None:
+            self._system_prompt = (PROMPT_DIR / "kg-extraction-system.md").read_text(encoding="utf-8")
+        if self._user_prompt_template is None:
+            self._user_prompt_template = (PROMPT_DIR / "kg-extraction-user.md").read_text(encoding="utf-8")
+        return self._system_prompt, self._user_prompt_template
+
+    async def extract_and_save(
+        self, db: AsyncSession, kb_id: int, source_text: str, chunks: list | None = None,
+    ) -> dict:
         start = time.time()
+
+        system_prompt, user_prompt_template = self._load_prompts()
 
         await knowledge_graph_persistence_service.clear_by_kb_id(db, kb_id)
 
-        segments = self._split_text(source_text, max_length=2000)
-        logger.info("知识图谱抽取开始: kb_id=%d, segments=%d", kb_id, len(segments))
+        # 优先按 chunk 提取（记录 source_chunk_id），否则回退到 _split_text
+        if chunks:
+            segments_with_id = [(chunk.id, chunk.content or "") for chunk in chunks if (chunk.content or "").strip()]
+            logger.info("知识图谱抽取开始: kb_id=%d, chunks=%d (按chunk提取)", kb_id, len(segments_with_id))
+        else:
+            segments_with_id = [(None, seg) for seg in self._split_text(source_text, max_length=2000)]
+            logger.info("知识图谱抽取开始: kb_id=%d, segments=%d (按段落提取)", kb_id, len(segments_with_id))
 
         all_triples: list[dict] = []
-        for i, segment in enumerate(segments):
+        for i, (chunk_id, segment) in enumerate(segments_with_id):
             try:
-                triples = await self._extract_from_segment(segment)
+                triples = await self._extract_from_segment(segment, system_prompt, user_prompt_template)
+                for t in triples:
+                    t["_source_chunk_id"] = chunk_id
                 all_triples.extend(triples)
-                logger.debug("段落 %d/%d 抽取: %d 个三元组", i + 1, len(segments), len(triples))
+                logger.debug("段落 %d/%d 抽取: %d 个三元组", i + 1, len(segments_with_id), len(triples))
             except Exception as e:
-                logger.warning("段落 %d/%d 抽取失败: %s", i + 1, len(segments), e)
+                logger.warning("段落 %d/%d 抽取失败: %s", i + 1, len(segments_with_id), e)
 
         unique = self._deduplicate(all_triples)
         logger.info("去重: %d → %d 个三元组", len(all_triples), len(unique))
@@ -99,6 +86,7 @@ class KnowledgeGraphExtractionService:
                 predicate=t["predicate"],
                 object_id=entities_cache[object_key],
                 source_kb_id=kb_id,
+                source_chunk_id=t.get("_source_chunk_id"),
             )
             if triple:
                 triple_count += 1
@@ -110,10 +98,10 @@ class KnowledgeGraphExtractionService:
         )
         return {"kb_id": kb_id, "entity_count": entity_count, "triple_count": triple_count, "duration_ms": duration_ms}
 
-    async def _extract_from_segment(self, text: str) -> list[dict]:
+    async def _extract_from_segment(self, text: str, system_prompt: str, user_prompt_template: str) -> list[dict]:
         messages = [
-            SystemMessage(content=EXTRACT_SYSTEM_PROMPT),
-            HumanMessage(content=EXTRACT_USER_PROMPT.format(text=text)),
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt_template.format(text=text)),
         ]
 
         response = await llm_registry.default.ainvoke(messages)

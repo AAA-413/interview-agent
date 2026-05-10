@@ -259,8 +259,10 @@ class KnowledgeBaseRagService:
         context_parts = []
         for index, item in enumerate(references, start=1):
             content = item.content or item.content_preview
+            source = item.source_name or "知识库"
             context_parts.append(
-                f"[片段{index}] 标题: {item.title or '未命名'}\n"
+                f"[片段{index}] 来源: {source}\n"
+                f"标题: {item.title or '未命名'}\n"
                 f"相关度: {item.score:.4f}\n"
                 f"内容: {content}"
             )

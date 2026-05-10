@@ -50,12 +50,14 @@ export default function KnowledgeGraphPage() {
   const [searchKeyword, setSearchKeyword] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  const NODE_LIMIT = 150;
+
   const fetchGraph = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       const types = filterTypes.length > 0 ? filterTypes.join(',') : undefined;
-      const data = await knowledgeGraphApi.getGraph({ entity_types: types, limit: 300 });
+      const data = await knowledgeGraphApi.getGraph({ entity_types: types, limit: NODE_LIMIT });
       setGraphData(data);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : '加载图谱数据失败';
@@ -97,6 +99,9 @@ export default function KnowledgeGraphPage() {
       },
     }));
 
+    // 节点多时用 circular 布局（O(n)），少时用 d3-force（O(n²) 但效果更好）
+    const useCircular = nodes.length > 100;
+
     const graph = new Graph({
       container: containerRef.current,
       width: containerRef.current.clientWidth,
@@ -104,12 +109,15 @@ export default function KnowledgeGraphPage() {
       data: { nodes, edges },
       node: {
         style: {
-          size: (d: any) => Math.max(20, Math.min(50, (d.data?.size || 1) * 6 + 14)),
+          size: (d: any) => {
+            const base = Math.max(16, Math.min(40, (d.data?.size || 1) * 5 + 12));
+            return useCircular ? base * 0.8 : base;
+          },
           fill: (d: any) => ENTITY_COLORS[d.data?.type] || '#94a3b8',
           stroke: '#fff',
           lineWidth: 2,
           labelText: (d: any) => d.data?.label || '',
-          labelFontSize: 11,
+          labelFontSize: useCircular ? 9 : 11,
           labelFill: '#1e293b',
           labelFontWeight: 'bold',
           labelBackground: true,
@@ -119,7 +127,7 @@ export default function KnowledgeGraphPage() {
           labelBackgroundRadius: 3,
           cursor: 'pointer',
           shadowColor: 'rgba(0,0,0,0.1)',
-          shadowBlur: 8,
+          shadowBlur: useCircular ? 4 : 8,
           shadowOffsetY: 2,
         },
         state: {
@@ -143,7 +151,7 @@ export default function KnowledgeGraphPage() {
           endArrowSize: 6,
           endArrowFill: '#cbd5e1',
           labelText: (d: any) => d.data?.relation || '',
-          labelFontSize: 9,
+          labelFontSize: useCircular ? 0 : 9,
           labelFill: '#64748b',
           labelBackground: true,
           labelBackgroundFill: '#fff',
@@ -159,16 +167,18 @@ export default function KnowledgeGraphPage() {
           },
         },
       },
-      layout: {
-        type: 'd3-force',
-        preventOverlap: true,
-        nodeSize: (d: any) => Math.max(20, Math.min(50, (d.data?.size || 1) * 6 + 14)),
-        collide: { radius: 30 },
-        link: { distance: 120 },
-        charge: { strength: -200 },
-      },
+      layout: useCircular
+        ? { type: 'circular', radius: 280, startAngle: 0, endAngle: 2 * Math.PI }
+        : {
+            type: 'd3-force',
+            preventOverlap: true,
+            nodeSize: (d: any) => Math.max(20, Math.min(50, (d.data?.size || 1) * 6 + 14)),
+            collide: { radius: 30 },
+            link: { distance: 120 },
+            charge: { strength: -200 },
+          },
       behaviors: ['drag-canvas', 'zoom-canvas', 'drag-element', { type: 'hover-activate' }],
-      animation: true,
+      animation: !useCircular,
     });
 
     graph.on('node:click', async (evt: any) => {
