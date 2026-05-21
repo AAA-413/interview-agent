@@ -1,8 +1,16 @@
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { LogOut, FileText, MessageSquare, BarChart3, Upload, BookOpen, Database, Sparkles, Network } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { authApi } from '../api/auth';
 
-const navItems = [
+type NavItem = {
+  path: string;
+  label: string;
+  icon: LucideIcon;
+  gradient: string;
+};
+
+const navItems: NavItem[] = [
   { path: '/resumes', label: '简历管理', icon: FileText, gradient: 'from-blue-500 to-cyan-500' },
   { path: '/upload', label: '上传简历', icon: Upload, gradient: 'from-violet-500 to-purple-500' },
   { path: '/knowledgebases', label: '知识库管理', icon: Database, gradient: 'from-emerald-500 to-teal-500' },
@@ -16,6 +24,8 @@ export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  const isActivePath = (path: string) => location.pathname === path || location.pathname.startsWith(path + '/');
+
   const handleLogout = async () => {
     try {
       await authApi.logout();
@@ -27,9 +37,79 @@ export default function Layout() {
     navigate('/login');
   };
 
+  const renderDesktopNavItem = (item: NavItem) => {
+    const isActive = isActivePath(item.path);
+    const Icon = item.icon;
+    return (
+      <button
+        key={item.path}
+        onClick={() => navigate(item.path)}
+        className={`group w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium transition-all duration-300 relative overflow-hidden ${
+          isActive
+            ? 'bg-gradient-to-r from-primary-50 to-indigo-50 text-primary-700 shadow-md shadow-primary-100/50'
+            : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 hover:shadow-sm'
+        }`}
+      >
+        {isActive && (
+          <div className="absolute inset-0 bg-gradient-to-r from-primary-500/5 to-indigo-500/5 animate-pulse" />
+        )}
+        <div className={`relative w-9 h-9 rounded-lg flex items-center justify-center transition-all duration-300 ${
+          isActive
+            ? `bg-gradient-to-br ${item.gradient} shadow-lg`
+            : 'bg-slate-100 group-hover:bg-slate-200'
+        }`}>
+          <Icon className={`w-5 h-5 transition-colors ${isActive ? 'text-white' : 'text-slate-500 group-hover:text-slate-700'}`} />
+        </div>
+        <span className="relative">{item.label}</span>
+        {isActive && (
+          <div className="absolute right-3 w-1.5 h-1.5 bg-primary-500 rounded-full animate-pulse" />
+        )}
+      </button>
+    );
+  };
+
+  const renderMobileNavItem = (item: NavItem) => {
+    const isActive = isActivePath(item.path);
+    const Icon = item.icon;
+    return (
+      <button
+        key={item.path}
+        onClick={() => navigate(item.path)}
+        className={`shrink-0 w-20 h-16 flex flex-col items-center justify-center gap-1 rounded-2xl text-[11px] font-medium transition-colors ${
+          isActive ? 'bg-primary-50 text-primary-700' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'
+        }`}
+      >
+        <Icon className={`w-5 h-5 ${isActive ? 'text-primary-600' : 'text-slate-500'}`} />
+        <span className="max-w-full truncate px-1">{item.label}</span>
+      </button>
+    );
+  };
+
   return (
-    <div className="min-h-screen flex bg-gradient-to-br from-slate-50 via-white to-indigo-50/30">
-      <aside className="w-72 bg-white/80 backdrop-blur-xl border-r border-slate-200/60 flex flex-col shadow-xl">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 lg:flex">
+      <header className="fixed inset-x-0 top-0 z-40 lg:hidden border-b border-slate-200/70 bg-white/90 backdrop-blur-xl">
+        <div className="flex h-16 items-center justify-between px-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-primary-500 via-primary-600 to-indigo-600 shadow-lg shadow-primary-500/25">
+              <Sparkles className="h-5 w-5 text-white" />
+              <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-white/20 to-transparent" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="truncate text-base font-bold text-slate-900">AI 面试助手</h1>
+              <p className="truncate text-xs text-slate-500">智能面试模拟平台</p>
+            </div>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-red-500 transition-colors hover:bg-red-50"
+            aria-label="退出登录"
+          >
+            <LogOut className="h-5 w-5" />
+          </button>
+        </div>
+      </header>
+
+      <aside className="hidden w-72 shrink-0 bg-white/80 backdrop-blur-xl border-r border-slate-200/60 lg:flex flex-col shadow-xl">
         <div className="p-6 border-b border-slate-100/60">
           <div className="flex items-center gap-3">
             <div className="relative w-12 h-12 bg-gradient-to-br from-primary-500 via-primary-600 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-primary-500/30 group-hover:shadow-primary-500/50 transition-shadow">
@@ -43,36 +123,7 @@ export default function Layout() {
           </div>
         </div>
         <nav className="flex-1 p-4 space-y-2">
-          {navItems.map((item) => {
-            const isActive = location.pathname === item.path || location.pathname.startsWith(item.path + '/');
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.path}
-                onClick={() => navigate(item.path)}
-                className={`group w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium transition-all duration-300 relative overflow-hidden ${
-                  isActive
-                    ? 'bg-gradient-to-r from-primary-50 to-indigo-50 text-primary-700 shadow-md shadow-primary-100/50'
-                    : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 hover:shadow-sm'
-                }`}
-              >
-                {isActive && (
-                  <div className="absolute inset-0 bg-gradient-to-r from-primary-500/5 to-indigo-500/5 animate-pulse" />
-                )}
-                <div className={`relative w-9 h-9 rounded-lg flex items-center justify-center transition-all duration-300 ${
-                  isActive
-                    ? `bg-gradient-to-br ${item.gradient} shadow-lg`
-                    : 'bg-slate-100 group-hover:bg-slate-200'
-                }`}>
-                  <Icon className={`w-5 h-5 transition-colors ${isActive ? 'text-white' : 'text-slate-500 group-hover:text-slate-700'}`} />
-                </div>
-                <span className="relative">{item.label}</span>
-                {isActive && (
-                  <div className="absolute right-3 w-1.5 h-1.5 bg-primary-500 rounded-full animate-pulse" />
-                )}
-              </button>
-            );
-          })}
+          {navItems.map(renderDesktopNavItem)}
         </nav>
         <div className="p-4 border-t border-slate-100/60 space-y-2">
           <div className="relative px-4 py-3 bg-gradient-to-r from-primary-50 via-indigo-50 to-purple-50 rounded-xl overflow-hidden group hover:shadow-md transition-shadow">
@@ -96,11 +147,16 @@ export default function Layout() {
           </button>
         </div>
       </aside>
-      <main className="flex-1 overflow-auto">
-        <div className="max-w-7xl mx-auto p-8">
+      <main className="min-w-0 flex-1 overflow-auto pt-20 pb-24 lg:pt-0 lg:pb-0">
+        <div className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">
           <Outlet />
         </div>
       </main>
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200/70 bg-white/95 px-3 py-2 shadow-[0_-12px_30px_-24px_rgba(15,23,42,0.6)] backdrop-blur-xl lg:hidden">
+        <div className="flex gap-2 overflow-x-auto">
+          {navItems.map(renderMobileNavItem)}
+        </div>
+      </nav>
     </div>
   );
 }

@@ -18,7 +18,10 @@ async def cross_kb_chat(
     db: AsyncSession = Depends(get_db),
 ):
     result = await cross_kb_rag_service.ask(
-        db, user_id=user_id, question=request.question, top_k=request.top_k,
+        db,
+        user_id=user_id,
+        question=request.question,
+        top_k=request.top_k,
     )
     return Result.success(result)
 
@@ -55,6 +58,7 @@ async def get_cross_kb_session_history(
     db: AsyncSession = Depends(get_db),
 ):
     from app.modules.knowledge_base.persistence_service import knowledge_base_persistence_service
+
     items = await knowledge_base_persistence_service.find_cross_kb_session_chat_dtos(db, user_id, session_id)
     return Result.success(items)
 
@@ -66,6 +70,7 @@ async def delete_cross_kb_session(
     db: AsyncSession = Depends(get_db),
 ):
     from app.modules.knowledge_base.persistence_service import knowledge_base_persistence_service
+
     count = await knowledge_base_persistence_service.delete_cross_kb_session(db, user_id, session_id)
     return Result.success({"deleted": count})
 
@@ -94,7 +99,9 @@ async def cross_kb_retrieve(
         graph_weight=graph_weight,
         scope_kb_id=scope_kb_id,
     )
-    return Result.success({
-        "references": [r.model_dump() for r in references],
-        "latency_ms": latency_ms,
-    })
+    return Result.success(
+        {
+            "references": [r.model_dump() for r in references],
+            "latency_ms": latency_ms,
+        }
+    )

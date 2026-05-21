@@ -3,24 +3,24 @@ Agent 编排路由
 """
 
 import logging
-from typing import Optional, Dict, List, Any
+from typing import Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.ai.llm_provider import llm_registry
-from app.database import get_db
-from app.modules.auth.dependencies import get_current_user_id
-from app.modules.agent_orchestration import AgentOrchestrator
-from app.modules.agent_orchestration.models import AgentExecutionStatus
-from app.modules.agent_orchestration.persistence_service import AgentPersistenceService
-from app.modules.agent_orchestration.tool_registry import AgentToolRegistry
-from app.modules.knowledge_base.rag_service import KnowledgeBaseRagService
 from app.common.mcp import MCPService
+from app.database import get_db
+from app.modules.agent_orchestration import AgentOrchestrator
 from app.modules.agent_orchestration.agents.knowledge_builder_agent import (
     KnowledgeBuilderAgent,
 )
+from app.modules.agent_orchestration.models import AgentExecutionStatus
+from app.modules.agent_orchestration.persistence_service import AgentPersistenceService
+from app.modules.agent_orchestration.tool_registry import AgentToolRegistry
+from app.modules.auth.dependencies import get_current_user_id
+from app.modules.knowledge_base.rag_service import KnowledgeBaseRagService
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +114,7 @@ async def agent_chat(
 
         # 2. 使用 AgentOrchestrator 执行完整流程
         from app.common.ai.llm_adapter import LLMProviderAdapter
+
         chat_model = llm_registry.default
         llm_provider = LLMProviderAdapter(chat_model)
 
@@ -131,8 +132,13 @@ async def agent_chat(
 
         # 3. 更新执行路径
         from app.modules.agent_orchestration.models import AgentExecutionPath
+
         exec_path_name = result.get("execution_summary", {}).get("execution_path", "standard")
-        exec_path_enum = AgentExecutionPath(exec_path_name) if exec_path_name in [e.value for e in AgentExecutionPath] else AgentExecutionPath.STANDARD
+        exec_path_enum = (
+            AgentExecutionPath(exec_path_name)
+            if exec_path_name in [e.value for e in AgentExecutionPath]
+            else AgentExecutionPath.STANDARD
+        )
         await persistence.update_execution_path(
             execution_id=execution.id,
             path=exec_path_enum,
@@ -260,9 +266,7 @@ async def list_executions(
 class KnowledgeBuilderRequest(BaseModel):
     """智能知识库构建请求"""
 
-    message: str = Field(
-        ..., description="用户输入（如：帮我下载 Python 官方文档）", min_length=1
-    )
+    message: str = Field(..., description="用户输入（如：帮我下载 Python 官方文档）", min_length=1)
     kb_id: Optional[int] = Field(default=None, description="目标知识库ID（可选）")
 
 
@@ -312,6 +316,7 @@ async def build_knowledge_base(
 
         # 创建 KnowledgeBuilderAgent
         from app.common.ai.llm_adapter import LLMProviderAdapter
+
         chat_model = llm_registry.default
         llm_provider = LLMProviderAdapter(chat_model)
         agent = KnowledgeBuilderAgent(

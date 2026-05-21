@@ -1,6 +1,5 @@
 import io
 import logging
-from datetime import datetime
 
 from app.modules.resume.schemas import ResumeDetailDTO
 
@@ -10,11 +9,10 @@ logger = logging.getLogger(__name__)
 class PdfExportService:
     async def export_resume_analysis_pdf(self, detail: ResumeDetailDTO) -> bytes:
         try:
-            from reportlab.lib.pagesizes import A4
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.lib.units import mm
-            from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
             from reportlab.lib import colors
+            from reportlab.lib.pagesizes import A4
+            from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+            from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
             buffer = io.BytesIO()
             doc = SimpleDocTemplate(buffer, pagesize=A4)
@@ -98,13 +96,11 @@ class PdfExportService:
             logger.error("PDF 导出失败: %s", str(e))
             raise
 
-
     async def export_interview_pdf(self, detail) -> bytes:
         try:
             from reportlab.lib.pagesizes import A4
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-            from reportlab.lib import colors
+            from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+            from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
             buffer = io.BytesIO()
             doc = SimpleDocTemplate(buffer, pagesize=A4)
@@ -152,13 +148,15 @@ class PdfExportService:
                 elements.append(Spacer(1, 8))
 
                 for qe in detail.question_evaluations:
-                    elements.append(Paragraph(f"问题 {qe.get('question_index', 0) + 1}: {qe.get('question', '')}", bold_style))
-                    if qe.get('category'):
+                    elements.append(
+                        Paragraph(f"问题 {qe.get('question_index', 0) + 1}: {qe.get('question', '')}", bold_style)
+                    )
+                    if qe.get("category"):
                         elements.append(Paragraph(f"分类: {qe['category']}", info_style))
-                    if qe.get('user_answer'):
+                    if qe.get("user_answer"):
                         elements.append(Paragraph(f"回答: {qe['user_answer'][:200]}", info_style))
                     elements.append(Paragraph(f"得分: {qe.get('score', 0)}/100", info_style))
-                    if qe.get('feedback'):
+                    if qe.get("feedback"):
                         elements.append(Paragraph(f"反馈: {qe['feedback']}", info_style))
                     elements.append(Spacer(1, 8))
 

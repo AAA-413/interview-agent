@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.result import Result
 from app.database import get_db
 from app.modules.auth.dependencies import get_current_user_id
+from app.modules.knowledge_base.fetch_service import knowledge_base_fetch_service
 from app.modules.knowledge_base.history_service import knowledge_base_delete_service, knowledge_base_history_service
 from app.modules.knowledge_base.schemas import (
     FetchDocumentRequest,
@@ -14,7 +15,6 @@ from app.modules.knowledge_base.schemas import (
     KnowledgeBaseReindexResponse,
 )
 from app.modules.knowledge_base.upload_service import knowledge_base_upload_service
-from app.modules.knowledge_base.fetch_service import knowledge_base_fetch_service
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,9 @@ async def reindex_knowledge_base(
     db: AsyncSession = Depends(get_db),
 ):
     entity = await knowledge_base_upload_service.reindex(db, kb_id, user_id)
-    return Result.success(KnowledgeBaseReindexResponse(id=entity.id, index_status=entity.index_status, index_error=entity.index_error))
+    return Result.success(
+        KnowledgeBaseReindexResponse(id=entity.id, index_status=entity.index_status, index_error=entity.index_error)
+    )
 
 
 @router.delete("/{kb_id}", response_model=Result[None])

@@ -42,9 +42,7 @@ class ResumeEntity(Base):
 
 class ResumeAnalysisEntity(Base):
     __tablename__ = "resume_analyses"
-    __table_args__ = (
-        Index("idx_analysis_resume_id", "resume_id"),
-    )
+    __table_args__ = (Index("idx_analysis_resume_id", "resume_id"),)
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     resume_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("resumes.id", ondelete="CASCADE"), nullable=False)

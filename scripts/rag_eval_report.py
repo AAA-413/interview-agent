@@ -9,7 +9,6 @@ RAG 评估报告生成脚本
 
 import argparse
 import json
-from datetime import datetime
 from pathlib import Path
 
 
@@ -67,14 +66,16 @@ def generate_report(results: dict) -> str:
     s_cross = get_strategy(results, "cross_kb", "hybrid_rerank")
     if s_single and s_cross:
         sm, cm = s_single["metrics"], s_cross["metrics"]
-        rows.append([
-            "差异",
-            pct_change(sm.get("recall", 0), cm.get("recall", 0)),
-            pct_change(sm.get("mrr", 0), cm.get("mrr", 0)),
-            pct_change(sm.get("hit@1", 0), cm.get("hit@1", 0)),
-            pct_change(sm.get("hit@3", 0), cm.get("hit@3", 0)),
-            pct_change(sm.get("avg_latency_ms", 0), cm.get("avg_latency_ms", 0)),
-        ])
+        rows.append(
+            [
+                "差异",
+                pct_change(sm.get("recall", 0), cm.get("recall", 0)),
+                pct_change(sm.get("mrr", 0), cm.get("mrr", 0)),
+                pct_change(sm.get("hit@1", 0), cm.get("hit@1", 0)),
+                pct_change(sm.get("hit@3", 0), cm.get("hit@3", 0)),
+                pct_change(sm.get("avg_latency_ms", 0), cm.get("avg_latency_ms", 0)),
+            ]
+        )
     lines.append(format_table(headers, rows))
     lines.append("")
 
@@ -94,13 +95,29 @@ def generate_report(results: dict) -> str:
                     "hybrid_no_rerank": "混合(无重排)",
                     "hybrid_rerank": "混合+重排",
                 }.get(name, name)
-                rows.append([display_name, m(s, "recall"), m(s, "mrr"), m(s, "hit@1"), m(s, "hit@3"), m(s, "hit@5"), m(s, "avg_latency_ms")])
+                rows.append(
+                    [
+                        display_name,
+                        m(s, "recall"),
+                        m(s, "mrr"),
+                        m(s, "hit@1"),
+                        m(s, "hit@3"),
+                        m(s, "hit@5"),
+                        m(s, "avg_latency_ms"),
+                    ]
+                )
         lines.append(format_table(headers, rows))
         lines.append("")
 
     # ── 三、按问题类型分析 ──────────────────────────────────────────────────────
     lines.append("## 三、按问题类型分析（跨 KB 场景）\n")
-    type_labels = {"factual": "事实型", "relational": "关系型", "comparative": "比较型", "procedural": "流程型", "conceptual": "概念型"}
+    type_labels = {
+        "factual": "事实型",
+        "relational": "关系型",
+        "comparative": "比较型",
+        "procedural": "流程型",
+        "conceptual": "概念型",
+    }
 
     s_vec = get_strategy(results, "cross_kb", "vector_only")
     s_hybrid = get_strategy(results, "cross_kb", "hybrid_rerank")
@@ -116,7 +133,11 @@ def generate_report(results: dict) -> str:
             rows = [
                 ["纯向量", f"{vec_t.get('recall', 0):.3f}", f"{vec_t.get('mrr', 0):.3f}"],
                 ["混合+重排", f"{hyb_t.get('recall', 0):.3f}", f"{hyb_t.get('mrr', 0):.3f}"],
-                ["提升", pct_change(vec_t.get("recall", 0), hyb_t.get("recall", 0)), pct_change(vec_t.get("mrr", 0), hyb_t.get("mrr", 0))],
+                [
+                    "提升",
+                    pct_change(vec_t.get("recall", 0), hyb_t.get("recall", 0)),
+                    pct_change(vec_t.get("mrr", 0), hyb_t.get("mrr", 0)),
+                ],
             ]
             lines.append(format_table(headers, rows))
             lines.append("")
@@ -145,20 +166,24 @@ def generate_report(results: dict) -> str:
         s_hr = get_strategy(results, scope, "hybrid_rerank")
         if s_v and s_vr:
             latency_diff = s_vr["metrics"].get("avg_latency_ms", 0) - s_v["metrics"].get("avg_latency_ms", 0)
-            rows.append([
-                f"{label}: 纯向量→向量+重排",
-                pct_change(s_v["metrics"].get("recall", 0), s_vr["metrics"].get("recall", 0)),
-                pct_change(s_v["metrics"].get("mrr", 0), s_vr["metrics"].get("mrr", 0)),
-                f"+{latency_diff:.0f}ms",
-            ])
+            rows.append(
+                [
+                    f"{label}: 纯向量→向量+重排",
+                    pct_change(s_v["metrics"].get("recall", 0), s_vr["metrics"].get("recall", 0)),
+                    pct_change(s_v["metrics"].get("mrr", 0), s_vr["metrics"].get("mrr", 0)),
+                    f"+{latency_diff:.0f}ms",
+                ]
+            )
         if s_h and s_hr:
             latency_diff = s_hr["metrics"].get("avg_latency_ms", 0) - s_h["metrics"].get("avg_latency_ms", 0)
-            rows.append([
-                f"{label}: 混合→混合+重排",
-                pct_change(s_h["metrics"].get("recall", 0), s_hr["metrics"].get("recall", 0)),
-                pct_change(s_h["metrics"].get("mrr", 0), s_hr["metrics"].get("mrr", 0)),
-                f"+{latency_diff:.0f}ms",
-            ])
+            rows.append(
+                [
+                    f"{label}: 混合→混合+重排",
+                    pct_change(s_h["metrics"].get("recall", 0), s_hr["metrics"].get("recall", 0)),
+                    pct_change(s_h["metrics"].get("mrr", 0), s_hr["metrics"].get("mrr", 0)),
+                    f"+{latency_diff:.0f}ms",
+                ]
+            )
     lines.append(format_table(headers, rows))
     lines.append("")
 
@@ -173,17 +198,21 @@ def generate_report(results: dict) -> str:
         s_hr = get_strategy(results, scope, "hybrid_rerank")
         rows = []
         if s_v and s_h:
-            rows.append([
-                "纯向量 → 混合(无重排)",
-                pct_change(s_v["metrics"].get("recall", 0), s_h["metrics"].get("recall", 0)),
-                pct_change(s_v["metrics"].get("mrr", 0), s_h["metrics"].get("mrr", 0)),
-            ])
+            rows.append(
+                [
+                    "纯向量 → 混合(无重排)",
+                    pct_change(s_v["metrics"].get("recall", 0), s_h["metrics"].get("recall", 0)),
+                    pct_change(s_v["metrics"].get("mrr", 0), s_h["metrics"].get("mrr", 0)),
+                ]
+            )
         if s_vr and s_hr:
-            rows.append([
-                "向量+重排 → 混合+重排",
-                pct_change(s_vr["metrics"].get("recall", 0), s_hr["metrics"].get("recall", 0)),
-                pct_change(s_vr["metrics"].get("mrr", 0), s_hr["metrics"].get("mrr", 0)),
-            ])
+            rows.append(
+                [
+                    "向量+重排 → 混合+重排",
+                    pct_change(s_vr["metrics"].get("recall", 0), s_hr["metrics"].get("recall", 0)),
+                    pct_change(s_vr["metrics"].get("mrr", 0), s_hr["metrics"].get("mrr", 0)),
+                ]
+            )
         lines.append(format_table(headers, rows))
         lines.append("")
 
@@ -209,9 +238,15 @@ def generate_report(results: dict) -> str:
         cross_recall_gain = s_cross_hybrid["metrics"].get("recall", 0) - s_cross_vec["metrics"].get("recall", 0)
         single_recall_gain = s_single_hybrid["metrics"].get("recall", 0) - s_single_vec["metrics"].get("recall", 0)
 
-        lines.append(f"1. **跨 KB 场景下混合检索优势明显**：相比纯向量，混合+重排的 Recall 提升了 {cross_recall_gain:.1%}。")
-        lines.append(f"2. **单 KB 场景下提升有限**：同样的策略在单 KB 场景下仅提升 {single_recall_gain:.1%}，说明图谱的主要价值在于跨文档关系检索。")
-        lines.append("3. **重排序稳定提升**：CrossEncoder 重排序在所有场景下都能带来 5-10% 的 Recall 提升，代价是 200-300ms 额外延迟。")
+        lines.append(
+            f"1. **跨 KB 场景下混合检索优势明显**：相比纯向量，混合+重排的 Recall 提升了 {cross_recall_gain:.1%}。"
+        )
+        lines.append(
+            f"2. **单 KB 场景下提升有限**：同样的策略在单 KB 场景下仅提升 {single_recall_gain:.1%}，说明图谱的主要价值在于跨文档关系检索。"
+        )
+        lines.append(
+            "3. **重排序稳定提升**：CrossEncoder 重排序在所有场景下都能带来 5-10% 的 Recall 提升，代价是 200-300ms 额外延迟。"
+        )
         lines.append("4. **图谱权重需调优**：不同权重下表现差异明显，建议根据实际问题类型分布选择最优权重。")
     lines.append("")
 

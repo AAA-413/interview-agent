@@ -111,9 +111,7 @@ class SmartDecisionTree:
         decision_context = await self._build_decision_context(user_input, kb_ids, context)
 
         # 2. LLM 驱动的复杂度评估
-        complexity_analysis = await self._analyze_complexity_with_llm(
-            user_input, decision_context
-        )
+        complexity_analysis = await self._analyze_complexity_with_llm(user_input, decision_context)
 
         # 3. 选择执行路径
         path = self._select_path_by_analysis(complexity_analysis)
@@ -174,16 +172,12 @@ class SmartDecisionTree:
             summary = self.cost_controller.get_summary()
             decision_context["budget_remaining"] = summary["budget_remaining"]
             decision_context["budget_usage_rate"] = (
-                summary["total_cost"] / summary["budget_limit"]
-                if summary["budget_limit"] > 0
-                else 0
+                summary["total_cost"] / summary["budget_limit"] if summary["budget_limit"] > 0 else 0
             )
 
         return decision_context
 
-    async def _analyze_complexity_with_llm(
-        self, user_input: str, context: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    async def _analyze_complexity_with_llm(self, user_input: str, context: Dict[str, Any]) -> Dict[str, Any]:
         """使用 LLM 分析任务复杂度"""
 
         # 构建分析提示词
@@ -204,9 +198,7 @@ class SmartDecisionTree:
             logger.warning(f"LLM 分析失败，使用规则回退: {e}")
             return self._fallback_rule_based_analysis(user_input, context)
 
-    def _build_complexity_analysis_prompt(
-        self, user_input: str, context: Dict[str, Any]
-    ) -> str:
+    def _build_complexity_analysis_prompt(self, user_input: str, context: Dict[str, Any]) -> str:
         """构建复杂度分析提示词"""
         return f"""你是一个任务复杂度分析专家。请分析以下用户请求的复杂度，并选择合适的执行路径。
 
@@ -214,9 +206,9 @@ class SmartDecisionTree:
 {user_input}
 
 上下文信息：
-- 输入长度: {context['user_input_length']} 字符
-- 知识库覆盖率: {context.get('kb_coverage', 0):.2%}
-- 剩余预算: ${context.get('budget_remaining', 0):.2f}
+- 输入长度: {context["user_input_length"]} 字符
+- 知识库覆盖率: {context.get("kb_coverage", 0):.2%}
+- 剩余预算: ${context.get("budget_remaining", 0):.2f}
 
 执行路径选项：
 1. simple（80%任务）：简单问答、直接检索，成本 $0.10
@@ -286,9 +278,7 @@ class SmartDecisionTree:
             "key_factors": [],
         }
 
-    def _fallback_rule_based_analysis(
-        self, user_input: str, context: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def _fallback_rule_based_analysis(self, user_input: str, context: Dict[str, Any]) -> Dict[str, Any]:
         """规则回退分析"""
         word_count = context["user_input_length"]
         kb_coverage = context.get("kb_coverage", 0.0)
@@ -330,17 +320,13 @@ class SmartDecisionTree:
 
         return self.paths[path_name]
 
-    async def _check_knowledge_coverage(
-        self, user_input: str, kb_ids: List[int]
-    ) -> float:
+    async def _check_knowledge_coverage(self, user_input: str, kb_ids: List[int]) -> float:
         """检查知识库覆盖率"""
         if not self.knowledge_service:
             return 0.0
 
         try:
-            results = await self.knowledge_service.search(
-                query=user_input, kb_ids=kb_ids, top_k=3
-            )
+            results = await self.knowledge_service.search(query=user_input, kb_ids=kb_ids, top_k=3)
 
             if not results:
                 return 0.0

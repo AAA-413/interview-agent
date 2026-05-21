@@ -5,8 +5,10 @@ Revises:
 Create Date: 2026-05-03
 
 """
-from alembic import op
+
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "001_add_user_id"
 down_revision = None
@@ -26,14 +28,18 @@ def upgrade() -> None:
     op.add_column("interview_sessions", sa.Column("user_id", sa.BigInteger(), nullable=True))
     op.execute("UPDATE interview_sessions SET user_id = 1 WHERE user_id IS NULL")
     op.alter_column("interview_sessions", "user_id", nullable=False)
-    op.create_foreign_key("interview_sessions_user_id_fkey", "interview_sessions", "users", ["user_id"], ["id"], ondelete="CASCADE")
+    op.create_foreign_key(
+        "interview_sessions_user_id_fkey", "interview_sessions", "users", ["user_id"], ["id"], ondelete="CASCADE"
+    )
     op.create_index("idx_interview_sessions_user_id", "interview_sessions", ["user_id"])
 
     # knowledge_bases 表
     op.add_column("knowledge_bases", sa.Column("user_id", sa.BigInteger(), nullable=True))
     op.execute("UPDATE knowledge_bases SET user_id = 1 WHERE user_id IS NULL")
     op.alter_column("knowledge_bases", "user_id", nullable=False)
-    op.create_foreign_key("knowledge_bases_user_id_fkey", "knowledge_bases", "users", ["user_id"], ["id"], ondelete="CASCADE")
+    op.create_foreign_key(
+        "knowledge_bases_user_id_fkey", "knowledge_bases", "users", ["user_id"], ["id"], ondelete="CASCADE"
+    )
     op.create_index("idx_knowledge_bases_user_id", "knowledge_bases", ["user_id"])
 
 

@@ -11,8 +11,8 @@ from app.modules.knowledge_graph.extraction_service import knowledge_graph_extra
 from app.modules.knowledge_graph.persistence_service import knowledge_graph_persistence_service
 from app.modules.knowledge_graph.schemas import (
     CreateTripleRequest,
-    EntityDTO,
     EntityDetailDTO,
+    EntityDTO,
     ExtractResultDTO,
     GraphDataDTO,
     TripleDTO,
@@ -82,6 +82,7 @@ async def list_triples(
     else:
         from sqlalchemy import select
         from sqlalchemy.orm import selectinload
+
         from app.modules.knowledge_graph.models import KnowledgeTriple
 
         stmt = select(KnowledgeTriple).options(
@@ -98,28 +99,30 @@ async def list_triples(
 
     dtos = []
     for t in triples:
-        dtos.append(TripleDTO(
-            id=t.id,
-            subject=EntityDTO(
-                id=t.subject_entity.id,
-                name=t.subject_entity.name,
-                entity_type=t.subject_entity.entity_type,
-                description=t.subject_entity.description,
-                properties={},
-                mention_count=t.subject_entity.mention_count,
-            ),
-            predicate=t.predicate,
-            object=EntityDTO(
-                id=t.object_entity.id,
-                name=t.object_entity.name,
-                entity_type=t.object_entity.entity_type,
-                description=t.object_entity.description,
-                properties={},
-                mention_count=t.object_entity.mention_count,
-            ),
-            confidence=t.confidence,
-            source_kb_id=t.source_kb_id,
-        ))
+        dtos.append(
+            TripleDTO(
+                id=t.id,
+                subject=EntityDTO(
+                    id=t.subject_entity.id,
+                    name=t.subject_entity.name,
+                    entity_type=t.subject_entity.entity_type,
+                    description=t.subject_entity.description,
+                    properties={},
+                    mention_count=t.subject_entity.mention_count,
+                ),
+                predicate=t.predicate,
+                object=EntityDTO(
+                    id=t.object_entity.id,
+                    name=t.object_entity.name,
+                    entity_type=t.object_entity.entity_type,
+                    description=t.object_entity.description,
+                    properties={},
+                    mention_count=t.object_entity.mention_count,
+                ),
+                confidence=t.confidence,
+                source_kb_id=t.source_kb_id,
+            )
+        )
     return Result.success(dtos)
 
 
@@ -129,24 +132,25 @@ async def create_triple(
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    subj = await knowledge_graph_persistence_service.find_or_create_entity(
-        db, request.subject, request.subject_type
-    )
-    obj = await knowledge_graph_persistence_service.find_or_create_entity(
-        db, request.object, request.object_type
-    )
+    subj = await knowledge_graph_persistence_service.find_or_create_entity(db, request.subject, request.subject_type)
+    obj = await knowledge_graph_persistence_service.find_or_create_entity(db, request.object, request.object_type)
     triple = await knowledge_graph_persistence_service.create_triple(
-        db, subject_id=subj.id, predicate=request.predicate, object_id=obj.id,
+        db,
+        subject_id=subj.id,
+        predicate=request.predicate,
+        object_id=obj.id,
         source_kb_id=request.source_kb_id,
     )
-    return Result.success(TripleDTO(
-        id=triple.id,
-        subject=knowledge_graph_persistence_service.to_entity_dto(subj),
-        predicate=triple.predicate,
-        object=knowledge_graph_persistence_service.to_entity_dto(obj),
-        confidence=triple.confidence,
-        source_kb_id=triple.source_kb_id,
-    ))
+    return Result.success(
+        TripleDTO(
+            id=triple.id,
+            subject=knowledge_graph_persistence_service.to_entity_dto(subj),
+            predicate=triple.predicate,
+            object=knowledge_graph_persistence_service.to_entity_dto(obj),
+            confidence=triple.confidence,
+            source_kb_id=triple.source_kb_id,
+        )
+    )
 
 
 @router.delete("/triples/{triple_id}", response_model=Result[None])

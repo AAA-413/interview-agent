@@ -8,9 +8,9 @@ from dataclasses import dataclass
 
 import httpx
 
-from app.modules.knowledge_base.models import KnowledgeChunkEntity
-from app.config import settings
 from app.common.exception import EmbeddingFailedException
+from app.config import settings
+from app.modules.knowledge_base.models import KnowledgeChunkEntity
 
 logger = logging.getLogger(__name__)
 
@@ -41,19 +41,24 @@ class KnowledgeBaseVectorService:
             # 回退到 DashScope
             try:
                 from dashscope import TextEmbedding
+
                 self._text_embedding = TextEmbedding
                 api_key = settings.ai.embedding_api_key or settings.ai.bailian_api_key
                 if not api_key or api_key.startswith("your-"):
                     self._use_real_embedding = False
                     logger.warning("Embedding API key 未配置，降级为哈希向量 (%d维)", EMBEDDING_DIMENSIONS)
                 else:
-                    logger.info("向量化服务初始化: 使用阿里云百炼 Embedding API (text-embedding-v2, %d维)", EMBEDDING_DIMENSIONS)
+                    logger.info(
+                        "向量化服务初始化: 使用阿里云百炼 Embedding API (text-embedding-v2, %d维)", EMBEDDING_DIMENSIONS
+                    )
             except ImportError:
                 self._text_embedding = None
                 self._use_real_embedding = False
                 logger.warning("dashscope not installed, fallback to hash vector (%d-dim)", EMBEDDING_DIMENSIONS)
 
-    def split_text(self, text: str, *, chunk_size: int = 900, overlap: int = 120, doc_type: str = "general") -> list[ChunkBuildResult]:
+    def split_text(
+        self, text: str, *, chunk_size: int = 900, overlap: int = 120, doc_type: str = "general"
+    ) -> list[ChunkBuildResult]:
         """
         语义切分文本
 
@@ -68,7 +73,7 @@ class KnowledgeBaseVectorService:
             chunk_size = 1200  # 代码块通常更长
             overlap = 150
         elif doc_type == "table":
-            chunk_size = 600   # 表格需要保持完整性
+            chunk_size = 600  # 表格需要保持完整性
             overlap = 50
 
         normalized = self._normalize_text(text)
@@ -83,11 +88,7 @@ class KnowledgeBaseVectorService:
         return chunks
 
     def _recursive_split(
-        self,
-        text: str,
-        chunk_size: int,
-        overlap: int,
-        separators: list[str]
+        self, text: str, chunk_size: int, overlap: int, separators: list[str]
     ) -> list[ChunkBuildResult]:
         """递归语义切分"""
         if not separators:
@@ -246,23 +247,26 @@ class KnowledgeBaseVectorService:
         else:
             embedding = raw_embedding
 
-        logger.debug("智谱 Embedding 成功: text_length=%d, raw_dim=%d, final_dim=%d",
-                     len(text), len(raw_embedding), len(embedding))
+        logger.debug(
+            "智谱 Embedding 成功: text_length=%d, raw_dim=%d, final_dim=%d",
+            len(text),
+            len(raw_embedding),
+            len(embedding),
+        )
         return embedding
 
     def _embed_with_api(self, text: str) -> list[float]:
         """使用阿里云百炼 Embedding API"""
         try:
             response = self._text_embedding.call(
-                model='text-embedding-v2',
+                model="text-embedding-v2",
                 input=text,
-                api_key=settings.ai.embedding_api_key or settings.ai.bailian_api_key
+                api_key=settings.ai.embedding_api_key or settings.ai.bailian_api_key,
             )
 
             if response.status_code == 200:
-                embedding = response.output['embeddings'][0]['embedding']
-                logger.debug("Embedding API 调用成功: text_length=%d, embedding_dim=%d",
-                            len(text), len(embedding))
+                embedding = response.output["embeddings"][0]["embedding"]
+                logger.debug("Embedding API 调用成功: text_length=%d, embedding_dim=%d", len(text), len(embedding))
                 return embedding
             else:
                 error_msg = f"Embedding API 返回错误: {response.message}"

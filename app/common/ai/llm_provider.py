@@ -1,13 +1,14 @@
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 import asyncio
-import time
 import logging
+import time
 from typing import Any, Dict, List
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 from openai import APITimeoutError, RateLimitError
 
+from app.common.exception import LLMRateLimitException, LLMTimeoutException
 from app.config import settings
-from app.common.exception import LLMTimeoutException, LLMRateLimitException
 
 logger = logging.getLogger(__name__)
 
@@ -32,37 +33,51 @@ class MonitoredChatModel:
                 result = await self._model.ainvoke(messages, **kwargs)
             duration = time.time() - start
 
-            if hasattr(result, 'response_metadata'):
-                usage = result.response_metadata.get('token_usage', {})
+            if hasattr(result, "response_metadata"):
+                usage = result.response_metadata.get("token_usage", {})
                 logger.info(
                     "LLM调用成功: provider=%s, model=%s, duration=%.2fs, tokens=%s",
-                    self._provider, self._model.model_name, duration, usage
+                    self._provider,
+                    self._model.model_name,
+                    duration,
+                    usage,
                 )
             else:
                 logger.info(
                     "LLM调用成功: provider=%s, model=%s, duration=%.2fs",
-                    self._provider, self._model.model_name, duration
+                    self._provider,
+                    self._model.model_name,
+                    duration,
                 )
             return result
         except APITimeoutError as e:
             duration = time.time() - start
             logger.error(
                 "LLM调用超时: provider=%s, model=%s, duration=%.2fs, error=%s",
-                self._provider, self._model.model_name, duration, str(e)
+                self._provider,
+                self._model.model_name,
+                duration,
+                str(e),
             )
             raise LLMTimeoutException(f"AI 服务响应超时（{duration:.1f}秒），请稍后重试")
         except RateLimitError as e:
             duration = time.time() - start
             logger.error(
                 "LLM调用频率限制: provider=%s, model=%s, duration=%.2fs, error=%s",
-                self._provider, self._model.model_name, duration, str(e)
+                self._provider,
+                self._model.model_name,
+                duration,
+                str(e),
             )
             raise LLMRateLimitException("AI 服务调用频繁，请稍后再试（约 1 分钟）")
         except Exception as e:
             duration = time.time() - start
             logger.error(
                 "LLM调用失败: provider=%s, model=%s, duration=%.2fs, error=%s",
-                self._provider, self._model.model_name, duration, str(e)
+                self._provider,
+                self._model.model_name,
+                duration,
+                str(e),
             )
             raise
 
@@ -72,19 +87,27 @@ class MonitoredChatModel:
             async with _LLM_SEMAPHORE:
                 result = await self._model.agenerate(messages, **kwargs)
             duration = time.time() - start
-            logger.info("LLM agenerate 成功: provider=%s, model=%s, duration=%.2fs",
-                        self._provider, self._model.model_name, duration)
+            logger.info(
+                "LLM agenerate 成功: provider=%s, model=%s, duration=%.2fs",
+                self._provider,
+                self._model.model_name,
+                duration,
+            )
             return result
-        except APITimeoutError as e:
+        except APITimeoutError:
             duration = time.time() - start
             raise LLMTimeoutException(f"AI 服务响应超时（{duration:.1f}秒），请稍后重试")
-        except RateLimitError as e:
+        except RateLimitError:
             duration = time.time() - start
             raise LLMRateLimitException("AI 服务调用频繁，请稍后再试（约 1 分钟）")
         except Exception:
             duration = time.time() - start
-            logger.error("LLM agenerate 失败: provider=%s, model=%s, duration=%.2fs",
-                         self._provider, self._model.model_name, duration)
+            logger.error(
+                "LLM agenerate 失败: provider=%s, model=%s, duration=%.2fs",
+                self._provider,
+                self._model.model_name,
+                duration,
+            )
             raise
 
     async def astream(self, messages, **kwargs):
@@ -132,13 +155,10 @@ class LangChainLLMAdapter:
         response = await self.llm.ainvoke(lc_messages)
 
         # 转换返回格式
-        result = {
-            "content": response.content,
-            "usage": {}
-        }
+        result = {"content": response.content, "usage": {}}
 
-        if hasattr(response, 'response_metadata'):
-            result["usage"] = response.response_metadata.get('token_usage', {})
+        if hasattr(response, "response_metadata"):
+            result["usage"] = response.response_metadata.get("token_usage", {})
 
         return result
 

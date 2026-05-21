@@ -1,10 +1,10 @@
 import logging
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.common.ai.llm_provider import llm_registry
 from app.common.base_async_task import StreamTaskHandler, StreamTaskProducer
 from app.common.model import AsyncTaskStatus
-from app.common.ai.llm_provider import llm_registry
 from app.infrastructure.redis.redis_service import RedisService
 from app.modules.resume.grading_service import resume_grading_service
 from app.modules.resume.persistence_service import resume_persistence_service

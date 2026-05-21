@@ -58,12 +58,17 @@ class StructuredOutputInvoker:
                 if attempt < self.max_attempts:
                     logger.warning(
                         "%s结构化解析失败，准备重试: attempt=%d/%d, error=%s",
-                        log_context, attempt, self.max_attempts, str(e),
+                        log_context,
+                        attempt,
+                        self.max_attempts,
+                        str(e),
                     )
                 else:
                     logger.error(
                         "%s结构化解析失败，已达最大重试次数: attempts=%d, error=%s",
-                        log_context, self.max_attempts, str(e),
+                        log_context,
+                        self.max_attempts,
+                        str(e),
                     )
 
         raise BusinessException(error_code, f"{error_prefix}{last_error}")

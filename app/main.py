@@ -6,10 +6,10 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.config import settings
 import app.database as db_module
-from app.database import close_db, init_db, init_engine
 from app.common.exception_handlers import register_exception_handlers
+from app.config import settings
+from app.database import close_db, init_db, init_engine
 from app.infrastructure.redis.redis_service import RedisService, close_redis, init_redis
 from app.infrastructure.redis.stream_worker import StreamWorker
 
@@ -151,6 +151,7 @@ async def auth_middleware(request: Request, call_next):
     # 验证 token
     token = auth_header.split(" ", 1)[1]
     from app.modules.auth.security import decode_access_token
+
     payload = decode_access_token(token)
     if payload is None:
         return JSONResponse(
@@ -193,16 +194,16 @@ def create_app() -> FastAPI:
 
 
 def _register_routers(app: FastAPI) -> None:
-    from app.modules.auth.router import router as auth_router
-    from app.modules.resume.router import router as resume_router
-    from app.modules.interview.router import router as interview_router
-    from app.modules.interview.skill_router import router as skill_router
-    from app.modules.knowledge_base.router import router as kb_router
-    from app.modules.knowledge_base.rag_router import router as rag_router
-    from app.modules.knowledge_base.cross_kb_router import router as cross_kb_router
     from app.modules.agent_orchestration.router import router as agent_router
     from app.modules.agent_orchestration.smart_download_router import router as smart_download_router
+    from app.modules.auth.router import router as auth_router
+    from app.modules.interview.router import router as interview_router
+    from app.modules.interview.skill_router import router as skill_router
+    from app.modules.knowledge_base.cross_kb_router import router as cross_kb_router
+    from app.modules.knowledge_base.rag_router import router as rag_router
+    from app.modules.knowledge_base.router import router as kb_router
     from app.modules.knowledge_graph.router import router as kg_router
+    from app.modules.resume.router import router as resume_router
 
     app.include_router(auth_router, prefix="/api/auth", tags=["用户认证"])
     app.include_router(resume_router, prefix="/api/resumes", tags=["简历管理"])

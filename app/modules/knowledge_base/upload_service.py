@@ -45,7 +45,9 @@ class KnowledgeBaseUploadService:
             logger.info("知识库文档已存在(哈希去重): id=%d", existing.id)
             return existing
 
-        storage_key, storage_url = await file_storage_service.upload_knowledge_base(file_bytes, safe_filename, content_type)
+        storage_key, storage_url = await file_storage_service.upload_knowledge_base(
+            file_bytes, safe_filename, content_type
+        )
         source_text = await document_parse_service.parse_content(file_bytes, filename)
 
         entity = KnowledgeBaseEntity(

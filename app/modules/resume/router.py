@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, UploadFile, File
+from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +24,7 @@ router = APIRouter()
 def _enqueue_analysis(resume_id: int) -> None:
     """在事务提交后异步触发简历分析。"""
     import asyncio
+
     try:
         loop = asyncio.get_running_loop()
         loop.create_task(_do_enqueue(resume_id))

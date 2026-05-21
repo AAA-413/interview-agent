@@ -5,13 +5,13 @@ Revises: 002_add_profile_json
 Create Date: 2026-05-07 16:29:39.159415
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
-import sqlalchemy as sa
 
-revision: str = '29cd103437cf'
-down_revision: Union[str, None] = '002_add_profile_json'
+revision: str = "29cd103437cf"
+down_revision: Union[str, None] = "002_add_profile_json"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -44,16 +44,10 @@ TABLES_COLUMNS = [
 def upgrade() -> None:
     for table, columns in TABLES_COLUMNS:
         for col in columns:
-            op.execute(
-                f"ALTER TABLE {table} ALTER COLUMN {col} TYPE TIMESTAMPTZ "
-                f"USING {col} AT TIME ZONE 'UTC'"
-            )
+            op.execute(f"ALTER TABLE {table} ALTER COLUMN {col} TYPE TIMESTAMPTZ USING {col} AT TIME ZONE 'UTC'")
 
 
 def downgrade() -> None:
     for table, columns in TABLES_COLUMNS:
         for col in columns:
-            op.execute(
-                f"ALTER TABLE {table} ALTER COLUMN {col} TYPE TIMESTAMP "
-                f"USING {col} AT TIME ZONE 'UTC'"
-            )
+            op.execute(f"ALTER TABLE {table} ALTER COLUMN {col} TYPE TIMESTAMP USING {col} AT TIME ZONE 'UTC'")

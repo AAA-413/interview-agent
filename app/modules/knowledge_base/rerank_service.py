@@ -1,6 +1,7 @@
 """
 重排序服务 - 使用 Cross-Encoder 模型对检索结果进行二次精排
 """
+
 import asyncio
 import logging
 from typing import List
@@ -28,6 +29,7 @@ class RerankService:
 
         try:
             from sentence_transformers import CrossEncoder
+
             self.model = CrossEncoder(model_name, max_length=512)
             self._enabled = True
             logger.info(f"重排序服务初始化成功: model={model_name}")
@@ -41,12 +43,7 @@ class RerankService:
         """重排序是否启用"""
         return self._enabled
 
-    async def rerank(
-        self,
-        query: str,
-        chunks: List[RagReferenceDTO],
-        top_k: int
-    ) -> List[RagReferenceDTO]:
+    async def rerank(self, query: str, chunks: List[RagReferenceDTO], top_k: int) -> List[RagReferenceDTO]:
         """
         使用 Cross-Encoder 模型重排序
 
@@ -84,8 +81,7 @@ class RerankService:
                 reranked.append(chunk)
 
             logger.info(
-                f"重排序完成: 候选={len(chunks)}, Top-K={top_k}, "
-                f"最高分={reranked[0].score if reranked else 0:.4f}"
+                f"重排序完成: 候选={len(chunks)}, Top-K={top_k}, 最高分={reranked[0].score if reranked else 0:.4f}"
             )
 
             return reranked

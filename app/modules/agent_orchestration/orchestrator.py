@@ -11,12 +11,9 @@ AgentOrchestrator - 核心编排器
 
 import logging
 import time
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional
 
 from app.common.ai.llm_provider_protocol import LLMProvider
-
-if TYPE_CHECKING:
-    from app.modules.knowledge_base.rag_service import KnowledgeService
 
 from .agent_factory import AgentFactory
 from .cost_controller import CostController
@@ -51,6 +48,7 @@ class AgentOrchestrator:
         # 初始化决策树（优先使用智能决策树）
         try:
             from .smart_decision_tree import SmartDecisionTree
+
             self.decision_tree = SmartDecisionTree(
                 llm_provider=llm_provider,
                 knowledge_service=knowledge_service,
@@ -140,7 +138,7 @@ class AgentOrchestrator:
             )
 
             # 检查是否是 DecisionResult 对象（智能决策树）
-            if hasattr(decision_result, 'path'):
+            if hasattr(decision_result, "path"):
                 execution_path = decision_result.path
                 logger.info(f"🌲 智能决策: {execution_path.name} (置信度: {decision_result.confidence:.2%})")
                 logger.info(f"   理由: {decision_result.reasoning}")
@@ -160,6 +158,7 @@ class AgentOrchestrator:
 
             # 检查成本预算
             estimated_tokens = plan.get("total_estimated_tokens", 5000)
+            logger.info("📊 计划预估 token: %s", estimated_tokens)
             if not self.cost_controller.check_budget():
                 logger.warning("⚠️ 成本预算不足，任务中止")
                 return {
@@ -187,10 +186,7 @@ class AgentOrchestrator:
                     plan=plan,
                 )
                 # 转为 dict 供下游 agent 使用
-                execution_results = [
-                    r.model_dump() if hasattr(r, "model_dump") else r
-                    for r in raw_results
-                ]
+                execution_results = [r.model_dump() if hasattr(r, "model_dump") else r for r in raw_results]
                 logger.info(f"✅ 执行完成: {len(execution_results)} 个任务")
 
                 # 阶段 3：质检（如果需要）
@@ -305,27 +301,11 @@ class AgentOrchestrator:
             }
 
             # 使用 agent_factory 创建 Agent
-            agent = self.agent_factory.create_execution_agent(
-                agent_type=task.get("type")
-            )
+            agent = self.agent_factory.create_execution_agent(agent_type=task.get("type"))
 
             result = await agent.execute(task, context)
 
-            # 追踪成本（如果有 token 使用信息）
-            meta = result.metadata if hasattr(result, "metadata") else result.get("metadata", {})
-            tokens = meta.get("tokens", 0) if isinstance(meta, dict) else 0
-            if tokens:
-                from .cost_controller import TokenUsage
-                usage = TokenUsage(
-                    prompt_tokens=tokens // 3,
-                    completion_tokens=tokens * 2 // 3,
-                    total_tokens=tokens,
-                )
-                self.cost_controller.track(
-                    agent_name=f"ExecutionAgent_{task.get('type')}",
-                    model=self.llm_provider.model_name,
-                    usage=usage,
-                )
+            self._track_result_cost(result, task.get("type"))
 
             results.append(result)
             previous_results.append(result)
@@ -353,15 +333,13 @@ class AgentOrchestrator:
                 "tool_registry": self.tool_registry,
             }
 
-            agent = self.agent_factory.create_execution_agent(
-                agent_type=subtask.get("type")
-            )
+            agent = self.agent_factory.create_execution_agent(agent_type=subtask.get("type"))
 
             tasks.append(agent.execute(subtask, context))
 
         # 并行执行（带超时保护）
-        TASK_TIMEOUT = 120  # 单个任务最长 120 秒
-        wrapped_tasks = [asyncio.wait_for(t, timeout=TASK_TIMEOUT) for t in tasks]
+        task_timeout = 120  # 单个任务最长 120 秒
+        wrapped_tasks = [asyncio.wait_for(t, timeout=task_timeout) for t in tasks]
         results = await asyncio.gather(*wrapped_tasks, return_exceptions=True)
 
         # 处理异常并追踪成本
@@ -369,22 +347,16 @@ class AgentOrchestrator:
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 error_msg = "任务超时" if isinstance(result, asyncio.TimeoutError) else str(result)
-                processed_results.append(AgentMessage(
-                    task_id=subtasks[i].get("id", "unknown"),
-                    agent_type=subtasks[i].get("type", "unknown"),
-                    status="failed",
-                    error=error_msg,
-                ))
-            else:
-                # 追踪成本
-                meta = result.metadata if hasattr(result, "metadata") else result.get("metadata", {})
-                tokens = meta.get("tokens", 0) if isinstance(meta, dict) else 0
-                if tokens:
-                    self.cost_controller.track(
-                        model=self.llm_provider.model_name,
-                        input_tokens=tokens // 3,
-                        output_tokens=tokens * 2 // 3,
+                processed_results.append(
+                    AgentMessage(
+                        task_id=subtasks[i].get("id", "unknown"),
+                        agent_type=subtasks[i].get("type", "unknown"),
+                        status="failed",
+                        error=error_msg,
                     )
+                )
+            else:
+                self._track_result_cost(result, subtasks[i].get("type"))
                 processed_results.append(result)
 
         return processed_results
@@ -399,8 +371,6 @@ class AgentOrchestrator:
         """混合执行：根据依赖关系分层并行执行"""
         import asyncio
 
-        # 构建依赖图
-        task_map = {task["id"]: task for task in subtasks}
         results_map = {}
 
         # 拓扑排序，分层执行
@@ -438,15 +408,13 @@ class AgentOrchestrator:
                     "tool_registry": self.tool_registry,
                 }
 
-                agent = self.agent_factory.create_execution_agent(
-                    agent_type=task.get("type")
-                )
+                agent = self.agent_factory.create_execution_agent(agent_type=task.get("type"))
 
                 layer_tasks.append(agent.execute(task, context))
 
             # 执行这一层（带超时保护）
-            TASK_TIMEOUT = 120
-            wrapped_layer = [asyncio.wait_for(t, timeout=TASK_TIMEOUT) for t in layer_tasks]
+            task_timeout = 120
+            wrapped_layer = [asyncio.wait_for(t, timeout=task_timeout) for t in layer_tasks]
             layer_results = await asyncio.gather(*wrapped_layer, return_exceptions=True)
 
             # 记录结果并追踪成本
@@ -463,20 +431,38 @@ class AgentOrchestrator:
                         error=error_msg,
                     )
                 else:
-                    # 追踪成本
-                    meta = result.metadata if hasattr(result, "metadata") else result.get("metadata", {})
-                    tokens = meta.get("tokens", 0) if isinstance(meta, dict) else 0
-                    if tokens:
-                        self.cost_controller.track(
-                            model=self.llm_provider.model_name,
-                            input_tokens=tokens // 3,
-                            output_tokens=tokens * 2 // 3,
-                        )
+                    self._track_result_cost(result, ready_tasks[i].get("type"))
 
                 results_map[task_id] = result
                 all_results.append(result)
 
         return all_results
+
+    def _track_result_cost(self, result: Any, agent_type: str | None) -> None:
+        """Record token cost metadata returned by execution agents."""
+        if hasattr(result, "metadata"):
+            meta = result.metadata
+        elif isinstance(result, dict):
+            meta = result.get("metadata", {})
+        else:
+            return
+
+        tokens = meta.get("tokens", 0) if isinstance(meta, dict) else 0
+        if not tokens:
+            return
+
+        from .cost_controller import TokenUsage
+
+        usage = TokenUsage(
+            prompt_tokens=tokens // 3,
+            completion_tokens=tokens * 2 // 3,
+            total_tokens=tokens,
+        )
+        self.cost_controller.track(
+            agent_name=f"ExecutionAgent_{agent_type or 'unknown'}",
+            model=self.llm_provider.model_name,
+            usage=usage,
+        )
 
     async def _adjust_plan(
         self,

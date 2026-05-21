@@ -5,20 +5,17 @@
 import asyncio
 import json
 import logging
-import os
-from datetime import datetime
-from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from app.modules.auth.dependencies import get_current_user_id
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
 from app.common.ai.llm_provider import llm_registry
+from app.database import get_db
 from app.infrastructure.redis.redis_service import RedisService, get_redis
-from app.modules.agent_orchestration.orchestrator import AgentOrchestrator
 from app.modules.agent_orchestration.agents.planning_agent import PlanningAgent
-from app.modules.knowledge_base.rag_service import KnowledgeBaseRagService
+from app.modules.auth.dependencies import get_current_user_id
 from app.modules.knowledge_base.persistence_service import knowledge_base_persistence_service
 
 logger = logging.getLogger(__name__)
@@ -32,8 +29,10 @@ router = APIRouter(prefix="/api/agent/smart-download")
 
 # ============ 请求/响应模型 ============
 
+
 class PlanDownloadRequest(BaseModel):
     """生成下载计划请求"""
+
     user_input: str = Field(..., description="用户需求描述", min_length=1, max_length=500)
     max_downloads: int = Field(10, description="最大下载数量", ge=1, le=20)
     kb_id: Optional[int] = Field(None, description="目标知识库ID（可选）")
@@ -41,6 +40,7 @@ class PlanDownloadRequest(BaseModel):
 
 class DownloadStep(BaseModel):
     """下载步骤"""
+
     step_id: int
     action: str  # fetch_url, search_web, fetch_blog
     params: Dict[str, Any]
@@ -50,6 +50,7 @@ class DownloadStep(BaseModel):
 
 class DownloadPlan(BaseModel):
     """下载计划"""
+
     plan_id: str
     user_input: str
     intent: Dict[str, Any]
@@ -61,6 +62,7 @@ class DownloadPlan(BaseModel):
 
 class ExecuteDownloadRequest(BaseModel):
     """执行下载请求"""
+
     plan_id: str = Field(..., description="计划ID")
     kb_id: Optional[int] = Field(None, description="目标知识库ID")
     kb_name: Optional[str] = Field(None, description="知识库名称（创建新库时）")
@@ -69,6 +71,7 @@ class ExecuteDownloadRequest(BaseModel):
 
 class DownloadProgress(BaseModel):
     """下载进度"""
+
     task_id: str
     user_id: int = 0
     status: str  # planning, executing, quality_check, completed, failed, cancelled
@@ -87,16 +90,20 @@ class DownloadProgress(BaseModel):
 
 # ============ Redis 状态管理 ============
 
+
 def _plan_key(user_id: int, plan_id: str) -> str:
     return f"smart_download:{user_id}:plan:{plan_id}"
 
+
 def _task_key(user_id: int, task_id: str) -> str:
     return f"smart_download:{user_id}:task:{task_id}"
+
 
 async def _save_plan(user_id: int, plan_id: str, plan_data: dict) -> None:
     redis = await get_redis()
     svc = RedisService(redis)
     await svc.set(_plan_key(user_id, plan_id), json.dumps(plan_data, ensure_ascii=False), ex=STATE_TTL_SECONDS)
+
 
 async def _get_plan(user_id: int, plan_id: str) -> dict | None:
     redis = await get_redis()
@@ -104,10 +111,16 @@ async def _get_plan(user_id: int, plan_id: str) -> dict | None:
     raw = await svc.get(_plan_key(user_id, plan_id))
     return json.loads(raw) if raw else None
 
+
 async def _save_task_progress(user_id: int, task_id: str, progress: DownloadProgress) -> None:
     redis = await get_redis()
     svc = RedisService(redis)
-    await svc.set(_task_key(user_id, task_id), json.dumps(progress.model_dump(), ensure_ascii=False, default=str), ex=STATE_TTL_SECONDS)
+    await svc.set(
+        _task_key(user_id, task_id),
+        json.dumps(progress.model_dump(), ensure_ascii=False, default=str),
+        ex=STATE_TTL_SECONDS,
+    )
+
 
 async def _get_task_progress(user_id: int, task_id: str) -> DownloadProgress | None:
     redis = await get_redis()
@@ -138,6 +151,7 @@ async def _is_cancelled(user_id: int, task_id: str) -> bool:
 
 # ============ API 端点 ============
 
+
 @router.post("/plan", response_model=DownloadPlan)
 async def generate_download_plan(
     request: PlanDownloadRequest,
@@ -154,6 +168,7 @@ async def generate_download_plan(
 
         # 创建 PlanningAgent
         from app.common.ai.llm_adapter import LLMProviderAdapter
+
         chat_model = llm_registry.default
         llm_provider = LLMProviderAdapter(chat_model)
         planning_agent = PlanningAgent(
@@ -163,9 +178,7 @@ async def generate_download_plan(
 
         # 生成下载计划
         plan_data = await planning_agent.plan_download(
-            user_input=request.user_input,
-            max_downloads=request.max_downloads,
-            context={"kb_id": request.kb_id}
+            user_input=request.user_input, max_downloads=request.max_downloads, context={"kb_id": request.kb_id}
         )
 
         # 解析计划
@@ -174,7 +187,7 @@ async def generate_download_plan(
 
         # 转换为下载步骤（限制数量）
         steps = []
-        for i, task in enumerate(tasks[:request.max_downloads]):
+        for i, task in enumerate(tasks[: request.max_downloads]):
             step = DownloadStep(
                 step_id=i + 1,
                 action=_map_task_to_action(task),
@@ -186,6 +199,7 @@ async def generate_download_plan(
 
         # 生成计划ID
         import uuid
+
         plan_id = str(uuid.uuid4())
 
         # 估算时间和大小
@@ -236,6 +250,7 @@ async def execute_download_plan(
 
         # 创建任务ID
         import uuid
+
         task_id = str(uuid.uuid4())
 
         # 初始化进度
@@ -318,6 +333,7 @@ async def cancel_download_task(
 
 
 # ============ 辅助函数 ============
+
 
 def _map_task_to_action(task: Dict[str, Any]) -> str:
     """将任务类型映射到具体操作"""
@@ -424,17 +440,16 @@ async def _execute_download_with_retry(
         return
 
     try:
+        from app.common.ai.llm_adapter import LLMProviderAdapter
+        from app.common.ai.llm_provider import llm_registry
         from app.common.mcp.mcp_service import MCPService
-        from app.modules.knowledge_base.rag_service import KnowledgeBaseRagService
+        from app.common.tools.github_service import github_service
         from app.modules.agent_orchestration.agents.execution_agent import (
             DownloadExecutionAgent,
             GitHubExecutionAgent,
         )
         from app.modules.agent_orchestration.agents.quality_agent import QualityAgent
         from app.modules.agent_orchestration.agents.summary_agent import SummaryAgent
-        from app.common.ai.llm_provider import llm_registry
-        from app.common.ai.llm_adapter import LLMProviderAdapter
-        from app.common.tools.github_service import github_service
 
         # 初始化服务
         chat_model = llm_registry.default
@@ -482,7 +497,7 @@ async def _execute_download_with_retry(
                         "id": step["step_id"],
                         "type": step["action"],
                         "description": step["description"],
-                        **step.get("params", {})
+                        **step.get("params", {}),
                     }
                     agent_coro = github_agent.execute(task=github_task, context={})
                 else:
@@ -490,7 +505,7 @@ async def _execute_download_with_retry(
                         "id": str(step.get("step_id")),
                         "type": step.get("action"),
                         "description": step.get("description", ""),
-                        **step.get("params", {})
+                        **step.get("params", {}),
                     }
                     logger.info("[PARALLEL] Execute download task: %s", download_task)
                     agent_coro = download_agent.execute(task=download_task, context={})
@@ -502,8 +517,12 @@ async def _execute_download_with_retry(
                 if hasattr(result, "model_dump"):
                     result = result.model_dump()
 
-                logger.info("[PARALLEL] Task %d result type: %s, status: %s",
-                            result_idx, type(result), result.get("status") if isinstance(result, dict) else "N/A")
+                logger.info(
+                    "[PARALLEL] Task %d result type: %s, status: %s",
+                    result_idx,
+                    type(result),
+                    result.get("status") if isinstance(result, dict) else "N/A",
+                )
 
                 # 加锁更新进度
                 async with progress_lock:
@@ -521,7 +540,10 @@ async def _execute_download_with_retry(
                             "size": len(task_result.get("content", "")) if isinstance(task_result, dict) else 0,
                             "metadata": task_result.get("metadata", {}) if isinstance(task_result, dict) else {},
                         }
-                        existing_idx = next((i for i, f in enumerate(progress.downloaded_files) if f.get("step_id") == step["step_id"]), None)
+                        existing_idx = next(
+                            (i for i, f in enumerate(progress.downloaded_files) if f.get("step_id") == step["step_id"]),
+                            None,
+                        )
                         if existing_idx is not None:
                             progress.downloaded_files[existing_idx] = file_entry
                         else:
@@ -533,6 +555,8 @@ async def _execute_download_with_retry(
                     await _save_task_progress(user_id, task_id, progress)
 
                 return (result_idx, result, "ok")
+
+        quality_result: Dict[str, Any] = {}
 
         for retry in range(max_retries):
             progress.retry_count = retry
@@ -548,8 +572,7 @@ async def _execute_download_with_retry(
                     if not failed_indices:
                         break
                     steps_to_execute = [
-                        (idx, _get_step_by_index(idx, all_steps, expanded_steps))
-                        for idx in failed_indices
+                        (idx, _get_step_by_index(idx, all_steps, expanded_steps)) for idx in failed_indices
                     ]
                     logger.info("[RETRY] 选择性重试: failed_indices=%s", failed_indices)
                     # 标记重试中的任务状态
@@ -564,8 +587,7 @@ async def _execute_download_with_retry(
 
                 # === Phase 1: 并行执行所有步骤 ===
                 step_tasks = [
-                    _run_single_step(result_idx, step, completed, total)
-                    for result_idx, step in steps_to_execute
+                    _run_single_step(result_idx, step, completed, total) for result_idx, step in steps_to_execute
                 ]
                 gather_results = await asyncio.gather(*step_tasks, return_exceptions=True)
 
@@ -598,13 +620,15 @@ async def _execute_download_with_retry(
                                 repos = task_result.get("repos", []) if isinstance(task_result, dict) else []
                                 max_repos = step.get("max_repos_to_fetch", 3)
                                 for repo in repos[:max_repos]:
-                                    expanded_steps.append({
-                                        "step_id": len(all_steps) + len(expanded_steps) + 1,
-                                        "action": "fetch_github_repo",
-                                        "params": {"repo": repo["full_name"]},
-                                        "description": f"抓取 {repo['full_name']} 的文档",
-                                        "source_type": "github",
-                                    })
+                                    expanded_steps.append(
+                                        {
+                                            "step_id": len(all_steps) + len(expanded_steps) + 1,
+                                            "action": "fetch_github_repo",
+                                            "params": {"repo": repo["full_name"]},
+                                            "description": f"抓取 {repo['full_name']} 的文档",
+                                            "source_type": "github",
+                                        }
+                                    )
 
                 if retry == 0 and expanded_steps:
                     if await _is_cancelled(user_id, task_id):
@@ -668,9 +692,13 @@ async def _execute_download_with_retry(
                     expanded_keywords=expanded_keywords or None,
                 )
 
-                logger.info("质量检查完成: task_id=%s, score=%.2f, passed=%s, failed_indices=%s",
-                             task_id, quality_result['score'], quality_result['passed'],
-                             quality_result.get('failed_task_indices', []))
+                logger.info(
+                    "质量检查完成: task_id=%s, score=%.2f, passed=%s, failed_indices=%s",
+                    task_id,
+                    quality_result["score"],
+                    quality_result["passed"],
+                    quality_result.get("failed_task_indices", []),
+                )
                 # 设置质检详情供前端展示
                 per_task = quality_result.get("per_task_results", [])
                 failed_indices_set = set(quality_result.get("failed_task_indices", []))
@@ -689,19 +717,26 @@ async def _execute_download_with_retry(
                 await _save_task_progress(user_id, task_id, progress)
 
                 if quality_result["passed"]:
-                    logger.info("质量检查通过: task_id=%s, score=%.1f", task_id, quality_result['score'])
+                    logger.info("质量检查通过: task_id=%s, score=%.1f", task_id, quality_result["score"])
                     progress.retry_count = 0
                     break
                 else:
-                    logger.warning("质量检查未通过: task_id=%s, failed_indices=%s, issues=%s",
-                                   task_id, quality_result.get('failed_task_indices', []),
-                                   quality_result.get('issues', []))
+                    logger.warning(
+                        "质量检查未通过: task_id=%s, failed_indices=%s, issues=%s",
+                        task_id,
+                        quality_result.get("failed_task_indices", []),
+                        quality_result.get("issues", []),
+                    )
                     # 诊断日志：每个失败任务的具体原因
                     for tr in quality_result.get("per_task_results", []):
                         if not tr.get("passed"):
-                            logger.warning("[QA-DETAIL] Task %d failed: substance=%s, relevance=%s, reason=%s",
-                                           tr.get("task_index"), tr.get("content_substance"),
-                                           tr.get("topic_relevance"), tr.get("reason"))
+                            logger.warning(
+                                "[QA-DETAIL] Task %d failed: substance=%s, relevance=%s, reason=%s",
+                                tr.get("task_index"),
+                                tr.get("content_substance"),
+                                tr.get("topic_relevance"),
+                                tr.get("reason"),
+                            )
                     if retry < max_retries - 1 and quality_result.get("failed_task_indices"):
                         progress.message = "部分任务质量不合格，准备选择性重试..."
                         # 不清空 progress.downloaded_files，保留成功结果
@@ -730,13 +765,13 @@ async def _execute_download_with_retry(
             for i, result in enumerate(execution_results):
                 logger.info(f"  execution_results[{i}]: type={type(result)}")
                 if result is None:
-                    logger.warning(f"    Result is None")
+                    logger.warning("    Result is None")
                 elif isinstance(result, dict):
                     logger.info(f"    keys={list(result.keys())}")
                     logger.info(f"    status={result.get('status')}")
                     logger.info(f"    has_result={bool(result.get('result'))}")
-                    if result.get('result'):
-                        result_data = result.get('result')
+                    if result.get("result"):
+                        result_data = result.get("result")
                         logger.info(f"    result type={type(result_data)}")
                         if isinstance(result_data, dict):
                             logger.info(f"    result keys={list(result_data.keys())}")
@@ -759,7 +794,7 @@ async def _execute_download_with_retry(
             progress.message = "Content integration failed: 没有生成有效文档"
             return
 
-        logger.info(f"[OK] Content integration successful")
+        logger.info("[OK] Content integration successful")
         logger.info(f"  integrated_doc type: {type(integrated_doc)}")
         logger.info(f"  integrated_doc keys: {integrated_doc.keys() if isinstance(integrated_doc, dict) else 'N/A'}")
         logger.info(f"  title: {integrated_doc.get('title', 'N/A') if isinstance(integrated_doc, dict) else 'N/A'}")
@@ -784,7 +819,7 @@ async def _execute_download_with_retry(
 
         kb_result = None
         try:
-            logger.info(f"[KB] Prepare to call _add_to_knowledge_base")
+            logger.info("[KB] Prepare to call _add_to_knowledge_base")
             logger.info(f"  integrated_doc type: {type(integrated_doc)}")
             logger.info(f"  kb_id: {kb_id}, kb_name: {kb_name}")
 
@@ -802,6 +837,7 @@ async def _execute_download_with_retry(
             if kb_result and kb_result.get("kb_id"):
                 try:
                     from app.modules.knowledge_base.upload_service import knowledge_base_upload_service
+
                     kb_id_to_index = kb_result["kb_id"]
                     logger.info(f"[KB] Calling _enqueue_index for kb_id={kb_id_to_index}")
                     await knowledge_base_upload_service._enqueue_index(kb_id_to_index)
@@ -823,13 +859,13 @@ async def _execute_download_with_retry(
 
         # 添加整合文档信息到进度
         progress.integrated_doc = {
-            "title": integrated_doc.get('title', ''),
-            "summary": integrated_doc.get('summary', ''),
-            "source_count": integrated_doc.get('source_count', 0),
-            "total_length": integrated_doc.get('total_length', 0),
-            "sources": integrated_doc.get('sources', []),
-            "content": integrated_doc.get('integrated_content', ''),
-            "source_summaries": integrated_doc.get('source_summaries', []),
+            "title": integrated_doc.get("title", ""),
+            "summary": integrated_doc.get("summary", ""),
+            "source_count": integrated_doc.get("source_count", 0),
+            "total_length": integrated_doc.get("total_length", 0),
+            "sources": integrated_doc.get("sources", []),
+            "content": integrated_doc.get("integrated_content", ""),
+            "source_summaries": integrated_doc.get("source_summaries", []),
         }
 
         # 添加知识库信息
@@ -840,18 +876,20 @@ async def _execute_download_with_retry(
                 "doc_id": kb_result.get("doc_id"),
             }
 
-        progress.downloaded_files.append({
-            "step_id": 0,
-            "description": f"整合文档: {integrated_doc.get('title', '未知标题')}",
-            "size": integrated_doc.get('total_length', 0),
-            "metadata": {
-                "title": integrated_doc.get('title', ''),
-                "summary": integrated_doc.get('summary', ''),
-                "sources": integrated_doc.get('sources', []),
-                "kb_id": kb_result.get("kb_id") if kb_result and isinstance(kb_result, dict) else None,
-                "doc_id": kb_result.get("doc_id") if kb_result and isinstance(kb_result, dict) else None,
-            },
-        })
+        progress.downloaded_files.append(
+            {
+                "step_id": 0,
+                "description": f"整合文档: {integrated_doc.get('title', '未知标题')}",
+                "size": integrated_doc.get("total_length", 0),
+                "metadata": {
+                    "title": integrated_doc.get("title", ""),
+                    "summary": integrated_doc.get("summary", ""),
+                    "sources": integrated_doc.get("sources", []),
+                    "kb_id": kb_result.get("kb_id") if kb_result and isinstance(kb_result, dict) else None,
+                    "doc_id": kb_result.get("doc_id") if kb_result and isinstance(kb_result, dict) else None,
+                },
+            }
+        )
 
         logger.info("下载任务完成: task_id=%s", task_id)
         await _save_task_progress(user_id, task_id, progress)
@@ -863,10 +901,7 @@ async def _execute_download_with_retry(
         await _save_task_progress(user_id, task_id, progress)
 
 
-async def _check_download_quality(
-    downloaded_files: list[Dict[str, Any]],
-    intent: Dict[str, Any]
-) -> Dict[str, Any]:
+async def _check_download_quality(downloaded_files: list[Dict[str, Any]], intent: Dict[str, Any]) -> Dict[str, Any]:
     """
     质量检查（简化版，用于兼容）
 
@@ -876,11 +911,7 @@ async def _check_download_quality(
     3. 内容完整性
     """
     if not downloaded_files:
-        return {
-            "passed": False,
-            "score": 0.0,
-            "reason": "没有成功下载任何文件"
-        }
+        return {"passed": False, "score": 0.0, "reason": "没有成功下载任何文件"}
 
     # 简单的质量评分
     total_size = sum(len(f.get("content", "")) for f in downloaded_files if f and isinstance(f, dict))
@@ -888,11 +919,7 @@ async def _check_download_quality(
 
     # 如果平均文件大小太小，可能是Download failed
     if avg_size < 100:
-        return {
-            "passed": False,
-            "score": 0.3,
-            "reason": "下载的内容过少，可能不完整"
-        }
+        return {"passed": False, "score": 0.3, "reason": "下载的内容过少，可能不完整"}
 
     # 计算成功率
     target_count = len(intent.get("target_resources", [])) if intent and isinstance(intent, dict) else 1
@@ -903,7 +930,7 @@ async def _check_download_quality(
     return {
         "passed": score >= 0.6,
         "score": score,
-        "reason": "Quality check passed" if score >= 0.6 else "部分Download failed或内容不完整"
+        "reason": "Quality check passed" if score >= 0.6 else "部分Download failed或内容不完整",
     }
 
 
@@ -927,8 +954,7 @@ async def _add_to_knowledge_base(
         保存结果，包含 kb_id 和 doc_id
     """
     from app.database import get_db_context
-    from app.modules.knowledge_base.models import KnowledgeBaseEntity, KnowledgeChunkEntity
-    from app.modules.knowledge_base.rag_service import KnowledgeBaseRagService
+    from app.modules.knowledge_base.models import KnowledgeBaseEntity
 
     async with get_db_context() as db:
         # 如果没有指定知识库，创建新的
@@ -938,6 +964,7 @@ async def _add_to_knowledge_base(
 
             # 生成文件哈希（使用内容的哈希）
             import hashlib
+
             content = integrated_doc.get("integrated_content", "")
             file_hash = hashlib.sha256(content.encode()).hexdigest()
 

@@ -42,7 +42,12 @@ async def create_session(
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    logger.info("收到创建面试会话请求: skill_id=%s, difficulty=%s, question_count=%d", request.skill_id, request.difficulty, request.question_count)
+    logger.info(
+        "收到创建面试会话请求: skill_id=%s, difficulty=%s, question_count=%d",
+        request.skill_id,
+        request.difficulty,
+        request.question_count,
+    )
     session = await interview_session_service.create_session(db, request, user_id)
     return Result.success(session)
 

@@ -5,7 +5,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class UserRegisterRequest(BaseModel):
@@ -35,6 +35,8 @@ class TokenResponse(BaseModel):
 class UserResponse(BaseModel):
     """用户信息响应"""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     username: str
     email: str
@@ -43,9 +45,6 @@ class UserResponse(BaseModel):
     is_superuser: bool
     created_at: datetime
     last_login: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
 
 
 class UserUpdateRequest(BaseModel):

@@ -5,8 +5,10 @@ Revises: 001_add_user_id
 Create Date: 2026-05-04
 
 """
-from alembic import op
+
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "002_add_profile_json"
 down_revision = "001_add_user_id"

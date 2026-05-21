@@ -16,9 +16,9 @@ MessageHandler = Callable[[dict[str, str]], Awaitable[None]]
 CONSUMER_GROUP = "default-workers"
 
 # Pending 重试配置
-PENDING_IDLE_THRESHOLD_MS = 60_000   # 消息空闲超过 60s 视为卡住
-PENDING_CHECK_INTERVAL_S = 30       # 每 30s 扫描一次 pending list
-MAX_DELIVERY_COUNT = 3              # 最多重试 3 次
+PENDING_IDLE_THRESHOLD_MS = 60_000  # 消息空闲超过 60s 视为卡住
+PENDING_CHECK_INTERVAL_S = 30  # 每 30s 扫描一次 pending list
+MAX_DELIVERY_COUNT = 3  # 最多重试 3 次
 
 
 class StreamWorker:
@@ -52,7 +52,9 @@ class StreamWorker:
 
     async def run_forever(self) -> None:
         await self._redis.xgroup_create(self._stream_key, CONSUMER_GROUP, id="0", mkstream=True)
-        logger.info("Starting async worker: %s (stream=%s, consumer=%s)", self._name, self._stream_key, self._consumer_name)
+        logger.info(
+            "Starting async worker: %s (stream=%s, consumer=%s)", self._name, self._stream_key, self._consumer_name
+        )
 
         # 主循环 + pending 扫描并发运行
         main_task = asyncio.create_task(self._read_new_messages())
@@ -90,7 +92,9 @@ class StreamWorker:
             except TimeoutError:
                 logger.warning(
                     "Async worker Redis Stream read timeout, will retry: %s (stream=%s, block_ms=%s)",
-                    self._name, self._stream_key, self._block_ms,
+                    self._name,
+                    self._stream_key,
+                    self._block_ms,
                 )
                 await asyncio.sleep(self._error_sleep_seconds)
             except Exception:
@@ -112,8 +116,11 @@ class StreamWorker:
         """扫描 pending list，认领并重试空闲超时的消息。"""
         try:
             pending = await self._redis.xpending_range(
-                self._stream_key, CONSUMER_GROUP,
-                min="-", max="+", count=50,
+                self._stream_key,
+                CONSUMER_GROUP,
+                min="-",
+                max="+",
+                count=50,
             )
         except Exception as e:
             # consumer group 可能还不存在
@@ -131,7 +138,9 @@ class StreamWorker:
 
         # xclaim 认领空闲消息
         claimed = await self._redis.xclaim(
-            self._stream_key, CONSUMER_GROUP, self._consumer_name,
+            self._stream_key,
+            CONSUMER_GROUP,
+            self._consumer_name,
             min_idle_time=PENDING_IDLE_THRESHOLD_MS,
             message_ids=idle_ids,
         )
@@ -146,7 +155,9 @@ class StreamWorker:
                 # 超过最大重试次数，进入死信
                 logger.warning(
                     "消息超过最大重试次数，进入死信: stream=%s, msg_id=%s, retries=%d",
-                    self._stream_key, msg_id, retry_count,
+                    self._stream_key,
+                    msg_id,
+                    retry_count,
                 )
                 await self._send_to_dead_letter(msg_id, fields, retry_count)
                 await self._redis.xack(self._stream_key, CONSUMER_GROUP, msg_id)
@@ -156,7 +167,10 @@ class StreamWorker:
             self._retry_counts[msg_id] = retry_count + 1
             logger.info(
                 "重试 pending 消息: stream=%s, msg_id=%s, retry=%d/%d",
-                self._stream_key, msg_id, retry_count + 1, MAX_DELIVERY_COUNT,
+                self._stream_key,
+                msg_id,
+                retry_count + 1,
+                MAX_DELIVERY_COUNT,
             )
             await self._process_message(msg_id, fields)
 
@@ -169,7 +183,9 @@ class StreamWorker:
         except Exception:
             logger.exception(
                 "worker %s 处理消息失败: stream=%s, msg_id=%s",
-                self._name, self._stream_key, msg_id,
+                self._name,
+                self._stream_key,
+                msg_id,
             )
 
     async def _send_to_dead_letter(self, msg_id: str, fields: dict[str, str], delivery_count: int) -> None:

@@ -19,9 +19,7 @@ class LLMProviderAdapter:
         self.langchain_model = langchain_model
         self.model_name = langchain_model.model_name
 
-    async def chat(
-        self, messages: List[Dict[str, str]], **kwargs
-    ) -> Dict[str, Any]:
+    async def chat(self, messages: List[Dict[str, str]], **kwargs) -> Dict[str, Any]:
         """
         适配 chat 接口
 
@@ -41,7 +39,7 @@ class LLMProviderAdapter:
         """
         try:
             # 转换消息格式为 LangChain 格式
-            from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+            from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
             lc_messages = []
             for msg in messages:

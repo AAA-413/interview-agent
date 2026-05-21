@@ -2,11 +2,12 @@
 多路检索架构 - SearchChannel 接口设计
 参考 Ragent 项目的多路检索设计
 """
+
+import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import List
-import logging
-import time
 
 from app.modules.knowledge_base.schemas import RagReferenceDTO
 
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SearchContext:
     """检索上下文"""
+
     question: str
     kb_id: int
     top_k: int
@@ -26,6 +28,7 @@ class SearchContext:
 @dataclass
 class SearchChannelResult:
     """检索通道结果"""
+
     channel_name: str
     chunks: List[RagReferenceDTO]
     confidence: float
@@ -78,8 +81,9 @@ class VectorSearchChannel(SearchChannel):
         start = time.time()
 
         try:
-            from app.modules.knowledge_base.models import KnowledgeChunkEntity, KnowledgeBaseEntity
             from sqlalchemy import select
+
+            from app.modules.knowledge_base.models import KnowledgeBaseEntity, KnowledgeChunkEntity
 
             # 0. 获取知识库名称（用于来源追溯）
             kb_stmt = select(KnowledgeBaseEntity.name).where(KnowledgeBaseEntity.id == context.kb_id)
@@ -109,11 +113,7 @@ class VectorSearchChannel(SearchChannel):
                 )
                 result_fallback = await self.db_session.execute(stmt_fallback)
                 all_chunks = result_fallback.scalars().all()
-                chunks = self.rag_service._search_chunks(
-                    all_chunks,
-                    context.question,
-                    context.top_k * 2
-                )
+                chunks = self.rag_service._search_chunks(all_chunks, context.question, context.top_k * 2)
             else:
                 # 4. 转换为 RagReferenceDTO
                 chunks = []
@@ -125,41 +125,42 @@ class VectorSearchChannel(SearchChannel):
                     else:
                         score = 0.5
 
-                    chunks.append(RagReferenceDTO(
-                        chunk_id=chunk_entity.id,
-                        chunk_index=chunk_entity.chunk_index,
-                        title=chunk_entity.title or "",
-                        content=chunk_entity.content or "",
-                        content_preview=chunk_entity.content_preview or chunk_entity.content[:200],
-                        score=score,
-                        source_name=source_name,
-                    ))
+                    chunks.append(
+                        RagReferenceDTO(
+                            chunk_id=chunk_entity.id,
+                            chunk_index=chunk_entity.chunk_index,
+                            title=chunk_entity.title or "",
+                            content=chunk_entity.content or "",
+                            content_preview=chunk_entity.content_preview or chunk_entity.content[:200],
+                            score=score,
+                            source_name=source_name,
+                        )
+                    )
 
             latency_ms = int((time.time() - start) * 1000)
             confidence = max([c.score for c in chunks]) if chunks else 0.0
 
-            logger.info("向量检索完成: channel=%s, chunks=%d, latency=%dms, method=%s",
-                       self.get_name(), len(chunks), latency_ms,
-                       "pgvector" if chunks_entities else "memory")
+            logger.info(
+                "向量检索完成: channel=%s, chunks=%d, latency=%dms, method=%s",
+                self.get_name(),
+                len(chunks),
+                latency_ms,
+                "pgvector" if chunks_entities else "memory",
+            )
 
             return SearchChannelResult(
-                channel_name=self.get_name(),
-                chunks=chunks,
-                confidence=confidence,
-                latency_ms=latency_ms
+                channel_name=self.get_name(), chunks=chunks, confidence=confidence, latency_ms=latency_ms
             )
         except Exception as e:
             logger.error("向量检索失败: %s", e, exc_info=True)
             return SearchChannelResult(
-                channel_name=self.get_name(),
-                chunks=[],
-                confidence=0.0,
-                latency_ms=int((time.time() - start) * 1000)
+                channel_name=self.get_name(), chunks=[], confidence=0.0, latency_ms=int((time.time() - start) * 1000)
             )
 
     def _cosine_distance(self, vec1: List[float], vec2: List[float]) -> float:
         """计算余弦距离"""
         import math
+
         dot_product = sum(a * b for a, b in zip(vec1, vec2))
         magnitude1 = math.sqrt(sum(a * a for a in vec1))
         magnitude2 = math.sqrt(sum(b * b for b in vec2))
@@ -195,10 +196,8 @@ class MultiChannelRetrievalEngine:
 
         # 2. 并行执行所有通道
         import asyncio
-        results = await asyncio.gather(
-            *[c.search(context) for c in enabled_channels],
-            return_exceptions=True
-        )
+
+        results = await asyncio.gather(*[c.search(context) for c in enabled_channels], return_exceptions=True)
 
         # 3. 合并结果
         all_chunks = []
@@ -218,7 +217,7 @@ class MultiChannelRetrievalEngine:
 
         # 5. 按分数排序并返回 Top-K
         chunks.sort(key=lambda c: c.score, reverse=True)
-        return chunks[:context.top_k]
+        return chunks[: context.top_k]
 
     def _deduplicate(self, chunks: List[RagReferenceDTO]) -> List[RagReferenceDTO]:
         """去重：保留分数最高的"""

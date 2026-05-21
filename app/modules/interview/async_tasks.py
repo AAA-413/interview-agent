@@ -1,6 +1,6 @@
 import logging
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.base_async_task import StreamTaskHandler, StreamTaskProducer
 from app.common.model import AsyncTaskStatus

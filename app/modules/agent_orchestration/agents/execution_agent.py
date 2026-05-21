@@ -121,10 +121,7 @@ class KnowledgeSearchAgent(ExecutionAgent):
             )
 
             # 使用 LLM 整合知识
-            knowledge_text = "\n\n".join([
-                f"[来源 {i+1}] {r.get('content', '')}"
-                for i, r in enumerate(results)
-            ])
+            knowledge_text = "\n\n".join([f"[来源 {i + 1}] {r.get('content', '')}" for i, r in enumerate(results)])
 
             prompt = f"""基于以下知识片段，回答问题：{query}
 
@@ -137,9 +134,7 @@ class KnowledgeSearchAgent(ExecutionAgent):
 3. 保持简洁准确
 """
 
-            response = await self.llm_provider.ainvoke(
-                [HumanMessage(content=prompt)]
-            )
+            response = await self.llm_provider.ainvoke([HumanMessage(content=prompt)])
 
             answer = response.content or ""
 
@@ -211,9 +206,7 @@ class CodeAnalysisAgent(ExecutionAgent):
 4. 遵循最佳实践
 """
 
-            response = await self.llm_provider.ainvoke(
-                [HumanMessage(content=prompt)]
-            )
+            response = await self.llm_provider.ainvoke([HumanMessage(content=prompt)])
 
             code = response.content or ""
 
@@ -295,9 +288,7 @@ class DataProcessingAgent(ExecutionAgent):
 3. 生成结构化结果
 """
 
-            response = await self.llm_provider.ainvoke(
-                [HumanMessage(content=prompt)]
-            )
+            response = await self.llm_provider.ainvoke([HumanMessage(content=prompt)])
 
             processed_data = response.content or ""
 
@@ -366,9 +357,7 @@ class DesignAgent(ExecutionAgent):
 4. 包含关键技术选型
 """
 
-            response = await self.llm_provider.ainvoke(
-                [HumanMessage(content=prompt)]
-            )
+            response = await self.llm_provider.ainvoke([HumanMessage(content=prompt)])
 
             design = response.content or ""
 
@@ -443,6 +432,7 @@ class DownloadExecutionAgent(ExecutionAgent):
 
         except Exception as e:
             import traceback
+
             error_detail = traceback.format_exc()
             logger.error(f"下载任务失败: {e}")
             logger.error(f"详细错误:\n{error_detail}")
@@ -466,9 +456,7 @@ class DownloadExecutionAgent(ExecutionAgent):
         # 内容清洗和结构化
         logger.info(f"  开始清洗内容，原始长度: {len(raw_content)}")
         cleaned_content = await self._clean_content(
-            raw_content=raw_content,
-            task_description=task.get("description", ""),
-            source_type="url"
+            raw_content=raw_content, task_description=task.get("description", ""), source_type="url"
         )
         logger.info(f"  清洗完成，清洗后长度: {len(cleaned_content)}")
 
@@ -501,11 +489,9 @@ class DownloadExecutionAgent(ExecutionAgent):
             logger.info(f"  搜索返回结果: content长度={len(raw_content)}, results数量={len(result.get('results', []))}")
 
             # 内容清洗和结构化
-            logger.info(f"  开始清洗搜索内容")
+            logger.info("  开始清洗搜索内容")
             cleaned_content = await self._clean_content(
-                raw_content=raw_content,
-                task_description=task.get("description", ""),
-                source_type="search"
+                raw_content=raw_content, task_description=task.get("description", ""), source_type="search"
             )
             logger.info(f"  清洗完成，清洗后长度: {len(cleaned_content)}")
 
@@ -523,6 +509,7 @@ class DownloadExecutionAgent(ExecutionAgent):
             }
         except Exception as e:
             import traceback
+
             error_detail = traceback.format_exc()
             logger.error(f"  搜索异常: {e}")
             logger.error(f"  详细错误:\n{error_detail}")
@@ -563,7 +550,7 @@ class DownloadExecutionAgent(ExecutionAgent):
             清洗后的 Markdown 格式内容
         """
         if not raw_content or len(raw_content.strip()) < 100:
-            logger.warning(f"  内容过短或为空，跳过清洗")
+            logger.warning("  内容过短或为空，跳过清洗")
             return raw_content
 
         # 限制输入长度，避免 token 超限
@@ -594,7 +581,7 @@ class DownloadExecutionAgent(ExecutionAgent):
 
             # 如果清洗后内容过短，返回原始内容
             if len(cleaned.strip()) < 50:
-                logger.warning(f"  清洗后内容过短，使用原始内容")
+                logger.warning("  清洗后内容过短，使用原始内容")
                 return raw_content
 
             return cleaned
@@ -632,21 +619,21 @@ class DownloadExecutionAgent(ExecutionAgent):
 
         for i, result in enumerate(execution_results):
             if result is None:
-                logger.warning(f"  结果{i+1}: None (跳过)")
+                logger.warning(f"  结果{i + 1}: None (跳过)")
                 continue
 
             if not isinstance(result, dict):
-                logger.warning(f"  结果{i+1}: 不是字典类型 (type={type(result)}), 跳过")
+                logger.warning(f"  结果{i + 1}: 不是字典类型 (type={type(result)}), 跳过")
                 continue
 
-            logger.info(f"  结果{i+1}: status={result.get('status')}, has_result={bool(result.get('result'))}")
+            logger.info(f"  结果{i + 1}: status={result.get('status')}, has_result={bool(result.get('result'))}")
 
             if result.get("status") != "success":
                 continue
 
             task_result = result.get("result", {})
             if not isinstance(task_result, dict):
-                logger.warning(f"  结果{i+1}: task_result不是字典类型, 跳过")
+                logger.warning(f"  结果{i + 1}: task_result不是字典类型, 跳过")
                 continue
 
             content = task_result.get("content", "")
@@ -655,24 +642,26 @@ class DownloadExecutionAgent(ExecutionAgent):
             logger.info(f"    content_length={len(content)}, metadata={metadata}")
 
             if content and len(content.strip()) > 50:  # 降低过滤阈值从100到50
-                contents.append({
-                    "content": content,
-                    "source": metadata.get("url") or metadata.get("query", ""),
-                    "description": metadata.get("description", ""),
-                })
+                contents.append(
+                    {
+                        "content": content,
+                        "source": metadata.get("url") or metadata.get("query", ""),
+                        "description": metadata.get("description", ""),
+                    }
+                )
                 sources.append(metadata.get("url") or metadata.get("query", ""))
 
         if not contents:
             logger.error(f"❌ 没有有效内容可整合。执行结果数: {len(execution_results)}")
             for i, result in enumerate(execution_results):
                 if result is None:
-                    logger.error(f"  结果{i+1}: None")
+                    logger.error(f"  结果{i + 1}: None")
                 elif not isinstance(result, dict):
-                    logger.error(f"  结果{i+1}: 不是字典类型 (type={type(result)})")
+                    logger.error(f"  结果{i + 1}: 不是字典类型 (type={type(result)})")
                 else:
-                    result_data = result.get('result', {})
-                    content_len = len(result_data.get('content', '')) if isinstance(result_data, dict) else 0
-                    logger.error(f"  结果{i+1}: status={result.get('status')}, content_length={content_len}")
+                    result_data = result.get("result", {})
+                    content_len = len(result_data.get("content", "")) if isinstance(result_data, dict) else 0
+                    logger.error(f"  结果{i + 1}: status={result.get('status')}, content_length={content_len}")
             raise ValueError("没有有效的内容可以整合，请检查搜索引擎配置或网络连接")
 
         logger.info(f"  有效内容数: {len(contents)}")
@@ -683,18 +672,22 @@ class DownloadExecutionAgent(ExecutionAgent):
             try:
                 summary_prompt = f"用50字以内概括以下内容的核心要点：\n\n{item['content'][:1000]}"
                 summary_resp = await self.llm_provider.ainvoke([HumanMessage(content=summary_prompt)])
-                source_summaries.append({
-                    "source": item["source"],
-                    "description": item["description"],
-                    "summary": (summary_resp.content or "")[:200] if summary_resp else "",
-                })
+                source_summaries.append(
+                    {
+                        "source": item["source"],
+                        "description": item["description"],
+                        "summary": (summary_resp.content or "")[:200] if summary_resp else "",
+                    }
+                )
             except Exception as e:
                 logger.warning("源 %d 摘要生成失败: %s", i + 1, e)
-                source_summaries.append({
-                    "source": item["source"],
-                    "description": item["description"],
-                    "summary": item["content"][:200],
-                })
+                source_summaries.append(
+                    {
+                        "source": item["source"],
+                        "description": item["description"],
+                        "summary": item["content"][:200],
+                    }
+                )
 
         # S-P3: 分层合成策略 — 超过3源时先分组摘要，再合并
         if len(contents) <= 3:
@@ -702,9 +695,7 @@ class DownloadExecutionAgent(ExecutionAgent):
             content_blocks = []
             for i, item in enumerate(contents, 1):
                 content_blocks.append(
-                    f"## 来源 {i}: {item['description']}\n"
-                    f"URL: {item['source']}\n\n"
-                    f"{item['content'][:2000]}\n"
+                    f"## 来源 {i}: {item['description']}\nURL: {item['source']}\n\n{item['content'][:2000]}\n"
                 )
             combined_content = "\n\n---\n\n".join(content_blocks)
 
@@ -723,14 +714,12 @@ class DownloadExecutionAgent(ExecutionAgent):
 
 输出整合文档："""
 
-            response = await self.llm_provider.ainvoke(
-                [HumanMessage(content=prompt)]
-            )
+            response = await self.llm_provider.ainvoke([HumanMessage(content=prompt)])
         else:
             # S-P3: 超过3源 → 分组摘要 → 合并整合
             logger.info(f"  内容数 {len(contents)} > 3，启用分层合成策略")
             group_size = 3
-            groups = [contents[i:i + group_size] for i in range(0, len(contents), group_size)]
+            groups = [contents[i : i + group_size] for i in range(0, len(contents), group_size)]
             logger.info(f"  分为 {len(groups)} 组，每组最多 {group_size} 个来源")
 
             group_summaries = []
@@ -738,9 +727,7 @@ class DownloadExecutionAgent(ExecutionAgent):
                 group_blocks = []
                 for i, item in enumerate(group, 1):
                     group_blocks.append(
-                        f"## 来源 {i}: {item['description']}\n"
-                        f"URL: {item['source']}\n\n"
-                        f"{item['content'][:2000]}\n"
+                        f"## 来源 {i}: {item['description']}\nURL: {item['source']}\n\n{item['content'][:2000]}\n"
                     )
                 group_combined = "\n\n---\n\n".join(group_blocks)
 
@@ -757,9 +744,7 @@ class DownloadExecutionAgent(ExecutionAgent):
 4. 输出纯 Markdown 文本，不要输出标题"""
 
                 logger.info(f"    第 {g_idx + 1}/{len(groups)} 组摘要生成中...")
-                group_resp = await self.llm_provider.ainvoke(
-                    [HumanMessage(content=group_prompt)]
-                )
+                group_resp = await self.llm_provider.ainvoke([HumanMessage(content=group_prompt)])
                 group_text = (group_resp.content or "") if group_resp else ""
                 if group_text.strip():
                     group_summaries.append(group_text.strip())
@@ -771,9 +756,7 @@ class DownloadExecutionAgent(ExecutionAgent):
                 raise ValueError("分层合成失败：所有分组摘要均为空")
 
             # 合并所有分组摘要，进行最终整合
-            merged_content = "\n\n---\n\n".join(
-                f"## 分组 {i + 1} 摘要\n\n{s}" for i, s in enumerate(group_summaries)
-            )
+            merged_content = "\n\n---\n\n".join(f"## 分组 {i + 1} 摘要\n\n{s}" for i, s in enumerate(group_summaries))
 
             final_prompt = f"""用户需求："{user_input}"
 
@@ -790,9 +773,7 @@ class DownloadExecutionAgent(ExecutionAgent):
 
 输出整合文档："""
 
-            response = await self.llm_provider.ainvoke(
-                [HumanMessage(content=final_prompt)]
-            )
+            response = await self.llm_provider.ainvoke([HumanMessage(content=final_prompt)])
 
         if not response:
             logger.error("❌ LLM返回空响应")
@@ -814,12 +795,11 @@ class DownloadExecutionAgent(ExecutionAgent):
 请以JSON格式输出：
 {{"title": "标题", "summary": "摘要"}}"""
 
-        title_response = await self.llm_provider.ainvoke(
-            [HumanMessage(content=title_prompt)]
-        )
+        title_response = await self.llm_provider.ainvoke([HumanMessage(content=title_prompt)])
 
         # 解析标题和摘要
         import json
+
         try:
             if not title_response:
                 logger.warning("标题生成返回空响应，使用默认值")
@@ -977,9 +957,7 @@ class GitHubExecutionAgent(ExecutionAgent):
         # 合并所有文档内容
         content_parts = []
         for doc in result["documents"]:
-            content_parts.append(
-                f"# {doc['path']}\n\n{doc['content']}"
-            )
+            content_parts.append(f"# {doc['path']}\n\n{doc['content']}")
 
         content = "\n\n---\n\n".join(content_parts)
 

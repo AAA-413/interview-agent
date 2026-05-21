@@ -5,7 +5,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, String, DateTime, Boolean
+from sqlalchemy import BigInteger, Boolean, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base

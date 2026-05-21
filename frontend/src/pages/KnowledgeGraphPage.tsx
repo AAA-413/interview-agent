@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Graph } from '@antv/g6';
+import type { Graph as G6Graph } from '@antv/g6';
 import {
   Loader2,
   AlertCircle,
@@ -39,7 +39,7 @@ const ENTITY_TYPE_LIST = ['技术', '概念', '工具', '框架', '公司', '人
 export default function KnowledgeGraphPage() {
   const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement>(null);
-  const graphRef = useRef<Graph | null>(null);
+  const graphRef = useRef<G6Graph | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,143 +74,156 @@ export default function KnowledgeGraphPage() {
   useEffect(() => {
     if (!containerRef.current || !graphData) return;
 
-    if (graphRef.current) {
-      graphRef.current.destroy();
-      graphRef.current = null;
-    }
+    let disposed = false;
+    let handleResize: (() => void) | null = null;
 
-    const nodes = graphData.nodes.map((n: GraphNodeDTO) => ({
-      id: n.id,
-      data: {
-        label: n.label,
-        type: n.type,
-        size: n.size,
-        properties: n.properties,
-      },
-    }));
+    const initGraph = async () => {
+      const { Graph } = await import('@antv/g6');
+      if (disposed || !containerRef.current) return;
 
-    const edges = graphData.edges.map((e: GraphEdgeDTO, i: number) => ({
-      id: `edge-${i}`,
-      source: e.source,
-      target: e.target,
-      data: {
-        relation: e.relation,
-        confidence: e.confidence,
-      },
-    }));
-
-    // 节点多时用 circular 布局（O(n)），少时用 d3-force（O(n²) 但效果更好）
-    const useCircular = nodes.length > 100;
-
-    const graph = new Graph({
-      container: containerRef.current,
-      width: containerRef.current.clientWidth,
-      height: containerRef.current.clientHeight,
-      data: { nodes, edges },
-      node: {
-        style: {
-          size: (d: any) => {
-            const base = Math.max(16, Math.min(40, (d.data?.size || 1) * 5 + 12));
-            return useCircular ? base * 0.8 : base;
-          },
-          fill: (d: any) => ENTITY_COLORS[d.data?.type] || '#94a3b8',
-          stroke: '#fff',
-          lineWidth: 2,
-          labelText: (d: any) => d.data?.label || '',
-          labelFontSize: useCircular ? 9 : 11,
-          labelFill: '#1e293b',
-          labelFontWeight: 'bold',
-          labelBackground: true,
-          labelBackgroundFill: '#fff',
-          labelBackgroundOpacity: 0.85,
-          labelPadding: [2, 4],
-          labelBackgroundRadius: 3,
-          cursor: 'pointer',
-          shadowColor: 'rgba(0,0,0,0.1)',
-          shadowBlur: useCircular ? 4 : 8,
-          shadowOffsetY: 2,
-        },
-        state: {
-          active: {
-            stroke: '#6366f1',
-            lineWidth: 3,
-            shadowColor: 'rgba(99,102,241,0.3)',
-            shadowBlur: 12,
-          },
-          selected: {
-            stroke: '#4f46e5',
-            lineWidth: 4,
-          },
-        },
-      },
-      edge: {
-        style: {
-          stroke: '#cbd5e1',
-          lineWidth: 1.5,
-          endArrow: true,
-          endArrowSize: 6,
-          endArrowFill: '#cbd5e1',
-          labelText: (d: any) => d.data?.relation || '',
-          labelFontSize: useCircular ? 0 : 9,
-          labelFill: '#64748b',
-          labelBackground: true,
-          labelBackgroundFill: '#fff',
-          labelBackgroundOpacity: 0.9,
-          labelPadding: [1, 3],
-          labelBackgroundRadius: 2,
-          cursor: 'pointer',
-        },
-        state: {
-          active: {
-            stroke: '#6366f1',
-            lineWidth: 2.5,
-          },
-        },
-      },
-      layout: useCircular
-        ? { type: 'circular', radius: 280, startAngle: 0, endAngle: 2 * Math.PI }
-        : {
-            type: 'd3-force',
-            preventOverlap: true,
-            nodeSize: (d: any) => Math.max(20, Math.min(50, (d.data?.size || 1) * 6 + 14)),
-            collide: { radius: 30 },
-            link: { distance: 120 },
-            charge: { strength: -200 },
-          },
-      behaviors: ['drag-canvas', 'zoom-canvas', 'drag-element', { type: 'hover-activate' }],
-      animation: !useCircular,
-    });
-
-    graph.on('node:click', async (evt: any) => {
-      const nodeId = evt.target?.id || evt.data?.id;
-      if (!nodeId) return;
-      const nodeData = graphData.nodes.find((n) => n.id === nodeId);
-      if (!nodeData) return;
-
-      setDetailLoading(true);
-      setSidebarOpen(true);
-      try {
-        const detail = await knowledgeGraphApi.getEntityDetail(nodeData.label, 2);
-        setSelectedEntity(detail);
-      } catch {
-        setSelectedEntity(null);
-      } finally {
-        setDetailLoading(false);
+      if (graphRef.current) {
+        graphRef.current.destroy();
+        graphRef.current = null;
       }
-    });
 
-    graph.render();
-    graphRef.current = graph;
+      const nodes = graphData.nodes.map((n: GraphNodeDTO) => ({
+        id: n.id,
+        data: {
+          label: n.label,
+          type: n.type,
+          size: n.size,
+          properties: n.properties,
+        },
+      }));
 
-    const handleResize = () => {
-      if (graphRef.current && containerRef.current) {
-        graphRef.current.setSize(containerRef.current.clientWidth, containerRef.current.clientHeight);
-      }
+      const edges = graphData.edges.map((e: GraphEdgeDTO, i: number) => ({
+        id: `edge-${i}`,
+        source: e.source,
+        target: e.target,
+        data: {
+          relation: e.relation,
+          confidence: e.confidence,
+        },
+      }));
+
+      // 节点多时用 circular 布局（O(n)），少时用 d3-force（O(n²) 但效果更好）
+      const useCircular = nodes.length > 100;
+
+      const graph = new Graph({
+        container: containerRef.current,
+        width: containerRef.current.clientWidth,
+        height: containerRef.current.clientHeight,
+        data: { nodes, edges },
+        node: {
+          style: {
+            size: (d: any) => {
+              const base = Math.max(16, Math.min(40, (d.data?.size || 1) * 5 + 12));
+              return useCircular ? base * 0.8 : base;
+            },
+            fill: (d: any) => ENTITY_COLORS[d.data?.type] || '#94a3b8',
+            stroke: '#fff',
+            lineWidth: 2,
+            labelText: (d: any) => d.data?.label || '',
+            labelFontSize: useCircular ? 9 : 11,
+            labelFill: '#1e293b',
+            labelFontWeight: 'bold',
+            labelBackground: true,
+            labelBackgroundFill: '#fff',
+            labelBackgroundOpacity: 0.85,
+            labelPadding: [2, 4],
+            labelBackgroundRadius: 3,
+            cursor: 'pointer',
+            shadowColor: 'rgba(0,0,0,0.1)',
+            shadowBlur: useCircular ? 4 : 8,
+            shadowOffsetY: 2,
+          },
+          state: {
+            active: {
+              stroke: '#6366f1',
+              lineWidth: 3,
+              shadowColor: 'rgba(99,102,241,0.3)',
+              shadowBlur: 12,
+            },
+            selected: {
+              stroke: '#4f46e5',
+              lineWidth: 4,
+            },
+          },
+        },
+        edge: {
+          style: {
+            stroke: '#cbd5e1',
+            lineWidth: 1.5,
+            endArrow: true,
+            endArrowSize: 6,
+            endArrowFill: '#cbd5e1',
+            labelText: (d: any) => d.data?.relation || '',
+            labelFontSize: useCircular ? 0 : 9,
+            labelFill: '#64748b',
+            labelBackground: true,
+            labelBackgroundFill: '#fff',
+            labelBackgroundOpacity: 0.9,
+            labelPadding: [1, 3],
+            labelBackgroundRadius: 2,
+            cursor: 'pointer',
+          },
+          state: {
+            active: {
+              stroke: '#6366f1',
+              lineWidth: 2.5,
+            },
+          },
+        },
+        layout: useCircular
+          ? { type: 'circular', radius: 280, startAngle: 0, endAngle: 2 * Math.PI }
+          : {
+              type: 'd3-force',
+              preventOverlap: true,
+              nodeSize: (d: any) => Math.max(20, Math.min(50, (d.data?.size || 1) * 6 + 14)),
+              collide: { radius: 30 },
+              link: { distance: 120 },
+              charge: { strength: -200 },
+            },
+        behaviors: ['drag-canvas', 'zoom-canvas', 'drag-element', { type: 'hover-activate' }],
+        animation: !useCircular,
+      });
+
+      graph.on('node:click', async (evt: any) => {
+        const nodeId = evt.target?.id || evt.data?.id;
+        if (!nodeId) return;
+        const nodeData = graphData.nodes.find((n) => n.id === nodeId);
+        if (!nodeData) return;
+
+        setDetailLoading(true);
+        setSidebarOpen(true);
+        try {
+          const detail = await knowledgeGraphApi.getEntityDetail(nodeData.label, 2);
+          setSelectedEntity(detail);
+        } catch {
+          setSelectedEntity(null);
+        } finally {
+          setDetailLoading(false);
+        }
+      });
+
+      graph.render();
+      graphRef.current = graph;
+
+      handleResize = () => {
+        if (graphRef.current && containerRef.current) {
+          graphRef.current.setSize(containerRef.current.clientWidth, containerRef.current.clientHeight);
+        }
+      };
+      window.addEventListener('resize', handleResize);
     };
-    window.addEventListener('resize', handleResize);
+
+    void initGraph();
 
     return () => {
-      window.removeEventListener('resize', handleResize);
+      disposed = true;
+      if (handleResize) {
+        window.removeEventListener('resize', handleResize);
+      }
       if (graphRef.current) {
         graphRef.current.destroy();
         graphRef.current = null;

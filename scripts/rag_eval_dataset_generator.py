@@ -12,7 +12,6 @@ import argparse
 import asyncio
 import json
 import logging
-import random
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -22,9 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import select
 
+import app.database as database_module
 from app.common.ai.llm_provider import llm_registry
 from app.common.model import AsyncTaskStatus
-import app.database as database_module
 from app.database import close_db, init_db, init_engine
 from app.modules.knowledge_base.models import KnowledgeBaseEntity, KnowledgeChunkEntity
 
@@ -65,13 +64,13 @@ async def generate_question(chunk_content: str, system_prompt: str) -> dict | No
         # 清理 markdown 代码块
         if content.startswith("```"):
             lines = content.split("\n")
-            lines = [l for l in lines if not l.strip().startswith("```")]
+            lines = [line for line in lines if not line.strip().startswith("```")]
             content = "\n".join(lines)
 
         start = content.find("{")
         end = content.rfind("}")
         if start != -1 and end != -1:
-            content = content[start:end + 1]
+            content = content[start : end + 1]
 
         data = json.loads(content)
         if isinstance(data, dict) and "question" in data:
@@ -141,20 +140,22 @@ async def main():
                     q_id -= 1
                     continue
 
-                questions.append({
-                    "id": f"q_{q_id:03d}",
-                    "question": result["question"],
-                    "question_type": result.get("question_type", "factual"),
-                    "key_terms": result.get("key_terms", []),
-                    "difficulty": result.get("difficulty", "medium"),
-                    "ground_truth": {
-                        "chunk_id": chunk.id,
-                        "kb_id": kb.id,
-                        "kb_name": kb.name,
-                        "chunk_title": chunk.title or "",
-                        "chunk_content_preview": (chunk.content or "")[:300],
-                    },
-                })
+                questions.append(
+                    {
+                        "id": f"q_{q_id:03d}",
+                        "question": result["question"],
+                        "question_type": result.get("question_type", "factual"),
+                        "key_terms": result.get("key_terms", []),
+                        "difficulty": result.get("difficulty", "medium"),
+                        "ground_truth": {
+                            "chunk_id": chunk.id,
+                            "kb_id": kb.id,
+                            "kb_name": kb.name,
+                            "chunk_title": chunk.title or "",
+                            "chunk_content_preview": (chunk.content or "")[:300],
+                        },
+                    }
+                )
 
     # 保存
     output_path = Path(args.output)

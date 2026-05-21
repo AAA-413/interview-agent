@@ -115,9 +115,8 @@ question（问答）、code_generation（代码生成）、analysis（分析）�
 只返回类别名称，不要其他内容。"""
 
             from langchain_core.messages import HumanMessage
-            response = await self.llm_provider.ainvoke(
-                [HumanMessage(content=prompt)]
-            )
+
+            response = await self.llm_provider.ainvoke([HumanMessage(content=prompt)])
 
             intent = response.content.strip().lower()
             if intent in ["question", "code_generation", "analysis", "debug", "design"]:
@@ -152,12 +151,14 @@ question（问答）、code_generation（代码生成）、analysis（分析）�
 
             knowledge = []
             for result in results:
-                knowledge.append({
-                    "content": result.get("content", ""),
-                    "score": result.get("score", 0.0),
-                    "source": result.get("source", ""),
-                    "kb_id": result.get("kb_id"),
-                })
+                knowledge.append(
+                    {
+                        "content": result.get("content", ""),
+                        "score": result.get("score", 0.0),
+                        "source": result.get("source", ""),
+                        "kb_id": result.get("kb_id"),
+                    }
+                )
 
             return knowledge
 
@@ -214,18 +215,20 @@ question（问答）、code_generation（代码生成）、analysis（分析）�
         """
         # 简单任务不需要分解
         if complexity == "simple":
-            return [{
-                "id": "task_1",
-                "type": "knowledge_search",
-                "description": "检索知识并生成答案",
-                "dependencies": [],
-            }]
+            return [
+                {
+                    "id": "task_1",
+                    "type": "knowledge_search",
+                    "description": "检索知识并生成答案",
+                    "dependencies": [],
+                }
+            ]
 
         # 使用 LLM 分解任务
         try:
-            knowledge_context = "\n".join([
-                f"- {k['content'][:100]}..." for k in knowledge[:3]
-            ]) if knowledge else "无相关知识"
+            knowledge_context = (
+                "\n".join([f"- {k['content'][:100]}..." for k in knowledge[:3]]) if knowledge else "无相关知识"
+            )
 
             prompt = f"""请将以下用户任务分解为具体的子任务。
 
@@ -254,9 +257,8 @@ question（问答）、code_generation（代码生成）、analysis（分析）�
 只返回 JSON 数组，不要其他内容。"""
 
             from langchain_core.messages import HumanMessage
-            response = await self.llm_provider.ainvoke(
-                [HumanMessage(content=prompt)]
-            )
+
+            response = await self.llm_provider.ainvoke([HumanMessage(content=prompt)])
 
             content = response.content
 
@@ -265,7 +267,7 @@ question（问答）、code_generation（代码生成）、analysis（分析）�
             import re
 
             # 尝试提取 JSON 数组
-            json_match = re.search(r'\[.*\]', content, re.DOTALL)
+            json_match = re.search(r"\[.*\]", content, re.DOTALL)
             if json_match:
                 subtasks = json.loads(json_match.group())
 
@@ -468,9 +470,8 @@ question（问答）、code_generation（代码生成）、analysis（分析）�
 只返回 JSON，不要其他内容。"""
 
             from langchain_core.messages import HumanMessage
-            response = await self.llm_provider.ainvoke(
-                [HumanMessage(content=prompt)]
-            )
+
+            response = await self.llm_provider.ainvoke([HumanMessage(content=prompt)])
 
             content = response.content or "{}"
 
@@ -478,7 +479,7 @@ question（问答）、code_generation（代码生成）、analysis（分析）�
             import json
             import re
 
-            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            json_match = re.search(r"\{.*\}", content, re.DOTALL)
             if json_match:
                 intent = json.loads(json_match.group())
                 return intent
@@ -550,8 +551,8 @@ question（问答）、code_generation（代码生成）、analysis（分析）�
             prompt = f"""请为以下主题生成下载任务列表。
 
 主题：{topic}
-资源类型：{', '.join(resource_types)}
-关键词：{', '.join(keywords)}
+资源类型：{", ".join(resource_types)}
+关键词：{", ".join(keywords)}
 最大任务数：{max_downloads}{repo_hint}
 
 请以 JSON 数组格式返回任务列表：
@@ -599,9 +600,8 @@ question（问答）、code_generation（代码生成）、analysis（分析）�
 只返回 JSON 数组，不要其他内容。"""
 
             from langchain_core.messages import HumanMessage
-            response = await self.llm_provider.ainvoke(
-                [HumanMessage(content=prompt)]
-            )
+
+            response = await self.llm_provider.ainvoke([HumanMessage(content=prompt)])
 
             content = response.content
 
@@ -609,7 +609,7 @@ question（问答）、code_generation（代码生成）、analysis（分析）�
             import json
             import re
 
-            json_match = re.search(r'\[.*\]', content, re.DOTALL)
+            json_match = re.search(r"\[.*\]", content, re.DOTALL)
             if json_match:
                 tasks = json.loads(json_match.group())
 
@@ -658,58 +658,68 @@ question（问答）、code_generation（代码生成）、analysis（分析）�
 
         # 生成GitHub搜索任务
         if "github" in resource_types and task_id <= max_downloads:
-            tasks.append({
-                "id": f"task_{task_id}",
-                "type": "search_github",
-                "description": f"搜索 {topic} 相关的GitHub项目",
-                "query": f"{topic} {' '.join(keywords[:2])}",
-                "language": self._detect_language(topic),
-                "num_results": 3,
-                "dynamic": True,  # 标记为动态任务
-                "max_repos_to_fetch": 2,  # 最多抓取2个仓库
-            })
+            tasks.append(
+                {
+                    "id": f"task_{task_id}",
+                    "type": "search_github",
+                    "description": f"搜索 {topic} 相关的GitHub项目",
+                    "query": f"{topic} {' '.join(keywords[:2])}",
+                    "language": self._detect_language(topic),
+                    "num_results": 3,
+                    "dynamic": True,  # 标记为动态任务
+                    "max_repos_to_fetch": 2,  # 最多抓取2个仓库
+                }
+            )
             task_id += 1
 
         # 生成搜索任务
         if "official" in resource_types and task_id <= max_downloads:
-            tasks.append({
-                "id": f"task_{task_id}",
-                "type": "search_web",
-                "description": f"搜索 {topic} 官方文档",
-                "query": f"{topic} 官方文档",
-                "num_results": 2,
-            })
+            tasks.append(
+                {
+                    "id": f"task_{task_id}",
+                    "type": "search_web",
+                    "description": f"搜索 {topic} 官方文档",
+                    "query": f"{topic} 官方文档",
+                    "num_results": 2,
+                }
+            )
             task_id += 1
 
         if "blog" in resource_types and task_id <= max_downloads:
-            tasks.append({
-                "id": f"task_{task_id}",
-                "type": "search_web",
-                "description": f"搜索 {topic} 博客文章",
-                "query": f"{topic} 教程 博客",
-                "num_results": 3,
-            })
+            tasks.append(
+                {
+                    "id": f"task_{task_id}",
+                    "type": "search_web",
+                    "description": f"搜索 {topic} 博客文章",
+                    "query": f"{topic} 教程 博客",
+                    "num_results": 3,
+                }
+            )
             task_id += 1
 
         if "tutorial" in resource_types and task_id <= max_downloads:
-            tasks.append({
-                "id": f"task_{task_id}",
-                "type": "search_web",
-                "description": f"搜索 {topic} 入门教程",
-                "query": f"{topic} 入门教程",
-                "num_results": 2,
-            })
+            tasks.append(
+                {
+                    "id": f"task_{task_id}",
+                    "type": "search_web",
+                    "description": f"搜索 {topic} 入门教程",
+                    "query": f"{topic} 入门教程",
+                    "num_results": 2,
+                }
+            )
             task_id += 1
 
         # 如果没有生成任何任务，至少生成一个通用搜索
         if not tasks:
-            tasks.append({
-                "id": "task_1",
-                "type": "search_web",
-                "description": f"搜索 {topic} 相关资料",
-                "query": topic,
-                "num_results": 5,
-            })
+            tasks.append(
+                {
+                    "id": "task_1",
+                    "type": "search_web",
+                    "description": f"搜索 {topic} 相关资料",
+                    "query": topic,
+                    "num_results": 5,
+                }
+            )
 
         return tasks[:max_downloads]
 

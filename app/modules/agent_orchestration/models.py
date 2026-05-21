@@ -14,6 +14,7 @@ from app.models.base import Base
 
 class AgentExecutionStatus(str, enum.Enum):
     """执行状态"""
+
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     SUCCESS = "SUCCESS"
@@ -23,6 +24,7 @@ class AgentExecutionStatus(str, enum.Enum):
 
 class AgentExecutionPath(str, enum.Enum):
     """执行路径"""
+
     SIMPLE = "simple"
     STANDARD = "standard"
     COMPLEX = "complex"
@@ -30,6 +32,7 @@ class AgentExecutionPath(str, enum.Enum):
 
 class AgentExecutionEntity(Base):
     """Agent 执行记录表"""
+
     __tablename__ = "agent_executions"
     __table_args__ = (
         Index("idx_agent_exec_session_id", "session_id"),
@@ -86,6 +89,7 @@ class AgentExecutionEntity(Base):
 
 class AgentExecutionStepEntity(Base):
     """Agent 执行步骤表"""
+
     __tablename__ = "agent_execution_steps"
     __table_args__ = (
         Index("idx_agent_step_execution_id", "execution_id"),
@@ -122,6 +126,7 @@ class AgentExecutionStepEntity(Base):
 
 class AgentCostLogEntity(Base):
     """Agent 成本日志表"""
+
     __tablename__ = "agent_cost_logs"
     __table_args__ = (
         Index("idx_agent_cost_execution_id", "execution_id"),
@@ -150,6 +155,7 @@ class AgentCostLogEntity(Base):
 
 class AgentPerformanceEntity(Base):
     """Agent 性能统计表"""
+
     __tablename__ = "agent_performance"
     __table_args__ = (
         Index("idx_agent_perf_agent_type", "agent_type"),

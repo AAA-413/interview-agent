@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # PostgreSQL + pgvector
   postgres:
@@ -95,6 +93,10 @@ services:
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
       - AI_MODEL=${AI_MODEL:-qwen-plus}
       - AI_BASE_URL=${AI_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      - AI_EMBEDDING_PROVIDER=${AI_EMBEDDING_PROVIDER:-zhipu}
+      - AI_EMBEDDING_MODEL=${AI_EMBEDDING_MODEL:-embedding-3}
+      - AI_ZHIPU_API_KEY=${AI_ZHIPU_API_KEY}
+      - AI_EMBEDDING_API_KEY=${AI_EMBEDDING_API_KEY}
       # 搜索服务
       - TAVILY_API_KEY=${TAVILY_API_KEY}
       - SEARCH_ENGINE=${SEARCH_ENGINE:-tavily}

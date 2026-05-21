@@ -6,25 +6,25 @@ import logging
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, or_
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.modules.auth.dependencies import get_current_user
 from app.modules.auth.models import UserEntity
 from app.modules.auth.schemas import (
-    UserRegisterRequest,
-    UserLoginRequest,
+    PasswordChangeRequest,
     TokenResponse,
+    UserLoginRequest,
+    UserRegisterRequest,
     UserResponse,
     UserUpdateRequest,
-    PasswordChangeRequest,
 )
 from app.modules.auth.security import (
-    verify_password,
-    get_password_hash,
-    create_access_token,
     ACCESS_TOKEN_EXPIRE_MINUTES,
+    create_access_token,
+    get_password_hash,
+    verify_password,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,9 +39,7 @@ async def register(
 ):
     """用户注册"""
     # 检查用户名是否已存在
-    result = await db.execute(
-        select(UserEntity).where(UserEntity.username == request.username)
-    )
+    result = await db.execute(select(UserEntity).where(UserEntity.username == request.username))
     if result.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -49,9 +47,7 @@ async def register(
         )
 
     # 检查邮箱是否已存在
-    result = await db.execute(
-        select(UserEntity).where(UserEntity.email == request.email)
-    )
+    result = await db.execute(select(UserEntity).where(UserEntity.email == request.email))
     if result.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

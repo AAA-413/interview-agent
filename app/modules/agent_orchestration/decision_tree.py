@@ -3,9 +3,8 @@
 """
 
 import logging
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +51,7 @@ class DecisionTree:
             ),
         }
 
-    async def decide(
-        self, user_input: str, kb_ids: List[int] = None, context: dict = None
-    ) -> ExecutionPath:
+    async def decide(self, user_input: str, kb_ids: List[int] = None, context: dict = None) -> ExecutionPath:
         """
         决策选择执行路径
 
@@ -118,9 +115,7 @@ class DecisionTree:
         word_count = len(user_input)
 
         # 检查是否有多个子任务
-        has_multiple_tasks = any(
-            sep in user_input for sep in ["并且", "然后", "接着", "同时", "1.", "2.", "3."]
-        )
+        has_multiple_tasks = any(sep in user_input for sep in ["并且", "然后", "接着", "同时", "1.", "2.", "3."])
 
         if word_count < 50 and not has_multiple_tasks:
             return "simple"
@@ -129,9 +124,7 @@ class DecisionTree:
         else:
             return "complex"
 
-    async def _check_knowledge_coverage(
-        self, user_input: str, kb_ids: List[int] = None
-    ) -> float:
+    async def _check_knowledge_coverage(self, user_input: str, kb_ids: List[int] = None) -> float:
         """
         检查知识库覆盖率
 
@@ -143,9 +136,7 @@ class DecisionTree:
 
         try:
             # 简单检索，看是否有相关知识
-            results = await self.knowledge_service.search(
-                query=user_input, kb_ids=kb_ids, top_k=3
-            )
+            results = await self.knowledge_service.search(query=user_input, kb_ids=kb_ids, top_k=3)
 
             if not results:
                 return 0.0

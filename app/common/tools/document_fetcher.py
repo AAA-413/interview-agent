@@ -1,14 +1,16 @@
 """
 文档抓取工具 - 从 URL 抓取内容并转换为 Markdown
 """
-import httpx
-from readabilipy import simple_json_from_html_string
-from markdownify import markdownify as md
-from typing import Optional
-import logging
 
-from app.common.exception import BusinessException
+import logging
+from typing import Optional
+
+import httpx
+from markdownify import markdownify as md
+from readabilipy import simple_json_from_html_string
+
 from app.common.error_code import ErrorCode
+from app.common.exception import BusinessException
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +54,7 @@ class DocumentFetcher:
 
                 if not article or not article.get("content"):
                     raise BusinessException(
-                        ErrorCode.KNOWLEDGE_BASE_FETCH_FAILED,
-                        "无法提取页面内容，请检查 URL 是否为有效的文档页面"
+                        ErrorCode.KNOWLEDGE_BASE_FETCH_FAILED, "无法提取页面内容，请检查 URL 是否为有效的文档页面"
                     )
 
                 title = article.get("title", "")
@@ -67,17 +68,11 @@ class DocumentFetcher:
 
                 # 限制长度
                 if self.max_length and len(content) > self.max_length:
-                    content = content[:self.max_length] + "\n\n[内容已截断...]"
+                    content = content[: self.max_length] + "\n\n[内容已截断...]"
 
                 logger.info(f"成功抓取文档: {url}, 标题: {title}, 长度: {len(content)}")
 
-                return {
-                    "url": url,
-                    "title": title,
-                    "content": content,
-                    "success": True,
-                    "error": None
-                }
+                return {"url": url, "title": title, "content": content, "success": True, "error": None}
 
         except httpx.HTTPStatusError as e:
             error_msg = f"无法访问该页面（HTTP {e.response.status_code}），请检查 URL 是否正确"

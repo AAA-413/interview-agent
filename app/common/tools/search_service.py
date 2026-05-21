@@ -1,10 +1,11 @@
 """
 搜索引擎服务 - 封装多个搜索引擎API
 """
+
 import logging
+from typing import Any, Dict, List
+
 import httpx
-from typing import Any, Dict, List, Optional
-from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +68,7 @@ class SearchService:
         else:
             raise ValueError(f"不支持的搜索引擎: {engine}")
 
-    async def _search_duckduckgo(
-        self, query: str, num_results: int
-    ) -> Dict[str, Any]:
+    async def _search_duckduckgo(self, query: str, num_results: int) -> Dict[str, Any]:
         """
         使用DuckDuckGo搜索（免费，无需API key）
 
@@ -93,9 +92,7 @@ class SearchService:
                 content_parts = []
                 for i, result in enumerate(results, 1):
                     content_parts.append(
-                        f"## 结果 {i}: {result['title']}\n\n"
-                        f"{result['snippet']}\n\n"
-                        f"来源: {result['url']}"
+                        f"## 结果 {i}: {result['title']}\n\n{result['snippet']}\n\n来源: {result['url']}"
                     )
 
                 content = "\n\n---\n\n".join(content_parts)
@@ -143,11 +140,13 @@ class SearchService:
                 snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
 
                 if title and url:
-                    results.append({
-                        "title": title,
-                        "url": url,
-                        "snippet": snippet,
-                    })
+                    results.append(
+                        {
+                            "title": title,
+                            "url": url,
+                            "snippet": snippet,
+                        }
+                    )
 
             except Exception as e:
                 logger.warning(f"解析搜索结果失败: {e}")
@@ -185,19 +184,19 @@ class SearchService:
 
                 results = []
                 for item in data.get("webPages", {}).get("value", []):
-                    results.append({
-                        "title": item.get("name", ""),
-                        "url": item.get("url", ""),
-                        "snippet": item.get("snippet", ""),
-                    })
+                    results.append(
+                        {
+                            "title": item.get("name", ""),
+                            "url": item.get("url", ""),
+                            "snippet": item.get("snippet", ""),
+                        }
+                    )
 
                 # 合并搜索结果内容
                 content_parts = []
                 for i, result in enumerate(results, 1):
                     content_parts.append(
-                        f"## 结果 {i}: {result['title']}\n\n"
-                        f"{result['snippet']}\n\n"
-                        f"来源: {result['url']}"
+                        f"## 结果 {i}: {result['title']}\n\n{result['snippet']}\n\n来源: {result['url']}"
                     )
 
                 content = "\n\n---\n\n".join(content_parts)
@@ -248,19 +247,19 @@ class SearchService:
 
                 results = []
                 for item in data.get("items", []):
-                    results.append({
-                        "title": item.get("title", ""),
-                        "url": item.get("link", ""),
-                        "snippet": item.get("snippet", ""),
-                    })
+                    results.append(
+                        {
+                            "title": item.get("title", ""),
+                            "url": item.get("link", ""),
+                            "snippet": item.get("snippet", ""),
+                        }
+                    )
 
                 # 合并搜索结果内容
                 content_parts = []
                 for i, result in enumerate(results, 1):
                     content_parts.append(
-                        f"## 结果 {i}: {result['title']}\n\n"
-                        f"{result['snippet']}\n\n"
-                        f"来源: {result['url']}"
+                        f"## 结果 {i}: {result['title']}\n\n{result['snippet']}\n\n来源: {result['url']}"
                     )
 
                 content = "\n\n---\n\n".join(content_parts)
@@ -313,19 +312,19 @@ class SearchService:
 
                 results = []
                 for item in data.get("organic", []):
-                    results.append({
-                        "title": item.get("title", ""),
-                        "url": item.get("link", ""),
-                        "snippet": item.get("snippet", ""),
-                    })
+                    results.append(
+                        {
+                            "title": item.get("title", ""),
+                            "url": item.get("link", ""),
+                            "snippet": item.get("snippet", ""),
+                        }
+                    )
 
                 # 合并搜索结果内容
                 content_parts = []
                 for i, result in enumerate(results, 1):
                     content_parts.append(
-                        f"## 结果 {i}: {result['title']}\n\n"
-                        f"{result['snippet']}\n\n"
-                        f"来源: {result['url']}"
+                        f"## 结果 {i}: {result['title']}\n\n{result['snippet']}\n\n来源: {result['url']}"
                     )
 
                 content = "\n\n---\n\n".join(content_parts)
@@ -383,19 +382,19 @@ class SearchService:
 
                 results = []
                 for item in data.get("results", []):
-                    results.append({
-                        "title": item.get("title", ""),
-                        "url": item.get("url", ""),
-                        "snippet": item.get("content", ""),
-                    })
+                    results.append(
+                        {
+                            "title": item.get("title", ""),
+                            "url": item.get("url", ""),
+                            "snippet": item.get("content", ""),
+                        }
+                    )
 
                 # 合并搜索结果内容
                 content_parts = []
                 for i, result in enumerate(results, 1):
                     content_parts.append(
-                        f"## 结果 {i}: {result['title']}\n\n"
-                        f"{result['snippet']}\n\n"
-                        f"来源: {result['url']}"
+                        f"## 结果 {i}: {result['title']}\n\n{result['snippet']}\n\n来源: {result['url']}"
                     )
 
                 content = "\n\n---\n\n".join(content_parts)
@@ -442,11 +441,7 @@ class SearchService:
         # 合并搜索结果内容
         content_parts = []
         for i, result in enumerate(mock_results, 1):
-            content_parts.append(
-                f"## 结果 {i}: {result['title']}\n\n"
-                f"{result['snippet']}\n\n"
-                f"来源: {result['url']}"
-            )
+            content_parts.append(f"## 结果 {i}: {result['title']}\n\n{result['snippet']}\n\n来源: {result['url']}")
 
         content = "\n\n---\n\n".join(content_parts)
 

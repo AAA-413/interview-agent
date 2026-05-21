@@ -3,7 +3,6 @@ import re
 
 from app.common.error_code import ErrorCode
 from app.common.exception import BusinessException
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 

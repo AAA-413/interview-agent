@@ -3,6 +3,7 @@ import logging
 import socket
 from collections.abc import AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import settings
@@ -30,6 +31,7 @@ def init_engine():
     global engine, async_session_factory
 
     import time
+
     max_retries = 5
     retry_delay = 2
 
@@ -101,9 +103,17 @@ async def init_db() -> None:
         return
 
     from app.models.base import Base
-    from app.modules.resume.models import ResumeAnalysisEntity, ResumeEntity  # noqa: F401
+    from app.modules.agent_orchestration.models import (  # noqa: F401
+        AgentCostLogEntity,
+        AgentExecutionEntity,
+        AgentExecutionStepEntity,
+        AgentPerformanceEntity,
+    )
+    from app.modules.auth.models import UserEntity  # noqa: F401
     from app.modules.interview.models import InterviewAnswerEntity, InterviewSessionEntity  # noqa: F401
     from app.modules.knowledge_base.models import KnowledgeBaseEntity, KnowledgeChunkEntity, RagChatEntity  # noqa: F401
+    from app.modules.knowledge_graph.models import KnowledgeGraphEntity, KnowledgeTriple  # noqa: F401
+    from app.modules.resume.models import ResumeAnalysisEntity, ResumeEntity  # noqa: F401
 
     max_retries = 5
     retry_delay = 2
@@ -129,6 +139,7 @@ async def init_db() -> None:
 
 async def _do_create_tables(base) -> None:
     async with engine.begin() as conn:
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(base.metadata.create_all)
 
 

@@ -1,10 +1,10 @@
-import logging
-from pathlib import Path
 import asyncio
+import logging
 from asyncio import Semaphore
+from pathlib import Path
 
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.common.ai.structured_output import structured_output_invoker
 from app.common.error_code import ErrorCode
@@ -24,50 +24,54 @@ _PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
 MAX_REFERENCE_CONTEXT_CHARS = 6000
 
 
-class _KnowledgeEvalDTO(BaseModel):
+class _StructuredDTO(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class _KnowledgeEvalDTO(_StructuredDTO):
     score: int
-    coveredPoints: list[str] = []
-    missedPoints: list[str] = []
-    errors: list[str] = []
+    covered_points: list[str] = Field(default_factory=list, alias="coveredPoints")
+    missed_points: list[str] = Field(default_factory=list, alias="missedPoints")
+    errors: list[str] = Field(default_factory=list)
     feedback: str
 
 
-class _ProjectDimensionsDTO(BaseModel):
+class _ProjectDimensionsDTO(_StructuredDTO):
     authenticity: int = 0
     technical_depth: int = 0
     depth: int = 0
     expression: int = 0
 
 
-class _ProjectEvalDTO(BaseModel):
+class _ProjectEvalDTO(_StructuredDTO):
     score: int
-    dimensions: _ProjectDimensionsDTO = _ProjectDimensionsDTO()
+    dimensions: _ProjectDimensionsDTO = Field(default_factory=_ProjectDimensionsDTO)
     feedback: str
 
 
-class _QuestionEvalDTO(BaseModel):
-    questionIndex: int
+class _QuestionEvalDTO(_StructuredDTO):
+    question_index: int = Field(alias="questionIndex")
     score: int
     feedback: str
-    referenceAnswer: str = ""
-    keyPoints: list[str] | None = None
-    questionType: str = "knowledge"
-    coveredPoints: list[str] | None = None
-    missedPoints: list[str] | None = None
+    reference_answer: str = Field(default="", alias="referenceAnswer")
+    key_points: list[str] | None = Field(default=None, alias="keyPoints")
+    question_type: str = Field(default="knowledge", alias="questionType")
+    covered_points: list[str] | None = Field(default=None, alias="coveredPoints")
+    missed_points: list[str] | None = Field(default=None, alias="missedPoints")
     errors: list[str] | None = None
     dimensions: _ProjectDimensionsDTO | None = None
 
 
-class _BatchReportDTO(BaseModel):
-    overallScore: int = 0
-    overallFeedback: str = ""
+class _BatchReportDTO(_StructuredDTO):
+    overall_score: int = Field(default=0, alias="overallScore")
+    overall_feedback: str = Field(default="", alias="overallFeedback")
     strengths: list[str] | None = None
     improvements: list[str] | None = None
-    questionEvaluations: list[_QuestionEvalDTO] | None = None
+    question_evaluations: list[_QuestionEvalDTO] | None = Field(default=None, alias="questionEvaluations")
 
 
-class _SummaryDTO(BaseModel):
-    overallFeedback: str = ""
+class _SummaryDTO(_StructuredDTO):
+    overall_feedback: str = Field(default="", alias="overallFeedback")
     strengths: list[str] | None = None
     improvements: list[str] | None = None
 
@@ -120,15 +124,32 @@ class UnifiedEvaluationService:
 
         # Build summary
         summary = await self._summarize_batch_results(
-            chat_model, session_id, resume_context, reference_baseline,
-            qa_records, evaluations, "", [], [],
+            chat_model,
+            session_id,
+            resume_context,
+            reference_baseline,
+            qa_records,
+            evaluations,
+            "",
+            [],
+            [],
         )
 
-        return self._build_report(session_id, qa_records, evaluations, summary.overallFeedback, summary.strengths or [], summary.improvements or [])
+        return self._build_report(
+            session_id,
+            qa_records,
+            evaluations,
+            summary.overall_feedback,
+            summary.strengths or [],
+            summary.improvements or [],
+        )
 
     async def _evaluate_by_type(
-        self, chat_model: ChatOpenAI, session_id: str,
-        qa_records: list[QaRecord], resume_context: str,
+        self,
+        chat_model: ChatOpenAI,
+        session_id: str,
+        qa_records: list[QaRecord],
+        resume_context: str,
     ) -> list[_QuestionEvalDTO]:
         """Evaluate questions individually based on type (knowledge vs project)"""
         semaphore = Semaphore(self._max_concurrent_batches)
@@ -137,9 +158,7 @@ class UnifiedEvaluationService:
         async def evaluate_one(index: int, qa: QaRecord):
             async with semaphore:
                 if not qa.user_answer or not qa.user_answer.strip():
-                    evaluations[index] = _QuestionEvalDTO(
-                        questionIndex=qa.question_index, score=0, feedback="未作答"
-                    )
+                    evaluations[index] = _QuestionEvalDTO(question_index=qa.question_index, score=0, feedback="未作答")
                     return
 
                 # Determine evaluation strategy
@@ -154,14 +173,17 @@ class UnifiedEvaluationService:
                 if effective_type == "project" or (not qa.reference_answer and not qa.key_points):
                     # Project evaluation
                     result = await self.evaluate_project_question(
-                        chat_model, qa.question, qa.user_answer, resume_context,
+                        chat_model,
+                        qa.question,
+                        qa.user_answer,
+                        resume_context,
                     )
                     if result:
                         evaluations[index] = _QuestionEvalDTO(
-                            questionIndex=qa.question_index,
+                            question_index=qa.question_index,
                             score=result.score,
                             feedback=result.feedback,
-                            questionType="project",
+                            question_type="project",
                             dimensions=_ProjectDimensionsDTO(
                                 authenticity=result.dimensions.authenticity,
                                 technical_depth=result.dimensions.technical_depth,
@@ -171,35 +193,44 @@ class UnifiedEvaluationService:
                         )
                     else:
                         evaluations[index] = _QuestionEvalDTO(
-                            questionIndex=qa.question_index, score=0, feedback="评估失败", questionType="project"
+                            question_index=qa.question_index,
+                            score=0,
+                            feedback="评估失败",
+                            question_type="project",
                         )
                 else:
                     # Knowledge evaluation with key_points
                     if qa.reference_answer and qa.key_points:
                         result = await self.evaluate_knowledge_question(
-                            chat_model, qa.question, qa.user_answer,
-                            qa.reference_answer, qa.key_points,
+                            chat_model,
+                            qa.question,
+                            qa.user_answer,
+                            qa.reference_answer,
+                            qa.key_points,
                         )
                         if result:
                             evaluations[index] = _QuestionEvalDTO(
-                                questionIndex=qa.question_index,
+                                question_index=qa.question_index,
                                 score=result.score,
                                 feedback=result.feedback,
-                                questionType="knowledge",
-                                referenceAnswer=qa.reference_answer,
-                                keyPoints=[kp.point for kp in qa.key_points] if qa.key_points else [],
-                                coveredPoints=result.coveredPoints,
-                                missedPoints=result.missedPoints,
+                                question_type="knowledge",
+                                reference_answer=qa.reference_answer,
+                                key_points=[kp.point for kp in qa.key_points] if qa.key_points else [],
+                                covered_points=result.covered_points,
+                                missed_points=result.missed_points,
                                 errors=result.errors,
                             )
                         else:
                             evaluations[index] = _QuestionEvalDTO(
-                                questionIndex=qa.question_index, score=0, feedback="评估失败", questionType="knowledge"
+                                question_index=qa.question_index,
+                                score=0,
+                                feedback="评估失败",
+                                question_type="knowledge",
                             )
                     else:
                         # Fallback to basic evaluation
                         evaluations[index] = _QuestionEvalDTO(
-                            questionIndex=qa.question_index, score=0, feedback="无参考答案"
+                            question_index=qa.question_index, score=0, feedback="无参考答案"
                         )
 
         tasks = [evaluate_one(i, qa) for i, qa in enumerate(qa_records)]
@@ -208,25 +239,29 @@ class UnifiedEvaluationService:
         # Fill in any remaining None evaluations
         for i in range(len(evaluations)):
             if evaluations[i] is None:
-                evaluations[i] = _QuestionEvalDTO(
-                    questionIndex=i, score=0, feedback="评估异常"
-                )
+                evaluations[i] = _QuestionEvalDTO(question_index=i, score=0, feedback="评估异常")
 
         return evaluations
 
     async def _evaluate_in_batches(
-        self, chat_model: ChatOpenAI, session_id: str, resume_context: str,
-        qa_records: list[QaRecord], reference_context: str,
+        self,
+        chat_model: ChatOpenAI,
+        session_id: str,
+        resume_context: str,
+        qa_records: list[QaRecord],
+        reference_context: str,
     ) -> list[_BatchReportDTO | None]:
         """并行执行批次评估，使用 Semaphore 限流"""
         semaphore = Semaphore(self._max_concurrent_batches)
 
         async def evaluate_with_limit(batch_index: int, batch: list[QaRecord]):
             async with semaphore:
-                logger.info("开始评估批次 %d/%d: sessionId=%s",
-                           batch_index + 1,
-                           (len(qa_records) + self._batch_size - 1) // self._batch_size,
-                           session_id)
+                logger.info(
+                    "开始评估批次 %d/%d: sessionId=%s",
+                    batch_index + 1,
+                    (len(qa_records) + self._batch_size - 1) // self._batch_size,
+                    session_id,
+                )
                 return await self._evaluate_batch(chat_model, session_id, resume_context, reference_context, batch)
 
         # 创建所有批次任务
@@ -237,8 +272,12 @@ class UnifiedEvaluationService:
             tasks.append(evaluate_with_limit(batch_index, batch))
 
         # 并行执行所有批次
-        logger.info("开始并行评估 %d 个批次: sessionId=%s, max_concurrent=%d",
-                   len(tasks), session_id, self._max_concurrent_batches)
+        logger.info(
+            "开始并行评估 %d 个批次: sessionId=%s, max_concurrent=%d",
+            len(tasks),
+            session_id,
+            self._max_concurrent_batches,
+        )
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # 处理异常
@@ -250,16 +289,22 @@ class UnifiedEvaluationService:
             else:
                 valid_results.append(result)
 
-        logger.info("批次评估完成: sessionId=%s, 成功=%d, 失败=%d",
-                   session_id,
-                   sum(1 for r in valid_results if r is not None),
-                   sum(1 for r in valid_results if r is None))
+        logger.info(
+            "批次评估完成: sessionId=%s, 成功=%d, 失败=%d",
+            session_id,
+            sum(1 for r in valid_results if r is not None),
+            sum(1 for r in valid_results if r is None),
+        )
 
         return valid_results
 
     async def _evaluate_batch(
-        self, chat_model: ChatOpenAI, session_id: str, resume_context: str,
-        reference_context: str, batch: list[QaRecord],
+        self,
+        chat_model: ChatOpenAI,
+        session_id: str,
+        resume_context: str,
+        reference_context: str,
+        batch: list[QaRecord],
     ) -> _BatchReportDTO | None:
         qa_text = self._build_qa_records(batch)
 
@@ -286,10 +331,16 @@ class UnifiedEvaluationService:
             return None
 
     async def _summarize_batch_results(
-        self, chat_model: ChatOpenAI, session_id: str, resume_context: str,
-        reference_context: str, qa_records: list[QaRecord],
-        evaluations: list[_QuestionEvalDTO], fallback_feedback: str,
-        fallback_strengths: list[str], fallback_improvements: list[str],
+        self,
+        chat_model: ChatOpenAI,
+        session_id: str,
+        resume_context: str,
+        reference_context: str,
+        qa_records: list[QaRecord],
+        evaluations: list[_QuestionEvalDTO],
+        fallback_feedback: str,
+        fallback_strengths: list[str],
+        fallback_improvements: list[str],
     ) -> _SummaryDTO:
         try:
             variables = {
@@ -314,23 +365,27 @@ class UnifiedEvaluationService:
                 log_context="总结评估",
             )
 
-            feedback = dto.overallFeedback if dto and dto.overallFeedback else fallback_feedback
+            feedback = dto.overall_feedback if dto and dto.overall_feedback else fallback_feedback
             strengths = self._sanitize_items(dto.strengths if dto else None, fallback_strengths)
             improvements = self._sanitize_items(dto.improvements if dto else None, fallback_improvements)
-            return _SummaryDTO(overallFeedback=feedback, strengths=strengths, improvements=improvements)
+            return _SummaryDTO(overall_feedback=feedback, strengths=strengths, improvements=improvements)
         except Exception as e:
             logger.warning("二次汇总评估失败，降级到批次聚合结果: sessionId=%s, error=%s", session_id, e)
-            return _SummaryDTO(overallFeedback=fallback_feedback, strengths=fallback_strengths, improvements=fallback_improvements)
+            return _SummaryDTO(
+                overall_feedback=fallback_feedback,
+                strengths=fallback_strengths,
+                improvements=fallback_improvements,
+            )
 
     def _merge_question_evaluations(self, batch_results: list[_BatchReportDTO | None]) -> list[_QuestionEvalDTO]:
         merged = []
         for report in batch_results:
-            if report and report.questionEvaluations:
-                merged.extend(report.questionEvaluations)
+            if report and report.question_evaluations:
+                merged.extend(report.question_evaluations)
         return merged
 
     def _merge_overall_feedback(self, batch_results: list[_BatchReportDTO | None]) -> str:
-        parts = [r.overallFeedback for r in batch_results if r and r.overallFeedback]
+        parts = [r.overall_feedback for r in batch_results if r and r.overall_feedback]
         return "\n\n".join(parts) if parts else "本次面试已完成分批评估，但未生成有效综合评语。"
 
     def _merge_list_items(self, batch_results: list[_BatchReportDTO | None], strengths_mode: bool) -> list[str]:
@@ -362,9 +417,13 @@ class UnifiedEvaluationService:
         return result[:8]
 
     def _build_report(
-        self, session_id: str, qa_records: list[QaRecord],
-        evaluations: list[_QuestionEvalDTO], overall_feedback: str,
-        strengths: list[str], improvements: list[str],
+        self,
+        session_id: str,
+        qa_records: list[QaRecord],
+        evaluations: list[_QuestionEvalDTO],
+        overall_feedback: str,
+        strengths: list[str],
+        improvements: list[str],
     ) -> InterviewReportDTO:
         question_details = []
         reference_answers = []
@@ -375,8 +434,8 @@ class UnifiedEvaluationService:
             has_answer = bool(q.user_answer and q.user_answer.strip())
             score = eval_dto.score if has_answer and eval_dto else 0
             feedback = eval_dto.feedback if eval_dto else "该题未成功生成评估反馈。"
-            ref_answer = eval_dto.referenceAnswer if eval_dto else ""
-            key_points = eval_dto.keyPoints if eval_dto else []
+            ref_answer = eval_dto.reference_answer if eval_dto else ""
+            key_points = eval_dto.key_points if eval_dto else []
 
             question_details.append(
                 QuestionEvaluationDTO(
@@ -386,16 +445,18 @@ class UnifiedEvaluationService:
                     user_answer=q.user_answer,
                     score=score,
                     feedback=feedback,
-                    question_type=eval_dto.questionType if eval_dto else "knowledge",
-                    covered_points=eval_dto.coveredPoints if eval_dto else None,
-                    missed_points=eval_dto.missedPoints if eval_dto else None,
+                    question_type=eval_dto.question_type if eval_dto else "knowledge",
+                    covered_points=eval_dto.covered_points if eval_dto else None,
+                    missed_points=eval_dto.missed_points if eval_dto else None,
                     errors=eval_dto.errors if eval_dto else None,
                     dimensions=ProjectDimensionsDTO(
                         authenticity=eval_dto.dimensions.authenticity,
                         technical_depth=eval_dto.dimensions.technical_depth,
                         depth=eval_dto.dimensions.depth,
                         expression=eval_dto.dimensions.expression,
-                    ) if eval_dto and eval_dto.dimensions else None,
+                    )
+                    if eval_dto and eval_dto.dimensions
+                    else None,
                 )
             )
             reference_answers.append(
@@ -414,7 +475,6 @@ class UnifiedEvaluationService:
             for cat, scores in category_scores_map.items()
         ]
 
-        answered_count = sum(1 for q in qa_records if q.user_answer and q.user_answer.strip())
         overall_score = int(sum(d.score for d in question_details) / len(question_details)) if question_details else 0
 
         return InterviewReportDTO(
@@ -465,16 +525,19 @@ class UnifiedEvaluationService:
         return "\n".join(highlights[:20])
 
     async def evaluate_knowledge_question(
-        self, chat_model: ChatOpenAI, question: str, user_answer: str,
-        reference_answer: str, key_points: list[KeyPoint],
+        self,
+        chat_model: ChatOpenAI,
+        question: str,
+        user_answer: str,
+        reference_answer: str,
+        key_points: list[KeyPoint],
     ) -> _KnowledgeEvalDTO | None:
         if not user_answer or not user_answer.strip():
             return _KnowledgeEvalDTO(score=0, feedback="未作答")
 
-        key_points_text = "\n".join([
-            f"- {kp.point} (分数段: {kp.score_range}, 重要程度: {kp.weight})"
-            for kp in key_points
-        ])
+        key_points_text = "\n".join(
+            [f"- {kp.point} (分数段: {kp.score_range}, 重要程度: {kp.weight})" for kp in key_points]
+        )
 
         variables = {
             "question": question,
@@ -500,7 +563,10 @@ class UnifiedEvaluationService:
             return None
 
     async def evaluate_project_question(
-        self, chat_model: ChatOpenAI, question: str, user_answer: str,
+        self,
+        chat_model: ChatOpenAI,
+        question: str,
+        user_answer: str,
         project_context: str = "",
     ) -> _ProjectEvalDTO | None:
         if not user_answer or not user_answer.strip():

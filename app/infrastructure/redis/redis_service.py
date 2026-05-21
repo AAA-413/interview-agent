@@ -46,8 +46,11 @@ async def init_redis() -> aioredis.Redis | None:
                 socket_connect_timeout=REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS,
                 socket_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
             )
-            logger.info("Redis 连接池配置: max_connections=%d, socket_timeout=%ds",
-                       REDIS_MAX_CONNECTIONS, REDIS_SOCKET_TIMEOUT_SECONDS)
+            logger.info(
+                "Redis 连接池配置: max_connections=%d, socket_timeout=%ds",
+                REDIS_MAX_CONNECTIONS,
+                REDIS_SOCKET_TIMEOUT_SECONDS,
+            )
         await asyncio.wait_for(_redis.ping(), timeout=5)
         return _redis
     except (asyncio.TimeoutError, Exception) as e:
@@ -116,11 +119,21 @@ class RedisService:
         return await self._redis.xread(streams, count=count, block=block)
 
     async def xreadgroup(
-        self, groupname: str, consumername: str, streams: dict[str, str],
-        count: int | None = None, block: int | None = None, noack: bool = False,
+        self,
+        groupname: str,
+        consumername: str,
+        streams: dict[str, str],
+        count: int | None = None,
+        block: int | None = None,
+        noack: bool = False,
     ):
         return await self._redis.xreadgroup(
-            groupname, consumername, streams, count=count, block=block, noack=noack,
+            groupname,
+            consumername,
+            streams,
+            count=count,
+            block=block,
+            noack=noack,
         )
 
     async def xgroup_create(self, stream: str, groupname: str, id: str = "$", mkstream: bool = False) -> bool:
@@ -139,19 +152,29 @@ class RedisService:
         return await self._redis.xdel(stream, *message_ids)
 
     async def xpending_range(
-        self, stream: str, groupname: str,
-        min: str = "-", max: str = "+", count: int = 10,
+        self,
+        stream: str,
+        groupname: str,
+        min: str = "-",
+        max: str = "+",
+        count: int = 10,
     ) -> list[dict]:
         """获取 pending list 中的消息详情。"""
         return await self._redis.xpending_range(stream, groupname, min=min, max=max, count=count)
 
     async def xclaim(
-        self, stream: str, groupname: str, consumername: str,
-        min_idle_time: int, message_ids: list[str],
+        self,
+        stream: str,
+        groupname: str,
+        consumername: str,
+        min_idle_time: int,
+        message_ids: list[str],
     ) -> list[tuple[str, dict[str, str]]]:
         """认领空闲超时的消息。"""
         return await self._redis.xclaim(
-            stream, groupname, consumername,
+            stream,
+            groupname,
+            consumername,
             min_idle_time=min_idle_time,
             message_ids=message_ids,
         )

@@ -173,7 +173,9 @@ class AgentPersistenceService:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def get_execution_by_session(self, session_id: str, user_id: Optional[int] = None) -> Optional[AgentExecutionEntity]:
+    async def get_execution_by_session(
+        self, session_id: str, user_id: Optional[int] = None
+    ) -> Optional[AgentExecutionEntity]:
         """根据 session_id 获取执行记录"""
         stmt = select(AgentExecutionEntity).where(AgentExecutionEntity.session_id == session_id)
         if user_id is not None:

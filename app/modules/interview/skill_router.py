@@ -4,8 +4,8 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from app.common.result import Result
-from app.modules.interview.skill_service import interview_skill_service
 from app.modules.interview.schemas import CategoryDTO, SkillDTO
+from app.modules.interview.skill_service import interview_skill_service
 
 logger = logging.getLogger(__name__)
 

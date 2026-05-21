@@ -1,14 +1,16 @@
 """
 知识库文档抓取服务
 """
+
 import logging
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.common.model import AsyncTaskStatus
 from app.common.tools.document_fetcher import document_fetcher
 from app.modules.knowledge_base.models import KnowledgeBaseEntity
 from app.modules.knowledge_base.persistence_service import knowledge_base_persistence_service
 from app.modules.knowledge_base.upload_service import knowledge_base_upload_service
-from app.common.model import AsyncTaskStatus
 
 logger = logging.getLogger(__name__)
 

@@ -15,7 +15,6 @@ PROMPT_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
 
 
 class KnowledgeGraphExtractionService:
-
     def __init__(self) -> None:
         self._system_prompt: str | None = None
         self._user_prompt_template: str | None = None
@@ -28,7 +27,11 @@ class KnowledgeGraphExtractionService:
         return self._system_prompt, self._user_prompt_template
 
     async def extract_and_save(
-        self, db: AsyncSession, kb_id: int, source_text: str, chunks: list | None = None,
+        self,
+        db: AsyncSession,
+        kb_id: int,
+        source_text: str,
+        chunks: list | None = None,
     ) -> dict:
         start = time.time()
 
@@ -94,7 +97,10 @@ class KnowledgeGraphExtractionService:
         duration_ms = int((time.time() - start) * 1000)
         logger.info(
             "知识图谱抽取完成: kb_id=%d, entities=%d, triples=%d, duration=%dms",
-            kb_id, entity_count, triple_count, duration_ms,
+            kb_id,
+            entity_count,
+            triple_count,
+            duration_ms,
         )
         return {"kb_id": kb_id, "entity_count": entity_count, "triple_count": triple_count, "duration_ms": duration_ms}
 
@@ -116,13 +122,15 @@ class KnowledgeGraphExtractionService:
             valid = []
             for t in triples:
                 if all(k in t for k in ("subject", "predicate", "object", "subject_type", "object_type")):
-                    valid.append({
-                        "subject": str(t["subject"]).strip(),
-                        "predicate": str(t["predicate"]).strip(),
-                        "object": str(t["object"]).strip(),
-                        "subject_type": str(t["subject_type"]).strip(),
-                        "object_type": str(t["object_type"]).strip(),
-                    })
+                    valid.append(
+                        {
+                            "subject": str(t["subject"]).strip(),
+                            "predicate": str(t["predicate"]).strip(),
+                            "object": str(t["object"]).strip(),
+                            "subject_type": str(t["subject_type"]).strip(),
+                            "object_type": str(t["object_type"]).strip(),
+                        }
+                    )
             return valid
         except (json.JSONDecodeError, TypeError) as e:
             logger.warning("LLM 输出解析失败: %s, content=%s", e, content[:200])
@@ -132,12 +140,12 @@ class KnowledgeGraphExtractionService:
     def _clean_json_response(content: str) -> str:
         if content.startswith("```"):
             lines = content.split("\n")
-            lines = [l for l in lines if not l.strip().startswith("```")]
+            lines = [line for line in lines if not line.strip().startswith("```")]
             content = "\n".join(lines)
         start = content.find("[")
         end = content.rfind("]")
         if start != -1 and end != -1:
-            content = content[start:end + 1]
+            content = content[start : end + 1]
         return content.strip()
 
     @staticmethod

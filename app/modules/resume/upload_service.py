@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 
 
 class ResumeUploadService:
-    async def upload(self, db: AsyncSession, file_bytes: bytes, filename: str, content_type: str | None, user_id: int = 0) -> ResumeEntity:
+    async def upload(
+        self, db: AsyncSession, file_bytes: bytes, filename: str, content_type: str | None, user_id: int = 0
+    ) -> ResumeEntity:
         safe_filename = file_validation_service.validate_file(
             file_bytes=file_bytes,
             filename=filename,
@@ -57,7 +59,9 @@ class ResumeUploadService:
         await db.commit()
 
         if not resume_text:
-            await resume_persistence_service.update_analyze_status(db, entity.id, AsyncTaskStatus.FAILED, "简历解析结果为空")
+            await resume_persistence_service.update_analyze_status(
+                db, entity.id, AsyncTaskStatus.FAILED, "简历解析结果为空"
+            )
 
         return entity
 

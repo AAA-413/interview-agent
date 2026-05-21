@@ -23,6 +23,16 @@
 
 ## 快速启动
 
+### 一键启动/停止（推荐）
+
+```bash
+# 启动 Docker 依赖、后端和前端
+./start.sh
+
+# 停止本项目后端、前端和 Docker 依赖
+./stop.sh
+```
+
 ### 后端
 
 ```bash
@@ -50,6 +60,14 @@ npm run dev
 - 后端 API：http://localhost:8002
 - 前端页面：http://localhost:5173
 - API 文档：http://localhost:8002/docs
+
+### 本地质量检查
+
+```bash
+./scripts/quality_check.sh
+```
+
+该脚本会依次执行 Python 编译检查、全量 Ruff 检查、Ruff 格式检查、pytest 基础测试和前端生产构建。
 
 ## 功能模块
 

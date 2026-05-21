@@ -11,9 +11,9 @@ from app.common.model import AsyncTaskStatus
 from app.modules.resume.models import ResumeAnalysisEntity, ResumeEntity
 from app.modules.resume.schemas import (
     AnalysisHistoryDTO,
+    ResumeAnalysisResponse,
     ResumeDetailDTO,
     ResumeListItemDTO,
-    ResumeAnalysisResponse,
     ResumeProfile,
     Suggestion,
 )
@@ -74,12 +74,8 @@ class ResumePersistenceService(BasePersistenceService[ResumeEntity]):
             project_score=analysis.score_detail.project_score,
             summary=analysis.summary,
             strengths_json=json.dumps(analysis.strengths, ensure_ascii=False),
-            suggestions_json=json.dumps(
-                [s.model_dump() for s in analysis.suggestions], ensure_ascii=False
-            ),
-            profile_json=json.dumps(
-                analysis.profile.model_dump(), ensure_ascii=False
-            ) if analysis.profile else None,
+            suggestions_json=json.dumps([s.model_dump() for s in analysis.suggestions], ensure_ascii=False),
+            profile_json=json.dumps(analysis.profile.model_dump(), ensure_ascii=False) if analysis.profile else None,
             analyzed_at=datetime.now(),
         )
         db.add(entity)

@@ -8,8 +8,9 @@
 """
 
 import sys
-import httpx
 import time
+
+import httpx
 
 BASE_URL = "http://localhost:8002"
 if len(sys.argv) > 1 and sys.argv[1].startswith("--base-url"):
@@ -22,9 +23,9 @@ def log(msg: str, ok: bool = True):
 
 
 def log_section(name: str):
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"  {name}")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
 
 
 def test_health(client: httpx.Client):
@@ -40,11 +41,14 @@ def test_auth(client: httpx.Client) -> str | None:
 
     # 注册新用户
     ts = int(time.time())
-    r = client.post("/api/auth/register", json={
-        "username": f"e2e_test_{ts}",
-        "password": "Test123456",
-        "email": f"e2e_{ts}@test.com",
-    })
+    r = client.post(
+        "/api/auth/register",
+        json={
+            "username": f"e2e_test_{ts}",
+            "password": "Test123456",
+            "email": f"e2e_{ts}@test.com",
+        },
+    )
     if r.status_code in (200, 201):
         log(f"POST /api/auth/register -> {r.status_code}", True)
         login_user = r.json()["username"]
@@ -117,10 +121,14 @@ def test_401_rejection(client: httpx.Client):
 
 def test_input_validation(client: httpx.Client, headers: dict):
     log_section("8. 输入校验")
-    r = client.post("/api/interview/sessions", headers=headers, json={
-        "skill_id": "ai-agent-dev",
-        "question_count": 50,
-    })
+    r = client.post(
+        "/api/interview/sessions",
+        headers=headers,
+        json={
+            "skill_id": "ai-agent-dev",
+            "question_count": 50,
+        },
+    )
     ok = r.status_code == 422
     log(f"POST /api/interview/sessions (question_count=50) -> {r.status_code}", ok)
     return ok
@@ -130,21 +138,27 @@ def test_data_isolation(client: httpx.Client):
     log_section("9. 数据隔离")
     # 注册新用户
     ts = int(time.time())
-    r = client.post("/api/auth/register", json={
-        "username": f"isolated_{ts}",
-        "password": "Test123456",
-        "email": f"isolated_{ts}@test.com",
-    })
+    r = client.post(
+        "/api/auth/register",
+        json={
+            "username": f"isolated_{ts}",
+            "password": "Test123456",
+            "email": f"isolated_{ts}@test.com",
+        },
+    )
     if r.status_code not in (200, 201):
         log("无法注册测试用户", False)
         return False
 
     new_username = r.json()["username"]
 
-    r = client.post("/api/auth/login", json={
-        "username": new_username,
-        "password": "Test123456",
-    })
+    r = client.post(
+        "/api/auth/login",
+        json={
+            "username": new_username,
+            "password": "Test123456",
+        },
+    )
     if r.status_code != 200:
         log("无法登录测试用户", False)
         return False

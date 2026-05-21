@@ -12,7 +12,7 @@ from app.config import settings
 from app.modules.interview.evaluation_service import QaRecord, unified_evaluation_service
 from app.modules.interview.models import SessionStatus
 from app.modules.interview.persistence_service import interview_persistence_service
-from app.modules.interview.question_service import interview_question_service, MAX_FOLLOW_UP_COUNT
+from app.modules.interview.question_service import MAX_FOLLOW_UP_COUNT, interview_question_service
 from app.modules.interview.schemas import (
     CreateInterviewRequest,
     InterviewQuestionDTO,
@@ -27,20 +27,32 @@ logger = logging.getLogger(__name__)
 
 
 class InterviewSessionService:
-    async def create_session(self, db: AsyncSession, request: CreateInterviewRequest, user_id: int = 0) -> InterviewSessionDTO:
+    async def create_session(
+        self, db: AsyncSession, request: CreateInterviewRequest, user_id: int = 0
+    ) -> InterviewSessionDTO:
         if request.resume_id and not request.force_create:
             unfinished = await self._find_unfinished_session(db, request.resume_id, user_id)
             if unfinished:
-                logger.info("检测到未完成的面试会话: resumeId=%d, sessionId=%s", request.resume_id, unfinished.session_id)
+                logger.info(
+                    "检测到未完成的面试会话: resumeId=%d, sessionId=%s", request.resume_id, unfinished.session_id
+                )
                 return unfinished
 
         session_id = uuid.uuid4().hex[:16]
         skill_id = request.skill_id or settings.interview.default_skill_id
         difficulty = request.difficulty or settings.interview.default_difficulty
 
-        logger.info("创建新面试会话: %s, skill: %s, difficulty: %s, questionCount: %d", session_id, skill_id, difficulty, request.question_count)
+        logger.info(
+            "创建新面试会话: %s, skill: %s, difficulty: %s, questionCount: %d",
+            session_id,
+            skill_id,
+            difficulty,
+            request.question_count,
+        )
 
-        historical_questions = await interview_persistence_service.get_historical_questions(db, skill_id, request.resume_id, user_id)
+        historical_questions = await interview_persistence_service.get_historical_questions(
+            db, skill_id, request.resume_id, user_id
+        )
 
         chat_model = llm_registry.get_chat_model(request.llm_provider)
 
@@ -84,7 +96,9 @@ class InterviewSessionService:
 
         for answer in entity.answers:
             if 0 <= answer.question_index < len(questions):
-                questions[answer.question_index] = questions[answer.question_index].model_copy(update={"answer": answer.user_answer})
+                questions[answer.question_index] = questions[answer.question_index].model_copy(
+                    update={"answer": answer.user_answer}
+                )
 
         return InterviewSessionDTO(
             session_id=entity.session_id,
@@ -110,7 +124,9 @@ class InterviewSessionService:
         question = session_dto.questions[session_dto.current_question_index]
         return {"completed": False, "question": question.model_dump()}
 
-    async def submit_answer(self, db: AsyncSession, session_id: str, request: SubmitAnswerRequest, user_id: int = 0) -> SubmitAnswerResponse:
+    async def submit_answer(
+        self, db: AsyncSession, session_id: str, request: SubmitAnswerRequest, user_id: int = 0
+    ) -> SubmitAnswerResponse:
         entity = await interview_persistence_service.find_by_session_id_or_throw(db, session_id, user_id)
         questions = interview_persistence_service.parse_questions_json(entity.questions_json)
 
@@ -147,27 +163,27 @@ class InterviewSessionService:
             except Exception as e:
                 logger.warning("追问生成失败，继续下一题: %s", e)
 
-        if follow_up and follow_up.shouldFollowUp and follow_up.followUpQuestion:
+        if follow_up and follow_up.should_follow_up and follow_up.follow_up_question:
             # Insert follow-up question after current question
             from app.modules.interview.schemas import KeyPoint
 
             follow_up_index = index + 1
             key_points = None
-            if follow_up.keyPoints:
+            if follow_up.key_points:
                 key_points = [
-                    KeyPoint(point=kp.point, score_range=kp.scoreRange, weight=kp.weight)
-                    for kp in follow_up.keyPoints
+                    KeyPoint(point=kp.point, score_range=kp.score_range, weight=kp.weight)
+                    for kp in follow_up.key_points
                 ]
 
             follow_up_question = InterviewQuestionDTO(
                 question_index=follow_up_index,
-                question=follow_up.followUpQuestion,
+                question=follow_up.follow_up_question,
                 type=question.type,
                 category=f"{question.category or '综合能力'}-追问",
                 is_follow_up=True,
                 parent_question_index=index,
                 question_type=question.question_type,
-                reference_answer=follow_up.referenceAnswer,
+                reference_answer=follow_up.reference_answer,
                 key_points=key_points,
             )
 
@@ -175,8 +191,13 @@ class InterviewSessionService:
             questions.insert(follow_up_index, follow_up_question)
             for i in range(follow_up_index + 1, len(questions)):
                 questions[i] = questions[i].model_copy(update={"question_index": i})
-                if questions[i].parent_question_index is not None and questions[i].parent_question_index >= follow_up_index:
-                    questions[i] = questions[i].model_copy(update={"parent_question_index": questions[i].parent_question_index + 1})
+                if (
+                    questions[i].parent_question_index is not None
+                    and questions[i].parent_question_index >= follow_up_index
+                ):
+                    questions[i] = questions[i].model_copy(
+                        update={"parent_question_index": questions[i].parent_question_index + 1}
+                    )
 
             # Save updated questions
             await interview_persistence_service.update_questions_json(db, session_id, questions)
@@ -198,7 +219,13 @@ class InterviewSessionService:
         if not has_next:
             await self._enqueue_evaluation(db, session_id)
 
-        logger.info("会话 %s 提交答案: 问题%d, 剩余%d题, 追问=%s", session_id, index, len(questions) - new_index, follow_up is not None)
+        logger.info(
+            "会话 %s 提交答案: 问题%d, 剩余%d题, 追问=%s",
+            session_id,
+            index,
+            len(questions) - new_index,
+            follow_up is not None,
+        )
 
         return SubmitAnswerResponse(
             has_next_question=has_next,
@@ -208,23 +235,25 @@ class InterviewSessionService:
         )
 
     @staticmethod
-    def _should_try_follow_up(question: InterviewQuestionDTO, questions: list[InterviewQuestionDTO], current_index: int) -> bool:
+    def _should_try_follow_up(
+        question: InterviewQuestionDTO, questions: list[InterviewQuestionDTO], current_index: int
+    ) -> bool:
         if question.is_follow_up:
             return False
         follow_up_count = sum(
-            1 for i in range(current_index + 1, len(questions))
+            1
+            for i in range(current_index + 1, len(questions))
             if questions[i].is_follow_up and questions[i].parent_question_index == current_index
         )
         return follow_up_count < MAX_FOLLOW_UP_COUNT
 
     @staticmethod
     def _count_follow_ups(questions: list[InterviewQuestionDTO], parent_index: int) -> int:
-        return sum(
-            1 for q in questions
-            if q.is_follow_up and q.parent_question_index == parent_index
-        )
+        return sum(1 for q in questions if q.is_follow_up and q.parent_question_index == parent_index)
 
-    async def save_answer(self, db: AsyncSession, session_id: str, request: SubmitAnswerRequest, user_id: int = 0) -> None:
+    async def save_answer(
+        self, db: AsyncSession, session_id: str, request: SubmitAnswerRequest, user_id: int = 0
+    ) -> None:
         entity = await interview_persistence_service.find_by_session_id_or_throw(db, session_id, user_id)
         questions = interview_persistence_service.parse_questions_json(entity.questions_json)
 
@@ -378,7 +407,9 @@ class InterviewSessionService:
                 f"评估任务入队失败: {e}",
             )
 
-    async def _find_unfinished_session(self, db: AsyncSession, resume_id: int, user_id: int = 0) -> InterviewSessionDTO | None:
+    async def _find_unfinished_session(
+        self, db: AsyncSession, resume_id: int, user_id: int = 0
+    ) -> InterviewSessionDTO | None:
         try:
             entity = await interview_persistence_service.find_unfinished_session(db, resume_id, user_id)
             if entity is None:
@@ -389,26 +420,31 @@ class InterviewSessionService:
             return None
 
     async def _search_knowledge_for_evaluation(
-        self, db: AsyncSession, user_id: int, qa_records: list[QaRecord],
+        self,
+        db: AsyncSession,
+        user_id: int,
+        qa_records: list[QaRecord],
     ) -> str | None:
         """从用户知识库检索与面试题相关的知识点，作为评估参考"""
         try:
+            from sqlalchemy import select
+
+            from app.modules.knowledge_base.models import KnowledgeChunkEntity
             from app.modules.knowledge_base.persistence_service import knowledge_base_persistence_service
             from app.modules.knowledge_base.vector_service import knowledge_base_vector_service
-            from app.modules.knowledge_base.models import KnowledgeChunkEntity
-            from sqlalchemy import select
 
             # 获取用户的已完成索引的知识库
             all_kbs = await knowledge_base_persistence_service.find_all(db, user_id)
-            completed_kbs = [kb for kb in all_kbs if hasattr(kb, 'index_status') and kb.index_status.value == 'COMPLETED']
+            completed_kbs = [
+                kb for kb in all_kbs if hasattr(kb, "index_status") and kb.index_status.value == "COMPLETED"
+            ]
 
             if not completed_kbs:
                 return None
 
             # 收集所有知识题的问题文本
             knowledge_questions = [
-                qa.question for qa in qa_records
-                if qa.question_type == "knowledge" and not qa.is_follow_up
+                qa.question for qa in qa_records if qa.question_type == "knowledge" and not qa.is_follow_up
             ]
             if not knowledge_questions:
                 return None

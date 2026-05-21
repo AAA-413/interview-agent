@@ -67,9 +67,7 @@ class KnowledgeBuilderAgent:
             logger.info(f"  ✅ 下载完成: {len(downloaded_files)} 个文件")
 
             # Step 4: 添加到知识库
-            kb_result = await self._add_to_knowledge_base(
-                downloaded_files, kb_id, intent
-            )
+            kb_result = await self._add_to_knowledge_base(downloaded_files, kb_id, intent)
             logger.info(f"  📚 知识库更新: {kb_result['chunks_count']} 个片段")
 
             return AgentResult(
@@ -132,9 +130,7 @@ class KnowledgeBuilderAgent:
 
 只返回 JSON，不要其他内容。"""
 
-        response = await self.llm_provider.ainvoke(
-            [{"role": "user", "content": prompt}]
-        )
+        response = await self.llm_provider.ainvoke([{"role": "user", "content": prompt}])
 
         # 解析 JSON
         import json
@@ -155,9 +151,7 @@ class KnowledgeBuilderAgent:
             "reasoning": "无法解析意图，使用通用搜索",
         }
 
-    async def _plan_download_strategy(
-        self, intent: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    async def _plan_download_strategy(self, intent: Dict[str, Any]) -> Dict[str, Any]:
         """
         规划下载策略 - 使用 LLM 生成下载计划
 
@@ -214,9 +208,7 @@ class KnowledgeBuilderAgent:
 
 只返回 JSON，不要其他内容。"""
 
-        response = await self.llm_provider.ainvoke(
-            [{"role": "user", "content": prompt}]
-        )
+        response = await self.llm_provider.ainvoke([{"role": "user", "content": prompt}])
 
         # 解析 JSON
         import json
@@ -285,7 +277,7 @@ class KnowledgeBuilderAgent:
                     }
                 )
 
-                logger.info(f"    ✅ 下载成功")
+                logger.info("    ✅ 下载成功")
 
             except Exception as e:
                 logger.error(f"    ❌ 下载失败: {e}")

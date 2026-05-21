@@ -136,7 +136,7 @@ class SummaryAgent:
             if quality_check and not quality_check.get("passed", True):
                 suggestions = quality_check.get("suggestions", [])
                 if suggestions:
-                    quality_context = f"\n\n改进建议：\n" + "\n".join(f"- {s}" for s in suggestions)
+                    quality_context = "\n\n改进建议：\n" + "\n".join(f"- {s}" for s in suggestions)
 
             prompt = f"""请基于以下执行结果，生成一个完整、准确、清晰的最终答案。
 
@@ -157,9 +157,7 @@ class SummaryAgent:
 
 请生成最终答案："""
 
-            response = await self.llm_provider.ainvoke(
-                [{"role": "user", "content": prompt}]
-            )
+            response = await self.llm_provider.ainvoke([{"role": "user", "content": prompt}])
 
             final_answer = response.content
 
@@ -246,9 +244,7 @@ class SummaryAgent:
 请输出精炼后的完整文档："""
 
         try:
-            response = await self.llm_provider.ainvoke(
-                [{"role": "user", "content": prompt}]
-            )
+            response = await self.llm_provider.ainvoke([{"role": "user", "content": prompt}])
             return response.content
         except Exception as e:
             logger.warning("文档精炼失败，返回原文: %s", e)

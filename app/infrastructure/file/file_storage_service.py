@@ -43,7 +43,7 @@ class FileStorageService:
         try:
             ext = ""
             if "." in filename:
-                ext = filename[filename.rfind("."):]
+                ext = filename[filename.rfind(".") :]
             date_prefix = datetime.now().strftime("%Y/%m/%d")
             unique_name = f"{uuid.uuid4().hex}{ext}"
             key = f"{prefix}/{date_prefix}/{unique_name}"

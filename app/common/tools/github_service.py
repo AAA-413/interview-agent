@@ -1,11 +1,13 @@
 """
 GitHub API 服务 - 封装GitHub API调用
 """
+
+import base64
 import itertools
 import logging
-import httpx
-import base64
 from typing import Any, Dict, List, Optional
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -67,23 +69,23 @@ class GitHubService:
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.get(
-                    url, params=params, headers=self._get_headers()
-                )
+                response = await client.get(url, params=params, headers=self._get_headers())
                 response.raise_for_status()
                 data = response.json()
 
                 repos = []
                 for item in data.get("items", []):
-                    repos.append({
-                        "name": item["name"],
-                        "full_name": item["full_name"],
-                        "description": item.get("description", ""),
-                        "stars": item["stargazers_count"],
-                        "url": item["html_url"],
-                        "language": item.get("language", ""),
-                        "updated_at": item["updated_at"],
-                    })
+                    repos.append(
+                        {
+                            "name": item["name"],
+                            "full_name": item["full_name"],
+                            "description": item.get("description", ""),
+                            "stars": item["stargazers_count"],
+                            "url": item["html_url"],
+                            "language": item.get("language", ""),
+                            "updated_at": item["updated_at"],
+                        }
+                    )
 
                 logger.info(f"  找到 {len(repos)} 个仓库")
                 return repos
@@ -138,8 +140,7 @@ class GitHubService:
             return None
 
     async def list_docs_files(
-        self, repo: str, path: str = "docs", max_depth: int = 3,
-        file_extensions: Optional[List[str]] = None
+        self, repo: str, path: str = "docs", max_depth: int = 3, file_extensions: Optional[List[str]] = None
     ) -> List[str]:
         """
         列出文档文件（递归）
@@ -180,9 +181,7 @@ class GitHubService:
                         files.append(item["path"])
                     elif item["type"] == "dir":
                         # 递归获取子目录
-                        sub_files = await self.list_docs_files(
-                            repo, item["path"], max_depth - 1, file_extensions
-                        )
+                        sub_files = await self.list_docs_files(repo, item["path"], max_depth - 1, file_extensions)
                         files.extend(sub_files)
 
                 logger.info(f"  找到 {len(files)} 个文档文件")
@@ -225,9 +224,7 @@ class GitHubService:
             logger.error(f"获取文件失败: {e}")
             return None
 
-    async def fetch_repo_docs(
-        self, repo: str, include_readme: bool = True, max_files: int = 30
-    ) -> Dict[str, Any]:
+    async def fetch_repo_docs(self, repo: str, include_readme: bool = True, max_files: int = 30) -> Dict[str, Any]:
         """
         抓取仓库的所有文档（含项目结构和关键配置文件）
 
@@ -249,39 +246,56 @@ class GitHubService:
         # 1. 抓取项目结构（目录树）
         tree = await self._get_repo_tree(repo, path="", max_depth=2)
         if tree:
-            documents.append({
-                "path": "PROJECT_STRUCTURE",
-                "content": f"# {repo} 项目结构\n\n```\n{tree}\n```",
-                "type": "structure",
-            })
+            documents.append(
+                {
+                    "path": "PROJECT_STRUCTURE",
+                    "content": f"# {repo} 项目结构\n\n```\n{tree}\n```",
+                    "type": "structure",
+                }
+            )
 
         # 2. 抓取关键配置/入口文件
         key_files = [
-            "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt",
-            "package.json", "Makefile", "Dockerfile", "docker-compose.yml",
-            "docker-compose.yaml", ".env.example", "CONTRIBUTING.md",
-            "CHANGELOG.md", "CHANGELOG.rst", "Cargo.toml", "go.mod",
+            "pyproject.toml",
+            "setup.py",
+            "setup.cfg",
+            "requirements.txt",
+            "package.json",
+            "Makefile",
+            "Dockerfile",
+            "docker-compose.yml",
+            "docker-compose.yaml",
+            ".env.example",
+            "CONTRIBUTING.md",
+            "CHANGELOG.md",
+            "CHANGELOG.rst",
+            "Cargo.toml",
+            "go.mod",
         ]
         for filename in key_files:
             if len(documents) >= max_files:
                 break
             content = await self.get_file_content(repo, filename)
             if content:
-                documents.append({
-                    "path": filename,
-                    "content": content,
-                    "type": "config",
-                })
+                documents.append(
+                    {
+                        "path": filename,
+                        "content": content,
+                        "type": "config",
+                    }
+                )
 
         # 3. 抓取README
         if include_readme and len(documents) < max_files:
             readme = await self.get_readme(repo)
             if readme:
-                documents.append({
-                    "path": readme["path"],
-                    "content": readme["content"],
-                    "type": "readme",
-                })
+                documents.append(
+                    {
+                        "path": readme["path"],
+                        "content": readme["content"],
+                        "type": "readme",
+                    }
+                )
 
         # 4. 检查文档目录（扩展列表 + 支持更多文件类型）
         doc_dirs = ["docs", "documentation", "doc", "wiki", "examples", "notebooks", "tutorials", "guides"]
@@ -299,14 +313,16 @@ class GitHubService:
         docs_files = list(set(docs_files))
 
         # 5. 抓取文档内容（限制数量）
-        for file_path in docs_files[:max_files - len(documents)]:
+        for file_path in docs_files[: max_files - len(documents)]:
             content = await self.get_file_content(repo, file_path)
             if content:
-                documents.append({
-                    "path": file_path,
-                    "content": content,
-                    "type": "doc",
-                })
+                documents.append(
+                    {
+                        "path": file_path,
+                        "content": content,
+                        "type": "doc",
+                    }
+                )
 
         logger.info(f"  共抓取 {len(documents)} 个文档")
 
@@ -316,9 +332,7 @@ class GitHubService:
             "total_docs": len(documents),
         }
 
-    async def _get_repo_tree(
-        self, repo: str, path: str = "", max_depth: int = 2, current_depth: int = 0
-    ) -> str:
+    async def _get_repo_tree(self, repo: str, path: str = "", max_depth: int = 2, current_depth: int = 0) -> str:
         """
         获取仓库目录树（树形文本）
 
@@ -353,7 +367,15 @@ class GitHubService:
                 for item in sorted_items:
                     name = item["name"]
                     # 跳过隐藏文件和常见的大目录
-                    if name.startswith(".") or name in ("node_modules", "__pycache__", ".git", "venv", ".venv", "dist", "build"):
+                    if name.startswith(".") or name in (
+                        "node_modules",
+                        "__pycache__",
+                        ".git",
+                        "venv",
+                        ".venv",
+                        "dist",
+                        "build",
+                    ):
                         continue
 
                     indent = "│   " * current_depth
@@ -387,11 +409,13 @@ class GitHubService:
 # 全局实例（从配置加载 token 池）
 def _create_github_service() -> GitHubService:
     from app.config import settings
+
     tokens = settings.github.token_list
     if tokens:
         logger.info("GitHub token 池已加载: %d 个 token", len(tokens))
     else:
         logger.info("GitHub 未配置 token，使用未认证模式（60 次/小时限额）")
     return GitHubService(tokens=tokens)
+
 
 github_service = _create_github_service()

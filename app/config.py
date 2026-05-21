@@ -2,7 +2,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class DatabaseSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="POSTGRES_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="POSTGRES_", env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
     host: str = "localhost"
     port: int = 5432
@@ -47,7 +49,9 @@ class AiSettings(BaseSettings):
 
 
 class StorageSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="APP_STORAGE_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="APP_STORAGE_", env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
     endpoint: str = "http://localhost:9000"
     access_key: str = "minioadmin"
@@ -67,7 +71,9 @@ class CorsSettings(BaseSettings):
 
 
 class InterviewSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="APP_INTERVIEW_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="APP_INTERVIEW_", env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
     follow_up_count: int = 1
     evaluation_batch_size: int = 8
@@ -76,7 +82,9 @@ class InterviewSettings(BaseSettings):
 
 
 class ResumeSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="APP_RESUME_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="APP_RESUME_", env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
     upload_dir: str = "/tmp/ai-interview/resumes"
     max_file_size: int = 10 * 1024 * 1024
@@ -100,7 +108,9 @@ class GitHubSettings(BaseSettings):
 
 
 class VoiceInterviewSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="APP_VOICE_INTERVIEW_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="APP_VOICE_INTERVIEW_", env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
     llm_provider: str = "dashscope"
     user_utterance_debounce_ms: int = 2500

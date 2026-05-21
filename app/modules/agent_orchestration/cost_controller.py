@@ -3,7 +3,7 @@
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, Optional
 
@@ -91,8 +91,7 @@ class CostController:
         self.records.append(record)
 
         logger.info(
-            f"💰 {agent_name} 使用 {usage.total_tokens} tokens, "
-            f"成本: ${cost:.4f}, 累计: ${self.total_cost:.4f}"
+            f"💰 {agent_name} 使用 {usage.total_tokens} tokens, 成本: ${cost:.4f}, 累计: ${self.total_cost:.4f}"
         )
 
         # 检查预算
@@ -152,9 +151,7 @@ class CostController:
             "completion_tokens": self.total_usage.completion_tokens,
             "total_cost": round(self.total_cost, 4),
             "budget_limit": self.budget_limit,
-            "budget_remaining": (
-                round(self.budget_limit - self.total_cost, 4) if self.budget_limit else None
-            ),
+            "budget_remaining": (round(self.budget_limit - self.total_cost, 4) if self.budget_limit else None),
             "agent_breakdown": {
                 name: {
                     "total_tokens": usage.total_tokens,

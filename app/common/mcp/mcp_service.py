@@ -3,7 +3,7 @@ MCP 服务接口 - 封装各种资源获取能力
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,7 @@ class MCPService:
         if not self.document_fetcher:
             # 使用全局实例
             from app.common.tools.document_fetcher import document_fetcher as global_fetcher
+
             self.document_fetcher = global_fetcher
 
     async def fetch_url(self, url: str, max_length: int = 10000) -> Dict[str, Any]:
@@ -70,9 +71,7 @@ class MCPService:
         else:
             raise NotImplementedError("DocumentFetcher 未配置")
 
-    async def search_web(
-        self, query: str, num_results: int = 5
-    ) -> Dict[str, Any]:
+    async def search_web(self, query: str, num_results: int = 5) -> Dict[str, Any]:
         """
         搜索网页
 
@@ -91,8 +90,9 @@ class MCPService:
 
         try:
             # 使用真实搜索服务
-            from app.common.tools.search_service import search_service
             import os
+
+            from app.common.tools.search_service import search_service
 
             # 从环境变量读取搜索引擎配置
             engine = os.getenv("SEARCH_ENGINE", "tavily")
@@ -135,11 +135,7 @@ class MCPService:
         # 合并搜索结果内容
         content_parts = []
         for i, result in enumerate(mock_results, 1):
-            content_parts.append(
-                f"## 结果 {i}: {result['title']}\n\n"
-                f"{result['snippet']}\n\n"
-                f"来源: {result['url']}"
-            )
+            content_parts.append(f"## 结果 {i}: {result['title']}\n\n{result['snippet']}\n\n来源: {result['url']}")
 
         content = "\n\n---\n\n".join(content_parts)
 
@@ -154,9 +150,7 @@ class MCPService:
             },
         }
 
-    async def fetch_github(
-        self, repo: str, path: str = "", branch: str = "main"
-    ) -> Dict[str, Any]:
+    async def fetch_github(self, repo: str, path: str = "", branch: str = "main") -> Dict[str, Any]:
         """
         获取 GitHub 仓库内容
 
@@ -187,9 +181,7 @@ class MCPService:
             },
         }
 
-    async def fetch_arxiv(
-        self, query: str, max_results: int = 5
-    ) -> Dict[str, Any]:
+    async def fetch_arxiv(self, query: str, max_results: int = 5) -> Dict[str, Any]:
         """
         搜索 arXiv 论文
 

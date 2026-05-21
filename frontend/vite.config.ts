@@ -13,4 +13,17 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    // G6 is lazy-loaded by the graph page; keep it away from the main app chunk.
+    chunkSizeWarningLimit: 1500,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules') && (id.includes('@antv') || id.includes('/g6/'))) {
+            return 'graph-vendor';
+          }
+        },
+      },
+    },
+  },
 })

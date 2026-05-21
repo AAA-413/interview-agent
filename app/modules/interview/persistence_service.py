@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.base_persistence_service import safe_json_loads
 from app.common.error_code import ErrorCode
 from app.common.exception import BusinessException
-from app.common.model import AsyncTaskStatus
 from app.modules.interview.models import InterviewAnswerEntity, InterviewSessionEntity, SessionStatus
 from app.modules.interview.schemas import (
     HistoricalQuestion,
@@ -50,14 +49,18 @@ class InterviewPersistenceService:
         await db.flush()
         return entity
 
-    async def find_by_session_id(self, db: AsyncSession, session_id: str, user_id: int | None = None) -> InterviewSessionEntity | None:
+    async def find_by_session_id(
+        self, db: AsyncSession, session_id: str, user_id: int | None = None
+    ) -> InterviewSessionEntity | None:
         stmt = select(InterviewSessionEntity).where(InterviewSessionEntity.session_id == session_id)
         if user_id is not None:
             stmt = stmt.where(InterviewSessionEntity.user_id == user_id)
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def find_by_session_id_or_throw(self, db: AsyncSession, session_id: str, user_id: int | None = None) -> InterviewSessionEntity:
+    async def find_by_session_id_or_throw(
+        self, db: AsyncSession, session_id: str, user_id: int | None = None
+    ) -> InterviewSessionEntity:
         entity = await self.find_by_session_id(db, session_id, user_id)
         if entity is None:
             raise BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND)
@@ -70,7 +73,9 @@ class InterviewPersistenceService:
         result = await db.execute(query)
         return list(result.scalars().all())
 
-    async def find_unfinished_session(self, db: AsyncSession, resume_id: int, user_id: int | None = None) -> InterviewSessionEntity | None:
+    async def find_unfinished_session(
+        self, db: AsyncSession, resume_id: int, user_id: int | None = None
+    ) -> InterviewSessionEntity | None:
         query = (
             select(InterviewSessionEntity)
             .where(
@@ -87,9 +92,7 @@ class InterviewPersistenceService:
 
     async def update_session_status(self, db: AsyncSession, session_id: str, status: SessionStatus) -> None:
         await db.execute(
-            update(InterviewSessionEntity)
-            .where(InterviewSessionEntity.session_id == session_id)
-            .values(status=status)
+            update(InterviewSessionEntity).where(InterviewSessionEntity.session_id == session_id).values(status=status)
         )
         await db.flush()
 
@@ -101,7 +104,9 @@ class InterviewPersistenceService:
         )
         await db.flush()
 
-    async def update_questions_json(self, db: AsyncSession, session_id: str, questions: list[InterviewQuestionDTO]) -> None:
+    async def update_questions_json(
+        self, db: AsyncSession, session_id: str, questions: list[InterviewQuestionDTO]
+    ) -> None:
         await db.execute(
             update(InterviewSessionEntity)
             .where(InterviewSessionEntity.session_id == session_id)
@@ -270,6 +275,7 @@ class InterviewPersistenceService:
         reference_answers = []
         if raw_refs:
             from app.modules.interview.schemas import ReferenceAnswerDTO
+
             reference_answers = [ReferenceAnswerDTO(**r) for r in raw_refs]
 
         question_evaluations = []

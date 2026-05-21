@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.common.ai.structured_output import structured_output_invoker
 from app.common.error_code import ErrorCode
@@ -14,7 +14,6 @@ from app.modules.interview.schemas import (
     CategoryDTO,
     HistoricalQuestion,
     InterviewQuestionDTO,
-    SkillCategoryDTO,
     SkillDTO,
 )
 from app.modules.interview.skill_service import interview_skill_service
@@ -51,32 +50,36 @@ GENERIC_FALLBACK_QUESTIONS = [
 ]
 
 
-class _KeyPointDTO(BaseModel):
+class _StructuredDTO(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class _KeyPointDTO(_StructuredDTO):
     point: str
-    scoreRange: str
+    score_range: str = Field(alias="scoreRange")
     weight: str
 
 
-class _QuestionDTO(BaseModel):
+class _QuestionDTO(_StructuredDTO):
     question: str
     type: str = DEFAULT_QUESTION_TYPE
     category: str | None = None
-    topicSummary: str | None = None
-    followUps: list[str] | None = None
-    questionType: str = "knowledge"
-    referenceAnswer: str | None = None
-    keyPoints: list[_KeyPointDTO] | None = None
+    topic_summary: str | None = Field(default=None, alias="topicSummary")
+    follow_ups: list[str] | None = Field(default=None, alias="followUps")
+    question_type: str = Field(default="knowledge", alias="questionType")
+    reference_answer: str | None = Field(default=None, alias="referenceAnswer")
+    key_points: list[_KeyPointDTO] | None = Field(default=None, alias="keyPoints")
 
 
-class _QuestionListDTO(BaseModel):
+class _QuestionListDTO(_StructuredDTO):
     questions: list[_QuestionDTO] | None = None
 
 
-class _FollowUpDecisionDTO(BaseModel):
-    shouldFollowUp: bool
-    followUpQuestion: str | None = None
-    referenceAnswer: str | None = None
-    keyPoints: list[_KeyPointDTO] | None = None
+class _FollowUpDecisionDTO(_StructuredDTO):
+    should_follow_up: bool = Field(alias="shouldFollowUp")
+    follow_up_question: str | None = Field(default=None, alias="followUpQuestion")
+    reference_answer: str | None = Field(default=None, alias="referenceAnswer")
+    key_points: list[_KeyPointDTO] | None = Field(default=None, alias="keyPoints")
     reason: str = ""
 
 
@@ -105,12 +108,20 @@ class InterviewQuestionService:
         historical_section = self._build_historical_section(historical_questions)
 
         if not has_resume:
-            return await self._generate_direction_only(chat_model, skill, difficulty_desc, question_count, historical_section)
+            return await self._generate_direction_only(
+                chat_model, skill, difficulty_desc, question_count, historical_section
+            )
 
         resume_count = max(1, round(question_count * RESUME_QUESTION_RATIO))
         direction_count = question_count - resume_count
 
-        logger.info("并行出题: skill=%s, total=%d, resumeCount=%d, directionCount=%d", skill_id, question_count, resume_count, direction_count)
+        logger.info(
+            "并行出题: skill=%s, total=%d, resumeCount=%d, directionCount=%d",
+            skill_id,
+            question_count,
+            resume_count,
+            direction_count,
+        )
 
         try:
             resume_questions, direction_questions = await asyncio.gather(
@@ -120,11 +131,15 @@ class InterviewQuestionService:
             )
         except Exception as e:
             logger.error("并行出题失败: %s", e)
-            return await self._generate_direction_only(chat_model, skill, difficulty_desc, question_count, historical_section)
+            return await self._generate_direction_only(
+                chat_model, skill, difficulty_desc, question_count, historical_section
+            )
 
         if isinstance(resume_questions, Exception):
             logger.error("简历题生成失败，降级为全方向题: %s", resume_questions)
-            return await self._generate_direction_only(chat_model, skill, difficulty_desc, question_count, historical_section)
+            return await self._generate_direction_only(
+                chat_model, skill, difficulty_desc, question_count, historical_section
+            )
 
         if isinstance(direction_questions, Exception):
             logger.error("方向题生成失败: %s", direction_questions)
@@ -137,7 +152,9 @@ class InterviewQuestionService:
             return self._generate_fallback_questions(skill, question_count)
 
         merged = self._merge_question_batches(resume_questions, direction_questions)
-        logger.info("并行出题成功: 简历题=%d, 方向题=%d, 合计=%d", len(resume_questions), len(direction_questions), len(merged))
+        logger.info(
+            "并行出题成功: 简历题=%d, 方向题=%d, 合计=%d", len(resume_questions), len(direction_questions), len(merged)
+        )
         return merged
 
     async def _generate_resume_questions(
@@ -177,7 +194,11 @@ class InterviewQuestionService:
 
             questions = self._convert_to_questions(dto)
             questions = self._cap_to_main_count(questions, question_count)
-            logger.info("简历题生成完成: 请求=%d, 实际主问题=%d", question_count, sum(1 for q in questions if not q.is_follow_up))
+            logger.info(
+                "简历题生成完成: 请求=%d, 实际主问题=%d",
+                question_count,
+                sum(1 for q in questions if not q.is_follow_up),
+            )
             return questions
         except BusinessException:
             raise
@@ -238,7 +259,9 @@ class InterviewQuestionService:
             logger.error("方向题生成失败，回退到默认问题: %s", e)
             return self._generate_fallback_questions(skill, question_count)
 
-    def _resolve_skill(self, skill_id: str | None, custom_categories: list[CategoryDTO] | None, jd_text: str | None) -> SkillDTO:
+    def _resolve_skill(
+        self, skill_id: str | None, custom_categories: list[CategoryDTO] | None, jd_text: str | None
+    ) -> SkillDTO:
         if skill_id == "custom" and custom_categories:
             return interview_skill_service.build_custom_skill(custom_categories, jd_text or "")
         return interview_skill_service.get_skill(skill_id or settings.interview.default_skill_id)
@@ -255,14 +278,12 @@ class InterviewQuestionService:
             if not q.question or not q.question.strip():
                 continue
             q_type = q.type.upper() if q.type else DEFAULT_QUESTION_TYPE
-            q_question_type = q.questionType if q.questionType else "knowledge"
-            main_index = index
+            q_question_type = q.question_type if q.question_type else "knowledge"
 
             key_points = None
-            if q.keyPoints:
+            if q.key_points:
                 key_points = [
-                    KeyPoint(point=kp.point, score_range=kp.scoreRange, weight=kp.weight)
-                    for kp in q.keyPoints
+                    KeyPoint(point=kp.point, score_range=kp.score_range, weight=kp.weight) for kp in q.key_points
                 ]
 
             questions.append(
@@ -271,10 +292,10 @@ class InterviewQuestionService:
                     question=q.question,
                     type=q_type,
                     category=q.category,
-                    topic_summary=q.topicSummary,
+                    topic_summary=q.topic_summary,
                     is_follow_up=False,
                     question_type=q_question_type,
-                    reference_answer=q.referenceAnswer,
+                    reference_answer=q.reference_answer,
                     key_points=key_points,
                 )
             )
@@ -282,7 +303,9 @@ class InterviewQuestionService:
 
         return questions
 
-    def _cap_to_main_count(self, questions: list[InterviewQuestionDTO], max_main_count: int) -> list[InterviewQuestionDTO]:
+    def _cap_to_main_count(
+        self, questions: list[InterviewQuestionDTO], max_main_count: int
+    ) -> list[InterviewQuestionDTO]:
         current_main = sum(1 for q in questions if not q.is_follow_up)
         if current_main <= max_main_count:
             if current_main < max_main_count:
@@ -300,7 +323,9 @@ class InterviewQuestionService:
         logger.info("题目截断: 主问题 %d → %d", current_main, max_main_count)
         return capped
 
-    def _merge_question_batches(self, first: list[InterviewQuestionDTO], second: list[InterviewQuestionDTO]) -> list[InterviewQuestionDTO]:
+    def _merge_question_batches(
+        self, first: list[InterviewQuestionDTO], second: list[InterviewQuestionDTO]
+    ) -> list[InterviewQuestionDTO]:
         if not second:
             return first
         if not first:
@@ -335,9 +360,16 @@ class InterviewQuestionService:
         if categories:
             for generated in range(count):
                 cat = categories[generated % len(categories)]
-                question = f"请谈谈你在\"{cat.label}\"方向的技术理解和实践经验。"
+                question = f'请谈谈你在"{cat.label}"方向的技术理解和实践经验。'
                 questions.append(
-                    InterviewQuestionDTO(question_index=index, question=question, type=cat.key, category=cat.label, is_follow_up=False, question_type="knowledge")
+                    InterviewQuestionDTO(
+                        question_index=index,
+                        question=question,
+                        type=cat.key,
+                        category=cat.label,
+                        is_follow_up=False,
+                        question_type="knowledge",
+                    )
                 )
                 index += 1
             return questions
@@ -345,7 +377,14 @@ class InterviewQuestionService:
         for i in range(min(count, len(GENERIC_FALLBACK_QUESTIONS))):
             q_text, q_type, q_cat = GENERIC_FALLBACK_QUESTIONS[i]
             questions.append(
-                InterviewQuestionDTO(question_index=index, question=q_text, type=q_type, category=q_cat, is_follow_up=False, question_type="knowledge")
+                InterviewQuestionDTO(
+                    question_index=index,
+                    question=q_text,
+                    type=q_type,
+                    category=q_cat,
+                    is_follow_up=False,
+                    question_type="knowledge",
+                )
             )
             index += 1
         return questions
@@ -410,7 +449,7 @@ class InterviewQuestionService:
                 log_context="追问决策",
             )
 
-            if dto.shouldFollowUp and dto.followUpQuestion:
+            if dto.should_follow_up and dto.follow_up_question:
                 logger.info("生成追问: 原问题=%s, 原因=%s", question[:30], dto.reason)
                 return dto
             else:

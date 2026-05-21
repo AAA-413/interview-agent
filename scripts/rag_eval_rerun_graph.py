@@ -30,9 +30,30 @@ logger = logging.getLogger(__name__)
 # ── 需要重跑的策略 ────────────────────────────────────────────────────────────
 
 GRAPH_STRATEGIES = [
-    {"name": "graph_only", "use_vector": False, "use_graph": True, "use_rerank": False, "top_k": 4, "graph_weight": 0.5},
-    {"name": "hybrid_no_rerank", "use_vector": True, "use_graph": True, "use_rerank": False, "top_k": 4, "graph_weight": 0.5},
-    {"name": "hybrid_rerank", "use_vector": True, "use_graph": True, "use_rerank": True, "top_k": 4, "graph_weight": 0.5},
+    {
+        "name": "graph_only",
+        "use_vector": False,
+        "use_graph": True,
+        "use_rerank": False,
+        "top_k": 4,
+        "graph_weight": 0.5,
+    },
+    {
+        "name": "hybrid_no_rerank",
+        "use_vector": True,
+        "use_graph": True,
+        "use_rerank": False,
+        "top_k": 4,
+        "graph_weight": 0.5,
+    },
+    {
+        "name": "hybrid_rerank",
+        "use_vector": True,
+        "use_graph": True,
+        "use_rerank": True,
+        "top_k": 4,
+        "graph_weight": 0.5,
+    },
 ]
 
 TOP_K_VARIANTS = [2, 4, 6, 8, 10]
@@ -40,6 +61,7 @@ GRAPH_WEIGHT_VARIANTS = [0.3, 0.5, 0.7]
 
 
 # ── 指标计算（与 rag_eval_runner.py 相同）────────────────────────────────────
+
 
 def compute_metrics(retrieved_ids: list[int], ground_truth_id: int, k: int) -> dict:
     top_k_ids = retrieved_ids[:k]
@@ -54,7 +76,14 @@ def compute_metrics(retrieved_ids: list[int], ground_truth_id: int, k: int) -> d
     hit_at_1 = 1.0 if (len(retrieved_ids) >= 1 and retrieved_ids[0] == ground_truth_id) else 0.0
     hit_at_3 = 1.0 if ground_truth_id in retrieved_ids[:3] else 0.0
     hit_at_5 = 1.0 if ground_truth_id in retrieved_ids[:5] else 0.0
-    return {"recall": recall, "mrr": mrr, "precision": precision, "hit@1": hit_at_1, "hit@3": hit_at_3, "hit@5": hit_at_5}
+    return {
+        "recall": recall,
+        "mrr": mrr,
+        "precision": precision,
+        "hit@1": hit_at_1,
+        "hit@3": hit_at_3,
+        "hit@5": hit_at_5,
+    }
 
 
 def aggregate_metrics(results: list[dict]) -> dict:
@@ -84,10 +113,15 @@ async def evaluate_strategy(db, questions, user_id, strategy, scope):
         async with sem:
             try:
                 references, latency_ms = await cross_kb_rag_service.retrieve_with_config(
-                    db, user_id=user_id, question=q["question"],
-                    top_k=strategy["top_k"], use_vector=strategy["use_vector"],
-                    use_graph=strategy["use_graph"], use_rerank=strategy["use_rerank"],
-                    graph_weight=strategy["graph_weight"], scope_kb_id=scope_kb_id,
+                    db,
+                    user_id=user_id,
+                    question=q["question"],
+                    top_k=strategy["top_k"],
+                    use_vector=strategy["use_vector"],
+                    use_graph=strategy["use_graph"],
+                    use_rerank=strategy["use_rerank"],
+                    graph_weight=strategy["graph_weight"],
+                    scope_kb_id=scope_kb_id,
                 )
                 retrieved_ids = [r.chunk_id for r in references]
             except Exception as e:
@@ -164,12 +198,24 @@ async def main():
                 logger.info("  重跑: %s", strategy["name"])
                 result = await evaluate_strategy(db, questions, args.user_id, strategy, scope)
                 strategies[strategy["name"]] = result
-                logger.info("    Recall@%d=%.3f, MRR=%.3f", strategy["top_k"], result["metrics"]["recall"], result["metrics"]["mrr"])
+                logger.info(
+                    "    Recall@%d=%.3f, MRR=%.3f",
+                    strategy["top_k"],
+                    result["metrics"]["recall"],
+                    result["metrics"]["mrr"],
+                )
 
             # 重跑 top_k 变量
             for k in TOP_K_VARIANTS:
                 name = f"hybrid_rerank_top{k}"
-                strategy = {"name": name, "use_vector": True, "use_graph": True, "use_rerank": True, "top_k": k, "graph_weight": 0.5}
+                strategy = {
+                    "name": name,
+                    "use_vector": True,
+                    "use_graph": True,
+                    "use_rerank": True,
+                    "top_k": k,
+                    "graph_weight": 0.5,
+                }
                 logger.info("  重跑: %s", name)
                 result = await evaluate_strategy(db, questions, args.user_id, strategy, scope)
                 strategies[name] = result
@@ -178,7 +224,14 @@ async def main():
             # 重跑 graph_weight 变量
             for w in GRAPH_WEIGHT_VARIANTS:
                 name = f"hybrid_rerank_weight{w}"
-                strategy = {"name": name, "use_vector": True, "use_graph": True, "use_rerank": True, "top_k": 4, "graph_weight": w}
+                strategy = {
+                    "name": name,
+                    "use_vector": True,
+                    "use_graph": True,
+                    "use_rerank": True,
+                    "top_k": 4,
+                    "graph_weight": w,
+                }
                 logger.info("  重跑: %s", name)
                 result = await evaluate_strategy(db, questions, args.user_id, strategy, scope)
                 strategies[name] = result
@@ -199,7 +252,11 @@ async def main():
         print(f"\n--- {scope} ---")
         s = results_data["scopes"][scope]["strategies"]
         for name in ["graph_only", "hybrid_no_rerank", "hybrid_rerank"]:
-            old = {"graph_only": 0.0, "hybrid_no_rerank": 0.797 if scope == "single_kb" else 0.649, "hybrid_rerank": 0.797 if scope == "single_kb" else 0.635}
+            old = {
+                "graph_only": 0.0,
+                "hybrid_no_rerank": 0.797 if scope == "single_kb" else 0.649,
+                "hybrid_rerank": 0.797 if scope == "single_kb" else 0.635,
+            }
             new_recall = s[name]["metrics"]["recall"]
             print(f"  {name}: {old[name]:.3f} → {new_recall:.3f}")
 

@@ -26,6 +26,7 @@ logs/
 
 tmp_*.py
 test_*.py
+!tests/test_*.py
 
 ENDPOINT_CALLED.txt
 ENTRY_MARKER.txt
@@ -38,3 +39,4 @@ DEPLOY_SERVER.md
 
 # Stray files
 -w
+.gstack/

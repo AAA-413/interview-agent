@@ -29,11 +29,46 @@ logger = logging.getLogger(__name__)
 # ── 策略定义 ──────────────────────────────────────────────────────────────────
 
 BASE_STRATEGIES = [
-    {"name": "vector_only", "use_vector": True, "use_graph": False, "use_rerank": False, "top_k": 4, "graph_weight": 0.5},
-    {"name": "vector_rerank", "use_vector": True, "use_graph": False, "use_rerank": True, "top_k": 4, "graph_weight": 0.5},
-    {"name": "graph_only", "use_vector": False, "use_graph": True, "use_rerank": False, "top_k": 4, "graph_weight": 0.5},
-    {"name": "hybrid_no_rerank", "use_vector": True, "use_graph": True, "use_rerank": False, "top_k": 4, "graph_weight": 0.5},
-    {"name": "hybrid_rerank", "use_vector": True, "use_graph": True, "use_rerank": True, "top_k": 4, "graph_weight": 0.5},
+    {
+        "name": "vector_only",
+        "use_vector": True,
+        "use_graph": False,
+        "use_rerank": False,
+        "top_k": 4,
+        "graph_weight": 0.5,
+    },
+    {
+        "name": "vector_rerank",
+        "use_vector": True,
+        "use_graph": False,
+        "use_rerank": True,
+        "top_k": 4,
+        "graph_weight": 0.5,
+    },
+    {
+        "name": "graph_only",
+        "use_vector": False,
+        "use_graph": True,
+        "use_rerank": False,
+        "top_k": 4,
+        "graph_weight": 0.5,
+    },
+    {
+        "name": "hybrid_no_rerank",
+        "use_vector": True,
+        "use_graph": True,
+        "use_rerank": False,
+        "top_k": 4,
+        "graph_weight": 0.5,
+    },
+    {
+        "name": "hybrid_rerank",
+        "use_vector": True,
+        "use_graph": True,
+        "use_rerank": True,
+        "top_k": 4,
+        "graph_weight": 0.5,
+    },
 ]
 
 TOP_K_VARIANTS = [2, 4, 6, 8, 10]
@@ -41,6 +76,7 @@ GRAPH_WEIGHT_VARIANTS = [0.3, 0.5, 0.7]
 
 
 # ── 指标计算 ──────────────────────────────────────────────────────────────────
+
 
 def compute_metrics(retrieved_ids: list[int], ground_truth_id: int, k: int) -> dict:
     """计算单条评估指标。"""
@@ -106,10 +142,15 @@ async def evaluate_strategy(
         async with sem:
             try:
                 references, latency_ms = await cross_kb_rag_service.retrieve_with_config(
-                    db, user_id=user_id, question=q["question"],
-                    top_k=strategy["top_k"], use_vector=strategy["use_vector"],
-                    use_graph=strategy["use_graph"], use_rerank=strategy["use_rerank"],
-                    graph_weight=strategy["graph_weight"], scope_kb_id=scope_kb_id,
+                    db,
+                    user_id=user_id,
+                    question=q["question"],
+                    top_k=strategy["top_k"],
+                    use_vector=strategy["use_vector"],
+                    use_graph=strategy["use_graph"],
+                    use_rerank=strategy["use_rerank"],
+                    graph_weight=strategy["graph_weight"],
+                    scope_kb_id=scope_kb_id,
                 )
                 retrieved_ids = [r.chunk_id for r in references]
             except Exception as e:
@@ -184,12 +225,24 @@ async def main():
                 logger.info("  策略: %s", strategy["name"])
                 result = await evaluate_strategy(db, questions, args.user_id, strategy, scope)
                 strategies_results[strategy["name"]] = result
-                logger.info("    Recall@%d=%.3f, MRR=%.3f", strategy["top_k"], result["metrics"]["recall"], result["metrics"]["mrr"])
+                logger.info(
+                    "    Recall@%d=%.3f, MRR=%.3f",
+                    strategy["top_k"],
+                    result["metrics"]["recall"],
+                    result["metrics"]["mrr"],
+                )
 
             # top_k 变量测试
             for k in TOP_K_VARIANTS:
                 name = f"hybrid_rerank_top{k}"
-                strategy = {"name": name, "use_vector": True, "use_graph": True, "use_rerank": True, "top_k": k, "graph_weight": 0.5}
+                strategy = {
+                    "name": name,
+                    "use_vector": True,
+                    "use_graph": True,
+                    "use_rerank": True,
+                    "top_k": k,
+                    "graph_weight": 0.5,
+                }
                 logger.info("  策略: %s", name)
                 result = await evaluate_strategy(db, questions, args.user_id, strategy, scope)
                 strategies_results[name] = result
@@ -198,7 +251,14 @@ async def main():
             # graph_weight 变量测试
             for w in GRAPH_WEIGHT_VARIANTS:
                 name = f"hybrid_rerank_weight{w}"
-                strategy = {"name": name, "use_vector": True, "use_graph": True, "use_rerank": True, "top_k": 4, "graph_weight": w}
+                strategy = {
+                    "name": name,
+                    "use_vector": True,
+                    "use_graph": True,
+                    "use_rerank": True,
+                    "top_k": 4,
+                    "graph_weight": w,
+                }
                 logger.info("  策略: %s", name)
                 result = await evaluate_strategy(db, questions, args.user_id, strategy, scope)
                 strategies_results[name] = result

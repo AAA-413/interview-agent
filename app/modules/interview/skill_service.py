@@ -211,9 +211,7 @@ class InterviewSkillService:
         return "\n".join(lines)
 
     def build_reference_section(self, skill: SkillDTO, allocation: dict[str, int]) -> str:
-        return self._build_reference_section_internal(
-            skill, lambda c: allocation.get(c.key, 0) > 0, 12000
-        )
+        return self._build_reference_section_internal(skill, lambda c: allocation.get(c.key, 0) > 0, 12000)
 
     def build_evaluation_reference_section(self, skill_id: str) -> str:
         skill = self.get_skill(skill_id)
@@ -228,9 +226,7 @@ class InterviewSkillService:
             logger.warning("加载评估参考基线失败: skillId=%s, error=%s", skill_id, e)
             return ""
 
-    def _build_reference_section_internal(
-        self, skill: SkillDTO, category_filter, max_chars: int
-    ) -> str:
+    def _build_reference_section_internal(self, skill: SkillDTO, category_filter, max_chars: int) -> str:
         sections = []
         for category in skill.categories:
             if not category_filter(category):
@@ -293,10 +289,10 @@ class InterviewSkillService:
         logger.info("开始解析 JD，长度: %d", len(jd_text))
 
         try:
+            from pydantic import BaseModel
+
             from app.common.ai.llm_provider import llm_registry
             from app.common.ai.structured_output import structured_output_invoker
-            from app.common.error_code import ErrorCode
-            from pydantic import BaseModel
 
             class _CategoryItemDTO(BaseModel):
                 key: str

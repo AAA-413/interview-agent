@@ -12,14 +12,14 @@ from app.common.exception import BusinessException
 from app.common.model import AsyncTaskStatus
 from app.modules.knowledge_base.models import KnowledgeChunkEntity
 from app.modules.knowledge_base.persistence_service import knowledge_base_persistence_service
+from app.modules.knowledge_base.rerank_service import get_rerank_service
 from app.modules.knowledge_base.schemas import RagAnswerDTO, RagReferenceDTO
-from app.modules.knowledge_base.vector_service import knowledge_base_vector_service
 from app.modules.knowledge_base.search_channel import (
+    MultiChannelRetrievalEngine,
     SearchContext,
     VectorSearchChannel,
-    MultiChannelRetrievalEngine,
 )
-from app.modules.knowledge_base.rerank_service import get_rerank_service
+from app.modules.knowledge_base.vector_service import knowledge_base_vector_service
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +42,7 @@ class KnowledgeBaseRagService:
         self.retrieval_engine = None
         # 重排序服务
         self.rerank_service = get_rerank_service()
-        logger.info(
-            "RAG 服务初始化完成: rerank_enabled=%s",
-            self.rerank_service.enabled
-        )
+        logger.info("RAG 服务初始化完成: rerank_enabled=%s", self.rerank_service.enabled)
 
     async def ask(
         self,
@@ -83,6 +80,7 @@ class KnowledgeBaseRagService:
             if self.retrieval_engine is None:
                 vector_channel = VectorSearchChannel(self, knowledge_base_vector_service, db)
                 from app.modules.knowledge_graph.graph_search_channel import GraphSearchChannel
+
                 graph_channel = GraphSearchChannel(db)
                 self.retrieval_engine = MultiChannelRetrievalEngine([vector_channel, graph_channel])
                 logger.info("多路检索引擎初始化: channels=2 (Vector + Graph)")
@@ -94,7 +92,7 @@ class KnowledgeBaseRagService:
                 kb_id=kb_id,
                 top_k=top_k * 2,  # 召回更多候选，用于重排序
                 query_embedding=query_embedding,
-                rewritten_query=rewritten_query
+                rewritten_query=rewritten_query,
             )
             candidates = await self.retrieval_engine.retrieve(context)
 
@@ -145,20 +143,28 @@ class KnowledgeBaseRagService:
 
         rewritten_query = await self._rewrite_query(question, chat_history)
         chat = await knowledge_base_persistence_service.create_chat(
-            db, kb_id=kb_id, session_id=resolved_session_id, question=question, rewritten_query=rewritten_query,
+            db,
+            kb_id=kb_id,
+            session_id=resolved_session_id,
+            question=question,
+            rewritten_query=rewritten_query,
         )
 
         try:
             if self.retrieval_engine is None:
                 vector_channel = VectorSearchChannel(self, knowledge_base_vector_service, db)
                 from app.modules.knowledge_graph.graph_search_channel import GraphSearchChannel
+
                 graph_channel = GraphSearchChannel(db)
                 self.retrieval_engine = MultiChannelRetrievalEngine([vector_channel, graph_channel])
 
             query_embedding = knowledge_base_vector_service.embed_text(rewritten_query)
             context = SearchContext(
-                question=question, kb_id=kb_id, top_k=top_k * 2,
-                query_embedding=query_embedding, rewritten_query=rewritten_query,
+                question=question,
+                kb_id=kb_id,
+                top_k=top_k * 2,
+                query_embedding=query_embedding,
+                rewritten_query=rewritten_query,
             )
             candidates = await self.retrieval_engine.retrieve(context)
             references = await self.rerank_service.rerank(question, candidates, top_k)
@@ -171,7 +177,11 @@ class KnowledgeBaseRagService:
                 yield self._sse_event("chunk", {"content": answer})
                 yield self._sse_event("done", {"answer": answer})
                 await knowledge_base_persistence_service.complete_chat(
-                    db, chat_id=chat.id, rewritten_query=rewritten_query, answer=answer, references=[],
+                    db,
+                    chat_id=chat.id,
+                    rewritten_query=rewritten_query,
+                    answer=answer,
+                    references=[],
                 )
                 await db.flush()
                 return
@@ -191,7 +201,11 @@ class KnowledgeBaseRagService:
 
             reference_payload = [ref.model_dump() for ref in references]
             await knowledge_base_persistence_service.complete_chat(
-                db, chat_id=chat.id, rewritten_query=rewritten_query, answer=answer, references=reference_payload,
+                db,
+                chat_id=chat.id,
+                rewritten_query=rewritten_query,
+                answer=answer,
+                references=reference_payload,
             )
             await db.flush()
         except Exception as e:
@@ -209,13 +223,12 @@ class KnowledgeBaseRagService:
 
             # 如果有对话历史，添加上下文
             if chat_history:
-                history_text = "\n".join(
-                    f"用户: {c['question']}\n助手: {c['answer'][:200]}"
-                    for c in chat_history
+                history_text = "\n".join(f"用户: {c['question']}\n助手: {c['answer'][:200]}" for c in chat_history)
+                messages.append(
+                    HumanMessage(
+                        content=f"对话历史：\n{history_text}\n\n当前问题：{question}\n\n请结合对话历史改写当前问题，使其能独立检索到相关内容。只输出改写后的查询。"
+                    )
                 )
-                messages.append(HumanMessage(
-                    content=f"对话历史：\n{history_text}\n\n当前问题：{question}\n\n请结合对话历史改写当前问题，使其能独立检索到相关内容。只输出改写后的查询。"
-                ))
             else:
                 messages.append(HumanMessage(content=question))
 
@@ -254,7 +267,9 @@ class KnowledgeBaseRagService:
 
     @staticmethod
     def _build_answer_prompt(
-        question: str, rewritten_query: str, references: list[RagReferenceDTO],
+        question: str,
+        rewritten_query: str,
+        references: list[RagReferenceDTO],
     ) -> str:
         context_parts = []
         for index, item in enumerate(references, start=1):

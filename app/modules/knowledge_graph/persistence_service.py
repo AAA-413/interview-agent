@@ -7,8 +7,8 @@ from sqlalchemy.orm import selectinload
 
 from app.modules.knowledge_graph.models import KnowledgeGraphEntity, KnowledgeTriple
 from app.modules.knowledge_graph.schemas import (
-    EntityDTO,
     EntityDetailDTO,
+    EntityDTO,
     GraphDataDTO,
     GraphEdgeDTO,
     GraphNodeDTO,
@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 
 class KnowledgeGraphPersistenceService:
-
     async def find_or_create_entity(
         self, db: AsyncSession, name: str, entity_type: str, description: str | None = None
     ) -> KnowledgeGraphEntity:
@@ -123,10 +122,7 @@ class KnowledgeGraphPersistenceService:
                 selectinload(KnowledgeTriple.subject_entity),
                 selectinload(KnowledgeTriple.object_entity),
             )
-            .where(
-                KnowledgeTriple.subject_id.in_(neighbor_ids)
-                | KnowledgeTriple.object_id.in_(neighbor_ids)
-            )
+            .where(KnowledgeTriple.subject_id.in_(neighbor_ids) | KnowledgeTriple.object_id.in_(neighbor_ids))
         )
         if kb_id is not None:
             stmt = stmt.where(KnowledgeTriple.source_kb_id == kb_id)
@@ -197,12 +193,14 @@ class KnowledgeGraphPersistenceService:
                 }
                 type_counts[obj.entity_type] = type_counts.get(obj.entity_type, 0) + 1
 
-            edges.append({
-                "source": subj.name,
-                "target": obj.name,
-                "relation": t.predicate,
-                "confidence": t.confidence,
-            })
+            edges.append(
+                {
+                    "source": subj.name,
+                    "target": obj.name,
+                    "relation": t.predicate,
+                    "confidence": t.confidence,
+                }
+            )
 
         return GraphDataDTO(
             nodes=[GraphNodeDTO(**n) for n in nodes_map.values()],
@@ -214,9 +212,7 @@ class KnowledgeGraphPersistenceService:
             ),
         )
 
-    async def get_entity_detail(
-        self, db: AsyncSession, entity_name: str, depth: int = 2
-    ) -> EntityDetailDTO | None:
+    async def get_entity_detail(self, db: AsyncSession, entity_name: str, depth: int = 2) -> EntityDetailDTO | None:
         stmt = select(KnowledgeGraphEntity).where(KnowledgeGraphEntity.name == entity_name)
         result = await db.execute(stmt)
         entity = result.scalar_one_or_none()
@@ -230,28 +226,34 @@ class KnowledgeGraphPersistenceService:
 
         triple_dtos = []
         for t in triples:
-            triple_dtos.append(TripleDTO(
-                id=t.id,
-                subject=EntityDTO(
-                    id=t.subject_entity.id,
-                    name=t.subject_entity.name,
-                    entity_type=t.subject_entity.entity_type,
-                    description=t.subject_entity.description,
-                    properties=json.loads(t.subject_entity.properties_json) if t.subject_entity.properties_json else {},
-                    mention_count=t.subject_entity.mention_count,
-                ),
-                predicate=t.predicate,
-                object=EntityDTO(
-                    id=t.object_entity.id,
-                    name=t.object_entity.name,
-                    entity_type=t.object_entity.entity_type,
-                    description=t.object_entity.description,
-                    properties=json.loads(t.object_entity.properties_json) if t.object_entity.properties_json else {},
-                    mention_count=t.object_entity.mention_count,
-                ),
-                confidence=t.confidence,
-                source_kb_id=t.source_kb_id,
-            ))
+            triple_dtos.append(
+                TripleDTO(
+                    id=t.id,
+                    subject=EntityDTO(
+                        id=t.subject_entity.id,
+                        name=t.subject_entity.name,
+                        entity_type=t.subject_entity.entity_type,
+                        description=t.subject_entity.description,
+                        properties=json.loads(t.subject_entity.properties_json)
+                        if t.subject_entity.properties_json
+                        else {},
+                        mention_count=t.subject_entity.mention_count,
+                    ),
+                    predicate=t.predicate,
+                    object=EntityDTO(
+                        id=t.object_entity.id,
+                        name=t.object_entity.name,
+                        entity_type=t.object_entity.entity_type,
+                        description=t.object_entity.description,
+                        properties=json.loads(t.object_entity.properties_json)
+                        if t.object_entity.properties_json
+                        else {},
+                        mention_count=t.object_entity.mention_count,
+                    ),
+                    confidence=t.confidence,
+                    source_kb_id=t.source_kb_id,
+                )
+            )
 
         return EntityDetailDTO(
             entity=EntityDTO(
@@ -294,24 +296,16 @@ class KnowledgeGraphPersistenceService:
         return entities, total
 
     async def clear_by_kb_id(self, db: AsyncSession, kb_id: int) -> None:
-        await db.execute(
-            delete(KnowledgeTriple).where(KnowledgeTriple.source_kb_id == kb_id)
-        )
+        await db.execute(delete(KnowledgeTriple).where(KnowledgeTriple.source_kb_id == kb_id))
         await self._cleanup_orphan_entities(db)
         await db.flush()
 
     async def _cleanup_orphan_entities(self, db: AsyncSession) -> None:
         orphan_ids = select(KnowledgeGraphEntity.id).where(
-            ~KnowledgeGraphEntity.id.in_(
-                select(KnowledgeTriple.subject_id)
-            ),
-            ~KnowledgeGraphEntity.id.in_(
-                select(KnowledgeTriple.object_id)
-            ),
+            ~KnowledgeGraphEntity.id.in_(select(KnowledgeTriple.subject_id)),
+            ~KnowledgeGraphEntity.id.in_(select(KnowledgeTriple.object_id)),
         )
-        await db.execute(
-            delete(KnowledgeGraphEntity).where(KnowledgeGraphEntity.id.in_(orphan_ids))
-        )
+        await db.execute(delete(KnowledgeGraphEntity).where(KnowledgeGraphEntity.id.in_(orphan_ids)))
 
     async def delete_triple(self, db: AsyncSession, triple_id: int) -> bool:
         stmt = select(KnowledgeTriple).where(KnowledgeTriple.id == triple_id)

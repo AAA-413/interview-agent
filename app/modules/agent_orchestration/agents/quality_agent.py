@@ -21,12 +21,34 @@ logger = logging.getLogger(__name__)
 
 # 模板内容关键词（用于检测低质量页面）
 _BOILERPLATE_KEYWORDS = [
-    "cookie", "privacy", "copyright", "terms of service", "all rights reserved",
-    "cookie政策", "隐私政策", "版权声明", "版权所有", "用户协议",
-    "navigation", "menu", "sidebar", "footer", "header",
-    "导航", "菜单", "侧边栏", "页脚", "页眉",
-    "subscribe", "newsletter", "sign up", "log in", "register",
-    "订阅", "登录", "注册",
+    "cookie",
+    "privacy",
+    "copyright",
+    "terms of service",
+    "all rights reserved",
+    "cookie政策",
+    "隐私政策",
+    "版权声明",
+    "版权所有",
+    "用户协议",
+    "navigation",
+    "menu",
+    "sidebar",
+    "footer",
+    "header",
+    "导航",
+    "菜单",
+    "侧边栏",
+    "页脚",
+    "页眉",
+    "subscribe",
+    "newsletter",
+    "sign up",
+    "log in",
+    "register",
+    "订阅",
+    "登录",
+    "注册",
 ]
 
 # 单任务通过阈值
@@ -85,8 +107,13 @@ class QualityAgent:
 
         failed_task_indices = [r["task_index"] for r in per_task_results if not r["passed"]]
 
-        logger.info("[QA] Phase A: %d/%d tasks passed (%.0f%%), failed_indices=%s",
-                     passed_count, total_count, pass_ratio * 100, failed_task_indices)
+        logger.info(
+            "[QA] Phase A: %d/%d tasks passed (%.0f%%), failed_indices=%s",
+            passed_count,
+            total_count,
+            pass_ratio * 100,
+            failed_task_indices,
+        )
 
         # 如果 <50% 任务通过 → 直接判定失败，不调 LLM
         if pass_ratio < _PASS_RATIO_THRESHOLD:
@@ -136,9 +163,13 @@ class QualityAgent:
         else:
             passed = total_score >= 50
 
-        logger.info("[QA] Phase B: coverage=%d, diversity=%d, total_score=%d, passed=%s",
-                     overall_result.get("coverage", 0), overall_result.get("diversity", 0),
-                     total_score, passed)
+        logger.info(
+            "[QA] Phase B: coverage=%d, diversity=%d, total_score=%d, passed=%s",
+            overall_result.get("coverage", 0),
+            overall_result.get("diversity", 0),
+            total_score,
+            passed,
+        )
 
         issues = [r["reason"] for r in per_task_results if not r["passed"] and r["reason"]]
         issues.extend(overall_issues)
@@ -216,8 +247,14 @@ class QualityAgent:
                 reasons.append(f"主题相关性不足({relevance})")
             reason = "，".join(reasons)
 
-        logger.info("[QA] Task %d: substance=%d, relevance=%d, passed=%s, reason=%s",
-                    task_index, substance, relevance, passed, reason)
+        logger.info(
+            "[QA] Task %d: substance=%d, relevance=%d, passed=%s, reason=%s",
+            task_index,
+            substance,
+            relevance,
+            passed,
+            reason,
+        )
 
         return {
             "task_index": task_index,
@@ -326,26 +363,150 @@ class QualityAgent:
         策略：按空格/标点分词，过滤停用词和短词
         """
         # 中英文混合分词：先按空格和标点分割
-        tokens = re.split(r'[\s,，.。!！?？;；:：、\(\)（）\[\]【】]+', text)
+        tokens = re.split(r"[\s,，.。!！?？;；:：、\(\)（）\[\]【】]+", text)
 
         # 停用词
         stop_words = {
-            "的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都", "一", "一个",
-            "上", "也", "很", "到", "说", "要", "去", "你", "会", "着", "没有", "看", "好",
-            "请", "帮", "帮我", "想", "需要", "什么", "怎么", "如何", "哪些", "哪个",
-            "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-            "have", "has", "had", "do", "does", "did", "will", "would", "could",
-            "should", "may", "might", "can", "shall", "to", "of", "in", "for",
-            "on", "with", "at", "by", "from", "as", "into", "about", "like",
-            "through", "after", "over", "between", "out", "against", "during",
-            "without", "before", "under", "around", "among", "and", "or", "but",
-            "not", "no", "nor", "so", "yet", "both", "either", "neither",
-            "each", "every", "all", "any", "few", "more", "most", "other",
-            "some", "such", "than", "too", "very", "just", "because", "if",
-            "when", "where", "how", "what", "which", "who", "whom", "this",
-            "that", "these", "those", "i", "me", "my", "we", "our", "you",
-            "your", "he", "him", "his", "she", "her", "it", "its", "they",
-            "them", "their",
+            "的",
+            "了",
+            "在",
+            "是",
+            "我",
+            "有",
+            "和",
+            "就",
+            "不",
+            "人",
+            "都",
+            "一",
+            "一个",
+            "上",
+            "也",
+            "很",
+            "到",
+            "说",
+            "要",
+            "去",
+            "你",
+            "会",
+            "着",
+            "没有",
+            "看",
+            "好",
+            "请",
+            "帮",
+            "帮我",
+            "想",
+            "需要",
+            "什么",
+            "怎么",
+            "如何",
+            "哪些",
+            "哪个",
+            "the",
+            "a",
+            "an",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "been",
+            "being",
+            "have",
+            "has",
+            "had",
+            "do",
+            "does",
+            "did",
+            "will",
+            "would",
+            "could",
+            "should",
+            "may",
+            "might",
+            "can",
+            "shall",
+            "to",
+            "of",
+            "in",
+            "for",
+            "on",
+            "with",
+            "at",
+            "by",
+            "from",
+            "as",
+            "into",
+            "about",
+            "like",
+            "through",
+            "after",
+            "over",
+            "between",
+            "out",
+            "against",
+            "during",
+            "without",
+            "before",
+            "under",
+            "around",
+            "among",
+            "and",
+            "or",
+            "but",
+            "not",
+            "no",
+            "nor",
+            "so",
+            "yet",
+            "both",
+            "either",
+            "neither",
+            "each",
+            "every",
+            "all",
+            "any",
+            "few",
+            "more",
+            "most",
+            "other",
+            "some",
+            "such",
+            "than",
+            "too",
+            "very",
+            "just",
+            "because",
+            "if",
+            "when",
+            "where",
+            "how",
+            "what",
+            "which",
+            "who",
+            "whom",
+            "this",
+            "that",
+            "these",
+            "those",
+            "i",
+            "me",
+            "my",
+            "we",
+            "our",
+            "you",
+            "your",
+            "he",
+            "him",
+            "his",
+            "she",
+            "her",
+            "it",
+            "its",
+            "they",
+            "them",
+            "their",
         }
 
         keywords = []
@@ -356,9 +517,7 @@ class QualityAgent:
 
         return keywords
 
-    async def _evaluate_overall(
-        self, passed_results: List[Dict[str, Any]], user_input: str
-    ) -> Dict[str, Any]:
+    async def _evaluate_overall(self, passed_results: List[Dict[str, Any]], user_input: str) -> Dict[str, Any]:
         """
         Phase B: 整体质量评估（1次LLM调用）
 
@@ -405,14 +564,13 @@ class QualityAgent:
 只返回 JSON，不要其他内容。"""
 
         try:
-            response = await self.llm_provider.chat(
-                [{"role": "user", "content": prompt}]
-            )
+            response = await self.llm_provider.chat([{"role": "user", "content": prompt}])
             content = response.get("content", "")
 
-            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            json_match = re.search(r"\{.*\}", content, re.DOTALL)
             if json_match:
                 import json
+
                 result = json.loads(json_match.group())
                 if "coverage" in result and "diversity" in result:
                     result.setdefault("issues", [])
@@ -424,9 +582,7 @@ class QualityAgent:
         # 降级：基于规则的评估
         return self._rule_based_overall_evaluation(passed_results)
 
-    def _rule_based_overall_evaluation(
-        self, passed_results: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+    def _rule_based_overall_evaluation(self, passed_results: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Phase B 降级方案：基于规则的整体评估"""
         if not passed_results:
             return {"coverage": 0, "diversity": 0, "issues": []}

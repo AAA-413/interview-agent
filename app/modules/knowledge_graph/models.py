@@ -21,7 +21,9 @@ class KnowledgeGraphEntity(Base):
     properties_json: Mapped[str | None] = mapped_column(Text)
     mention_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
 
     subject_triples: Mapped[list["KnowledgeTriple"]] = relationship(
         foreign_keys="KnowledgeTriple.subject_id", back_populates="subject_entity"
@@ -46,18 +48,16 @@ class KnowledgeTriple(Base):
         BigInteger, ForeignKey("kg_entities.id", ondelete="CASCADE"), nullable=False
     )
     predicate: Mapped[str] = mapped_column(String(100), nullable=False)
-    object_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("kg_entities.id", ondelete="CASCADE"), nullable=False
-    )
-    source_kb_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("knowledge_bases.id", ondelete="CASCADE")
-    )
+    object_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("kg_entities.id", ondelete="CASCADE"), nullable=False)
+    source_kb_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("knowledge_bases.id", ondelete="CASCADE"))
     source_chunk_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("knowledge_chunks.id", ondelete="SET NULL")
     )
     confidence: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
 
     subject_entity: Mapped["KnowledgeGraphEntity"] = relationship(
         foreign_keys=[subject_id], back_populates="subject_triples"

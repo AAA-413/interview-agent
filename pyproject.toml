@@ -59,6 +59,10 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"app/common/exception.py" = ["N818"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
@@ -66,9 +70,9 @@ packages = ["app"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["."]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
-

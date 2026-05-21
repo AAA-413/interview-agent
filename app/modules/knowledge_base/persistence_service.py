@@ -131,7 +131,9 @@ class KnowledgeBasePersistenceService(BasePersistenceService[KnowledgeBaseEntity
         )
         return list(result.scalars().all())
 
-    async def find_session_chats(self, db: AsyncSession, kb_id: int, session_id: str, limit: int = 5) -> list[RagChatEntity]:
+    async def find_session_chats(
+        self, db: AsyncSession, kb_id: int, session_id: str, limit: int = 5
+    ) -> list[RagChatEntity]:
         result = await db.execute(
             select(RagChatEntity)
             .where(RagChatEntity.knowledge_base_id == kb_id)
@@ -173,7 +175,9 @@ class KnowledgeBasePersistenceService(BasePersistenceService[KnowledgeBaseEntity
         )
         return list(result.scalars().all())
 
-    async def find_cross_kb_session_chats(self, db: AsyncSession, user_id: int, session_id: str, limit: int = 10) -> list[RagChatEntity]:
+    async def find_cross_kb_session_chats(
+        self, db: AsyncSession, user_id: int, session_id: str, limit: int = 10
+    ) -> list[RagChatEntity]:
         result = await db.execute(
             select(RagChatEntity)
             .where(RagChatEntity.user_id == user_id)
@@ -185,7 +189,9 @@ class KnowledgeBasePersistenceService(BasePersistenceService[KnowledgeBaseEntity
         )
         return list(result.scalars().all())
 
-    async def find_cross_kb_session_chat_dtos(self, db: AsyncSession, user_id: int, session_id: str, limit: int = 20) -> list[RagChatDTO]:
+    async def find_cross_kb_session_chat_dtos(
+        self, db: AsyncSession, user_id: int, session_id: str, limit: int = 20
+    ) -> list[RagChatDTO]:
         """返回跨KB会话的完整聊天记录（含 answer + references）"""
         entities = await self.find_cross_kb_session_chats(db, user_id, session_id, limit)
         return [self._to_chat_dto(e) for e in entities]
@@ -193,6 +199,7 @@ class KnowledgeBasePersistenceService(BasePersistenceService[KnowledgeBaseEntity
     async def delete_cross_kb_session(self, db: AsyncSession, user_id: int, session_id: str) -> int:
         """删除跨KB会话的所有聊天记录，返回删除条数"""
         from sqlalchemy import delete as sa_delete
+
         result = await db.execute(
             sa_delete(RagChatEntity)
             .where(RagChatEntity.user_id == user_id)
@@ -202,7 +209,9 @@ class KnowledgeBasePersistenceService(BasePersistenceService[KnowledgeBaseEntity
         await db.flush()
         return result.rowcount
 
-    async def find_kb_session_chats(self, db: AsyncSession, kb_id: int, session_id: str, limit: int = 10) -> list[RagChatEntity]:
+    async def find_kb_session_chats(
+        self, db: AsyncSession, kb_id: int, session_id: str, limit: int = 10
+    ) -> list[RagChatEntity]:
         """返回单KB会话的完整聊天记录"""
         result = await db.execute(
             select(RagChatEntity)
@@ -214,7 +223,9 @@ class KnowledgeBasePersistenceService(BasePersistenceService[KnowledgeBaseEntity
         )
         return list(result.scalars().all())
 
-    async def find_kb_session_chat_dtos(self, db: AsyncSession, kb_id: int, session_id: str, limit: int = 20) -> list[RagChatDTO]:
+    async def find_kb_session_chat_dtos(
+        self, db: AsyncSession, kb_id: int, session_id: str, limit: int = 20
+    ) -> list[RagChatDTO]:
         """返回单KB会话的完整聊天记录（含 answer + references）"""
         entities = await self.find_kb_session_chats(db, kb_id, session_id, limit)
         return [self._to_chat_dto(e) for e in entities]
@@ -222,6 +233,7 @@ class KnowledgeBasePersistenceService(BasePersistenceService[KnowledgeBaseEntity
     async def delete_kb_session(self, db: AsyncSession, kb_id: int, session_id: str) -> int:
         """删除单KB会话的所有聊天记录，返回删除条数"""
         from sqlalchemy import delete as sa_delete
+
         result = await db.execute(
             sa_delete(RagChatEntity)
             .where(RagChatEntity.knowledge_base_id == kb_id)
@@ -247,7 +259,10 @@ class KnowledgeBasePersistenceService(BasePersistenceService[KnowledgeBaseEntity
 
     def to_detail_dto(self, entity: KnowledgeBaseEntity) -> KnowledgeBaseDetailDTO:
         chunks = [self._to_chunk_dto(chunk) for chunk in sorted(entity.chunks, key=lambda item: item.chunk_index)]
-        chats = [self._to_chat_dto(chat) for chat in sorted(entity.chats, key=lambda item: item.created_at, reverse=True)[:10]]
+        chats = [
+            self._to_chat_dto(chat)
+            for chat in sorted(entity.chats, key=lambda item: item.created_at, reverse=True)[:10]
+        ]
         return KnowledgeBaseDetailDTO(
             id=entity.id,
             name=entity.name,

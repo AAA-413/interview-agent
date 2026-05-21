@@ -31,17 +31,20 @@ class RateLimitExceededException(BusinessException):
 
 class LLMTimeoutException(BusinessException):
     """LLM 调用超时异常"""
+
     def __init__(self, message: str = ""):
         super().__init__(ErrorCode.LLM_TIMEOUT, message)
 
 
 class LLMRateLimitException(BusinessException):
     """LLM 调用频率限制异常"""
+
     def __init__(self, message: str = ""):
         super().__init__(ErrorCode.LLM_RATE_LIMIT, message)
 
 
 class EmbeddingFailedException(BusinessException):
     """向量化失败异常"""
+
     def __init__(self, message: str = ""):
         super().__init__(ErrorCode.EMBEDDING_FAILED, message)

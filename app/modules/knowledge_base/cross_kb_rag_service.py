@@ -14,9 +14,8 @@ from app.modules.knowledge_base.models import KnowledgeBaseEntity, KnowledgeChun
 from app.modules.knowledge_base.persistence_service import knowledge_base_persistence_service
 from app.modules.knowledge_base.rag_service import ANSWER_SYSTEM_PROMPT, REWRITE_SYSTEM_PROMPT
 from app.modules.knowledge_base.rerank_service import get_rerank_service
-from app.modules.knowledge_base.schemas import RagAnswerDTO, RagReferenceDTO, RagChatListItemDTO
+from app.modules.knowledge_base.schemas import RagAnswerDTO, RagChatListItemDTO, RagReferenceDTO
 from app.modules.knowledge_base.vector_service import knowledge_base_vector_service
-from app.modules.knowledge_graph.graph_search_channel import GraphSearchChannel
 from app.modules.knowledge_graph.persistence_service import knowledge_graph_persistence_service
 
 logger = logging.getLogger(__name__)
@@ -29,9 +28,7 @@ class CrossKBRagService:
         self.rerank_service = get_rerank_service()
         self._entity_cache: dict[str, list[str]] = {}
 
-    async def ask(
-        self, db: AsyncSession, *, user_id: int, question: str, top_k: int = 4
-    ) -> RagAnswerDTO:
+    async def ask(self, db: AsyncSession, *, user_id: int, question: str, top_k: int = 4) -> RagAnswerDTO:
         session_id = uuid.uuid4().hex
 
         rewritten_query = await self._rewrite_query(question, None)
@@ -76,18 +73,29 @@ class CrossKBRagService:
 
         # 创建 PENDING 记录
         chat = await knowledge_base_persistence_service.create_cross_kb_chat(
-            db, user_id=user_id, session_id=resolved_session_id,
-            question=question, rewritten_query=rewritten_query,
+            db,
+            user_id=user_id,
+            session_id=resolved_session_id,
+            question=question,
+            rewritten_query=rewritten_query,
         )
 
         try:
             # 检索
             query_embedding = knowledge_base_vector_service.embed_text(rewritten_query)
             candidates = await self._vector_search(
-                db, user_id, rewritten_query, top_k * 2, query_embedding=query_embedding,
+                db,
+                user_id,
+                rewritten_query,
+                top_k * 2,
+                query_embedding=query_embedding,
             )
             graph_results = await self._graph_search(
-                db, question, top_k, weight=0.5, query_embedding=query_embedding,
+                db,
+                question,
+                top_k,
+                weight=0.5,
+                query_embedding=query_embedding,
             )
             candidates.extend(graph_results)
             candidates = self._deduplicate(candidates)
@@ -102,7 +110,11 @@ class CrossKBRagService:
                 yield self._sse_event("chunk", {"content": answer})
                 yield self._sse_event("done", {"answer": answer})
                 await knowledge_base_persistence_service.complete_chat(
-                    db, chat_id=chat.id, rewritten_query=rewritten_query, answer=answer, references=[],
+                    db,
+                    chat_id=chat.id,
+                    rewritten_query=rewritten_query,
+                    answer=answer,
+                    references=[],
                 )
                 await db.flush()
                 return
@@ -123,7 +135,11 @@ class CrossKBRagService:
 
             reference_payload = [ref.model_dump() for ref in references]
             await knowledge_base_persistence_service.complete_chat(
-                db, chat_id=chat.id, rewritten_query=rewritten_query, answer=answer, references=reference_payload,
+                db,
+                chat_id=chat.id,
+                rewritten_query=rewritten_query,
+                answer=answer,
+                references=reference_payload,
             )
             await db.flush()
         except Exception as e:
@@ -136,10 +152,10 @@ class CrossKBRagService:
 
     async def _compress_history(self, chats: list) -> list[dict]:
         """最近3轮完整保留，更早的压缩为摘要"""
-        RECENT_COUNT = 3
+        recent_count = 3
 
-        recent = chats[-RECENT_COUNT:]
-        older = chats[:-RECENT_COUNT] if len(chats) > RECENT_COUNT else []
+        recent = chats[-recent_count:]
+        older = chats[:-recent_count] if len(chats) > recent_count else []
 
         result = []
 
@@ -154,15 +170,14 @@ class CrossKBRagService:
 
     async def _summarize_older_chats(self, chats: list) -> str:
         try:
-            history_text = "\n".join(
-                f"用户: {c.question}\n助手: {(c.answer or '')[:150]}"
-                for c in chats
-            )
+            history_text = "\n".join(f"用户: {c.question}\n助手: {(c.answer or '')[:150]}" for c in chats)
             prompt = f"请将以下对话历史压缩为一段简洁摘要（不超过100字），保留关键信息和讨论主题：\n\n{history_text}"
-            response = await llm_registry.default.ainvoke([
-                SystemMessage(content="你是对话摘要助手。将对话历史压缩为简洁摘要，保留关键实体和主题。"),
-                HumanMessage(content=prompt),
-            ])
+            response = await llm_registry.default.ainvoke(
+                [
+                    SystemMessage(content="你是对话摘要助手。将对话历史压缩为简洁摘要，保留关键实体和主题。"),
+                    HumanMessage(content=prompt),
+                ]
+            )
             return (response.content or "").strip()[:200]
         except Exception as e:
             logger.warning("对话摘要生成失败: %s", e)
@@ -170,7 +185,9 @@ class CrossKBRagService:
 
     @staticmethod
     def _build_answer_prompt(
-        question: str, rewritten_query: str, references: list[RagReferenceDTO],
+        question: str,
+        rewritten_query: str,
+        references: list[RagReferenceDTO],
     ) -> str:
         context_parts = []
         for index, item in enumerate(references, start=1):
@@ -182,8 +199,7 @@ class CrossKBRagService:
                 f"内容: {content}"
             )
         ref_map = "\n".join(
-            f"[{i}] → {item.source_name} / {item.title or '未命名'}"
-            for i, item in enumerate(references, start=1)
+            f"[{i}] → {item.source_name} / {item.title or '未命名'}" for i, item in enumerate(references, start=1)
         )
         return (
             f"用户问题：{question}\n"
@@ -230,13 +246,21 @@ class CrossKBRagService:
 
         if use_vector:
             vector_results = await self._vector_search(
-                db, user_id, question, top_k * 2,
-                kb_id=scope_kb_id, query_embedding=query_embedding,
+                db,
+                user_id,
+                question,
+                top_k * 2,
+                kb_id=scope_kb_id,
+                query_embedding=query_embedding,
             )
 
         if use_graph:
             graph_results = await self._graph_search(
-                db, question, top_k, weight=graph_weight, kb_id=scope_kb_id,
+                db,
+                question,
+                top_k,
+                weight=graph_weight,
+                kb_id=scope_kb_id,
                 query_embedding=query_embedding,
             )
 
@@ -299,15 +323,17 @@ class CrossKBRagService:
             else:
                 score = 0.5
 
-            references.append(RagReferenceDTO(
-                chunk_id=chunk.id,
-                chunk_index=chunk.chunk_index,
-                title=chunk.title or "",
-                content=chunk.content or "",
-                content_preview=chunk.content_preview or (chunk.content or "")[:200],
-                score=score,
-                source_name=kb_names[kid],
-            ))
+            references.append(
+                RagReferenceDTO(
+                    chunk_id=chunk.id,
+                    chunk_index=chunk.chunk_index,
+                    title=chunk.title or "",
+                    content=chunk.content or "",
+                    content_preview=chunk.content_preview or (chunk.content or "")[:200],
+                    score=score,
+                    source_name=kb_names[kid],
+                )
+            )
 
         return references
 
@@ -327,9 +353,7 @@ class CrossKBRagService:
 
             all_triples = []
             for entity_name in entities:
-                triples = await knowledge_graph_persistence_service.query_two_hop(
-                    db, entity_name, kb_id=kb_id
-                )
+                triples = await knowledge_graph_persistence_service.query_two_hop(db, entity_name, kb_id=kb_id)
                 all_triples.extend(triples)
 
             seen = set()
@@ -350,6 +374,7 @@ class CrossKBRagService:
                 graph_entity_names.add(triple.object_entity.name)
 
             from sqlalchemy import or_, select
+
             from app.modules.knowledge_base.models import KnowledgeChunkEntity
 
             stmt = select(KnowledgeChunkEntity)
@@ -357,10 +382,7 @@ class CrossKBRagService:
                 stmt = stmt.where(KnowledgeChunkEntity.knowledge_base_id == kb_id)
 
             sorted_names = sorted(graph_entity_names, key=len, reverse=True)[:10]
-            conditions = [
-                KnowledgeChunkEntity.content.ilike(f"%{name}%")
-                for name in sorted_names
-            ]
+            conditions = [KnowledgeChunkEntity.content.ilike(f"%{name}%") for name in sorted_names]
             stmt = stmt.where(or_(*conditions))
             stmt = stmt.limit(30)
 
@@ -382,7 +404,9 @@ class CrossKBRagService:
                 if len(filtered_chunks) < len(chunks):
                     logger.info(
                         "图谱语义过滤: %d → %d chunks (阈值=%.2f)",
-                        len(chunks), len(filtered_chunks), semantic_threshold,
+                        len(chunks),
+                        len(filtered_chunks),
+                        semantic_threshold,
                     )
                 chunks = filtered_chunks
 
@@ -395,19 +419,21 @@ class CrossKBRagService:
                 score = raw_score * weight
 
                 kb_name = f"KB#{chunk.knowledge_base_id}"
-                references.append(RagReferenceDTO(
-                    chunk_id=chunk.id,
-                    chunk_index=chunk.chunk_index,
-                    title=chunk.title or "",
-                    content=content,
-                    content_preview=(content or "")[:200],
-                    score=score,
-                    source_name=kb_name,
-                    metadata={
-                        "type": "knowledge_graph",
-                        "matched_entities": [e for e in graph_entity_names if e in content],
-                    },
-                ))
+                references.append(
+                    RagReferenceDTO(
+                        chunk_id=chunk.id,
+                        chunk_index=chunk.chunk_index,
+                        title=chunk.title or "",
+                        content=content,
+                        content_preview=(content or "")[:200],
+                        score=score,
+                        source_name=kb_name,
+                        metadata={
+                            "type": "knowledge_graph",
+                            "matched_entities": [e for e in graph_entity_names if e in content],
+                        },
+                    )
+                )
 
             references.sort(key=lambda c: c.score, reverse=True)
             return references[:top_k]
@@ -428,7 +454,9 @@ class CrossKBRagService:
                 "如果没有明确的实体，输出空行。"
             )
             messages = [
-                SystemMessage(content="你是实体提取助手。从问题中提取实体名称（技术、概念、理论、方法、人物等），用逗号分隔输出。只输出名称，不要其他文字。"),
+                SystemMessage(
+                    content="你是实体提取助手。从问题中提取实体名称（技术、概念、理论、方法、人物等），用逗号分隔输出。只输出名称，不要其他文字。"
+                ),
                 HumanMessage(content=prompt),
             ]
             response = await llm_registry.default.ainvoke(messages)
@@ -443,19 +471,16 @@ class CrossKBRagService:
             logger.warning("实体提取失败: %s", e)
             return []
 
-    async def _rewrite_query(
-        self, question: str, chat_history: list[dict] | None = None
-    ) -> str:
+    async def _rewrite_query(self, question: str, chat_history: list[dict] | None = None) -> str:
         try:
             messages = [SystemMessage(content=REWRITE_SYSTEM_PROMPT)]
             if chat_history:
-                history_text = "\n".join(
-                    f"用户: {c['question']}\n助手: {c['answer'][:200]}"
-                    for c in chat_history
+                history_text = "\n".join(f"用户: {c['question']}\n助手: {c['answer'][:200]}" for c in chat_history)
+                messages.append(
+                    HumanMessage(
+                        content=f"对话历史：\n{history_text}\n\n当前问题：{question}\n\n请结合对话历史改写当前问题，使其能独立检索到相关内容。只输出改写后的查询。"
+                    )
                 )
-                messages.append(HumanMessage(
-                    content=f"对话历史：\n{history_text}\n\n当前问题：{question}\n\n请结合对话历史改写当前问题，使其能独立检索到相关内容。只输出改写后的查询。"
-                ))
             else:
                 messages.append(HumanMessage(content=question))
             response = await llm_registry.default.ainvoke(messages)
@@ -465,9 +490,7 @@ class CrossKBRagService:
             logger.warning("查询改写失败，回退原问题: %s", e)
             return question
 
-    async def _generate_answer(
-        self, question: str, rewritten_query: str, references: list[RagReferenceDTO]
-    ) -> str:
+    async def _generate_answer(self, question: str, rewritten_query: str, references: list[RagReferenceDTO]) -> str:
         if not references:
             return "未在知识库中检索到足够相关的内容，当前无法给出可靠答案。"
 
@@ -496,6 +519,7 @@ class CrossKBRagService:
     @staticmethod
     def _cosine_distance(vec1: list[float], vec2: list[float]) -> float:
         import math
+
         dot = sum(a * b for a, b in zip(vec1, vec2))
         mag1 = math.sqrt(sum(a * a for a in vec1))
         mag2 = math.sqrt(sum(b * b for b in vec2))
