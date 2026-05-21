@@ -8,8 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.result import Result
 from app.database import get_db
 from app.modules.auth.dependencies import get_current_user_id
+from app.modules.interview.diagnosis_schemas import InterviewDiagnosisDTO, InterviewDiagnosisRequest
+from app.modules.interview.diagnosis_service import interview_diagnosis_service
 from app.modules.interview.history_service import interview_history_service
 from app.modules.interview.persistence_service import interview_persistence_service
+from app.modules.interview.project_drill_schemas import (
+    ProjectDrillDTO,
+    ProjectDrillRequest,
+)
+from app.modules.interview.project_drill_service import project_drill_service
 from app.modules.interview.schemas import (
     CreateInterviewRequest,
     InterviewDetailDTO,
@@ -24,6 +31,26 @@ from app.modules.interview.session_service import interview_session_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.post("/diagnosis", response_model=Result[InterviewDiagnosisDTO])
+async def create_diagnosis(
+    request: InterviewDiagnosisRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    diagnosis = await interview_diagnosis_service.diagnose(db, request, user_id)
+    return Result.success(diagnosis)
+
+
+@router.post("/project-drill", response_model=Result[ProjectDrillDTO])
+async def create_project_drill(
+    request: ProjectDrillRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    drill = await project_drill_service.create_drill(db, request, user_id)
+    return Result.success(drill)
 
 
 @router.get("/sessions", response_model=Result[list[SessionListItemDTO]])

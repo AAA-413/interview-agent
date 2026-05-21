@@ -5,6 +5,8 @@ import { Loader2 } from 'lucide-react';
 import Layout from './components/Layout';
 
 const LoginPage = lazy(() => import('./pages/LoginPage'));
+const InterviewDiagnosisPage = lazy(() => import('./pages/InterviewDiagnosisPage'));
+const ProjectDrillPage = lazy(() => import('./pages/ProjectDrillPage'));
 const ResumeListPage = lazy(() => import('./pages/ResumeListPage'));
 const ResumeDetailPage = lazy(() => import('./pages/ResumeDetailPage'));
 const UploadPage = lazy(() => import('./pages/UploadPage'));
@@ -31,7 +33,9 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/" element={<Layout />}>
-            <Route index element={<Navigate to="/resumes" replace />} />
+            <Route index element={<Navigate to="/diagnosis" replace />} />
+            <Route path="diagnosis" element={<InterviewDiagnosisPage />} />
+            <Route path="project-drill" element={<ProjectDrillPage />} />
             <Route path="resumes" element={<ResumeListPage />} />
             <Route path="resumes/:resumeId" element={<ResumeDetailPage />} />
             <Route path="upload" element={<UploadPage />} />

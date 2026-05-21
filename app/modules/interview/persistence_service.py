@@ -189,14 +189,30 @@ class InterviewPersistenceService:
 
         entity = await self.find_by_session_id(db, session_id)
         if entity:
+            reference_answers = {item.question_index: item for item in report.reference_answers}
             for qa in report.question_evaluations:
+                reference = reference_answers.get(qa.question_index)
+                metadata = {
+                    "schema": "interview_evaluation_v1",
+                    "question_type": qa.question_type,
+                    "covered_points": qa.covered_points,
+                    "missed_points": qa.missed_points,
+                    "errors": qa.errors,
+                    "dimensions": qa.dimensions.model_dump() if qa.dimensions else None,
+                    "key_points": reference.key_points if reference else None,
+                }
                 await db.execute(
                     update(InterviewAnswerEntity)
                     .where(
                         InterviewAnswerEntity.session_id == entity.id,
                         InterviewAnswerEntity.question_index == qa.question_index,
                     )
-                    .values(score=qa.score, feedback=qa.feedback)
+                    .values(
+                        score=qa.score,
+                        feedback=qa.feedback,
+                        reference_answer=reference.reference_answer if reference else None,
+                        key_points_json=json.dumps(metadata, ensure_ascii=False),
+                    )
                 )
 
         await db.flush()
@@ -278,18 +294,7 @@ class InterviewPersistenceService:
 
             reference_answers = [ReferenceAnswerDTO(**r) for r in raw_refs]
 
-        question_evaluations = []
-        for answer in entity.answers:
-            question_evaluations.append(
-                {
-                    "question_index": answer.question_index,
-                    "question": answer.question,
-                    "category": answer.category,
-                    "user_answer": answer.user_answer,
-                    "score": answer.score or 0,
-                    "feedback": answer.feedback,
-                }
-            )
+        question_evaluations = self.build_question_evaluations(entity, questions)
 
         return InterviewDetailDTO(
             session_id=entity.session_id,
@@ -311,6 +316,51 @@ class InterviewPersistenceService:
             created_at=entity.created_at,
             completed_at=entity.completed_at,
         )
+
+    def build_question_evaluations(
+        self,
+        entity: InterviewSessionEntity,
+        questions: list[InterviewQuestionDTO],
+    ) -> list[dict]:
+        question_evaluations = []
+        for answer in sorted(entity.answers, key=lambda item: item.question_index):
+            q = questions[answer.question_index] if answer.question_index < len(questions) else None
+            metadata = self._answer_evaluation_metadata(answer)
+            question_type = metadata.get("question_type") or (q.question_type if q else "knowledge")
+            dimensions = metadata.get("dimensions")
+            if not isinstance(dimensions, dict):
+                dimensions = None
+
+            question_evaluations.append(
+                {
+                    "question_index": answer.question_index,
+                    "question": answer.question or (q.question if q else ""),
+                    "category": answer.category or (q.category if q else None),
+                    "user_answer": answer.user_answer,
+                    "score": answer.score or 0,
+                    "feedback": answer.feedback,
+                    "question_type": question_type,
+                    "covered_points": self._metadata_list(metadata, "covered_points"),
+                    "missed_points": self._metadata_list(metadata, "missed_points"),
+                    "errors": self._metadata_list(metadata, "errors"),
+                    "dimensions": dimensions,
+                }
+            )
+        return question_evaluations
+
+    @staticmethod
+    def _answer_evaluation_metadata(answer: InterviewAnswerEntity) -> dict:
+        raw = safe_json_loads(answer.key_points_json, {})
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, list):
+            return {"key_points": raw}
+        return {}
+
+    @staticmethod
+    def _metadata_list(metadata: dict, key: str) -> list[str] | None:
+        value = metadata.get(key)
+        return value if isinstance(value, list) else None
 
 
 interview_persistence_service = InterviewPersistenceService()

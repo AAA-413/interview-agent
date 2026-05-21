@@ -12,6 +12,8 @@ from app.config import settings
 from app.modules.interview.evaluation_service import QaRecord, unified_evaluation_service
 from app.modules.interview.models import SessionStatus
 from app.modules.interview.persistence_service import interview_persistence_service
+from app.modules.interview.project_drill_schemas import ProjectDrillRequest
+from app.modules.interview.project_drill_service import project_drill_service
 from app.modules.interview.question_service import MAX_FOLLOW_UP_COUNT, interview_question_service
 from app.modules.interview.schemas import (
     CreateInterviewRequest,
@@ -22,6 +24,7 @@ from app.modules.interview.schemas import (
     SubmitAnswerResponse,
 )
 from app.modules.interview.skill_service import interview_skill_service
+from app.modules.resume.history_service import resume_history_service
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +33,10 @@ class InterviewSessionService:
     async def create_session(
         self, db: AsyncSession, request: CreateInterviewRequest, user_id: int = 0
     ) -> InterviewSessionDTO:
-        if request.resume_id and not request.force_create:
+        interview_mode = request.interview_mode or "standard"
+        is_project_drill = interview_mode == "project_drill" or request.skill_id == "project-drill"
+
+        if request.resume_id and not request.force_create and not is_project_drill:
             unfinished = await self._find_unfinished_session(db, request.resume_id, user_id)
             if unfinished:
                 logger.info(
@@ -41,31 +47,54 @@ class InterviewSessionService:
         session_id = uuid.uuid4().hex[:16]
         skill_id = request.skill_id or settings.interview.default_skill_id
         difficulty = request.difficulty or settings.interview.default_difficulty
+        resume_text = request.resume_text
+        resume_detail = None
+
+        if request.resume_id and (is_project_drill or not resume_text):
+            resume_detail = await resume_history_service.get_resume_detail(db, request.resume_id, user_id)
+            resume_text = resume_text or resume_detail.resume_text
 
         logger.info(
-            "创建新面试会话: %s, skill: %s, difficulty: %s, questionCount: %d",
+            "创建新面试会话: %s, skill: %s, mode: %s, difficulty: %s, questionCount: %d",
             session_id,
             skill_id,
+            interview_mode,
             difficulty,
             request.question_count,
         )
 
-        historical_questions = await interview_persistence_service.get_historical_questions(
-            db, skill_id, request.resume_id, user_id
-        )
+        if is_project_drill:
+            if request.resume_id is None or resume_detail is None:
+                raise BusinessException(ErrorCode.RESUME_NOT_FOUND, "项目深挖需要选择一份已解析简历")
+            drill_request = ProjectDrillRequest(
+                resume_id=request.resume_id,
+                target_role=request.target_role or request.skill_id or skill_id,
+                target_company=request.target_company,
+                level=request.level or difficulty,
+                project_name=request.project_name,
+                jd_text=request.jd_text,
+            )
+            drill = project_drill_service.build_drill(drill_request, resume_detail)
+            questions = project_drill_service.build_session_questions(drill)[: request.question_count]
+            skill_id = "project-drill"
+            difficulty = request.level or difficulty
+        else:
+            historical_questions = await interview_persistence_service.get_historical_questions(
+                db, skill_id, request.resume_id, user_id
+            )
 
-        chat_model = llm_registry.get_chat_model(request.llm_provider)
+            chat_model = llm_registry.get_chat_model(request.llm_provider)
 
-        questions = await interview_question_service.generate_questions(
-            chat_model=chat_model,
-            skill_id=skill_id,
-            difficulty=difficulty,
-            resume_text=request.resume_text,
-            question_count=request.question_count,
-            historical_questions=historical_questions,
-            custom_categories=request.custom_categories,
-            jd_text=request.jd_text,
-        )
+            questions = await interview_question_service.generate_questions(
+                chat_model=chat_model,
+                skill_id=skill_id,
+                difficulty=difficulty,
+                resume_text=resume_text,
+                question_count=request.question_count,
+                historical_questions=historical_questions,
+                custom_categories=request.custom_categories,
+                jd_text=request.jd_text,
+            )
 
         await interview_persistence_service.save_session(
             db=db,
@@ -81,7 +110,7 @@ class InterviewSessionService:
 
         return InterviewSessionDTO(
             session_id=session_id,
-            resume_text=request.resume_text or "",
+            resume_text=resume_text or "",
             total_questions=len(questions),
             current_question_index=0,
             questions=questions,
@@ -352,19 +381,7 @@ class InterviewSessionService:
         entity = await interview_persistence_service.find_by_session_id_or_throw(db, session_id)
         questions = interview_persistence_service.parse_questions_json(entity.questions_json)
 
-        question_evaluations = []
-        for answer in sorted(entity.answers, key=lambda item: item.question_index):
-            q = questions[answer.question_index] if answer.question_index < len(questions) else None
-            question_evaluations.append(
-                {
-                    "question_index": answer.question_index,
-                    "question": answer.question or (q.question if q else ""),
-                    "category": answer.category or (q.category if q else None),
-                    "user_answer": answer.user_answer,
-                    "score": answer.score or 0,
-                    "feedback": answer.feedback,
-                }
-            )
+        question_evaluations = interview_persistence_service.build_question_evaluations(entity, questions)
 
         strengths = json.loads(entity.strengths_json) if entity.strengths_json else []
         improvements = json.loads(entity.improvements_json) if entity.improvements_json else []

@@ -8,8 +8,22 @@ import type {
   SessionListItemDTO,
   SubmitAnswerResponse,
 } from '../types/interview';
+import type { InterviewDiagnosisDTO, InterviewDiagnosisRequest } from '../types/diagnosis';
+import type { ProjectDrillDTO, ProjectDrillRequest } from '../types/projectDrill';
 
 export const interviewApi = {
+  async createDiagnosis(req: InterviewDiagnosisRequest): Promise<InterviewDiagnosisDTO> {
+    return request.post<InterviewDiagnosisDTO>('/api/interview/diagnosis', req, {
+      timeout: 60000,
+    });
+  },
+
+  async createProjectDrill(req: ProjectDrillRequest): Promise<ProjectDrillDTO> {
+    return request.post<ProjectDrillDTO>('/api/interview/project-drill', req, {
+      timeout: 60000,
+    });
+  },
+
   async listSessions(): Promise<SessionListItemDTO[]> {
     return request.get<SessionListItemDTO[]>('/api/interview/sessions');
   },

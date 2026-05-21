@@ -1,5 +1,17 @@
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
-import { LogOut, FileText, MessageSquare, BarChart3, Upload, BookOpen, Database, Sparkles, Network } from 'lucide-react';
+import {
+  BarChart3,
+  BookOpen,
+  ClipboardCheck,
+  Database,
+  FileText,
+  LogOut,
+  MessageSquare,
+  MessageSquareText,
+  Network,
+  Sparkles,
+  Upload,
+} from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { authApi } from '../api/auth';
 
@@ -11,6 +23,8 @@ type NavItem = {
 };
 
 const navItems: NavItem[] = [
+  { path: '/diagnosis', label: '面试诊断', icon: ClipboardCheck, gradient: 'from-emerald-500 to-teal-500' },
+  { path: '/project-drill', label: '项目深挖', icon: MessageSquareText, gradient: 'from-rose-500 to-pink-500' },
   { path: '/resumes', label: '简历管理', icon: FileText, gradient: 'from-blue-500 to-cyan-500' },
   { path: '/upload', label: '上传简历', icon: Upload, gradient: 'from-violet-500 to-purple-500' },
   { path: '/knowledgebases', label: '知识库管理', icon: Database, gradient: 'from-emerald-500 to-teal-500' },

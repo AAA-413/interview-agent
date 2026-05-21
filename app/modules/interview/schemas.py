@@ -33,6 +33,11 @@ class CreateInterviewRequest(BaseModel):
     llm_provider: str | None = None
     custom_categories: list["CategoryDTO"] | None = None
     jd_text: str | None = Field(default=None, max_length=10000)
+    interview_mode: str | None = Field(default=None, max_length=40)
+    project_name: str | None = Field(default=None, max_length=120)
+    target_role: str | None = Field(default=None, max_length=80)
+    target_company: str | None = Field(default=None, max_length=80)
+    level: str | None = Field(default=None, max_length=30)
 
 
 class CategoryDTO(BaseModel):

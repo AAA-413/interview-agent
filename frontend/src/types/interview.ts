@@ -55,6 +55,11 @@ export interface CreateInterviewRequest {
   llm_provider?: string | null;
   custom_categories?: CategoryDTO[] | null;
   jd_text?: string | null;
+  interview_mode?: string | null;
+  project_name?: string | null;
+  target_role?: string | null;
+  target_company?: string | null;
+  level?: string | null;
 }
 
 export interface InterviewSessionDTO {
