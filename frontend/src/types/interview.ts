@@ -80,6 +80,12 @@ export interface SubmitAnswerResponse {
   total_questions: number;
 }
 
+export interface VoiceTranscriptionDTO {
+  text: string;
+  language: string | null;
+  duration: number | null;
+}
+
 export interface SessionListItemDTO {
   id: number;
   session_id: string;

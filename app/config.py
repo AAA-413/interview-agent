@@ -113,6 +113,12 @@ class VoiceInterviewSettings(BaseSettings):
     )
 
     llm_provider: str = "dashscope"
+    stt_provider: str = "local_whisper"
+    stt_model: str = "small"
+    stt_device: str = "cpu"
+    stt_compute_type: str = "int8"
+    stt_hf_endpoint: str = "https://hf-mirror.com"
+    max_audio_size_mb: int = 25
     user_utterance_debounce_ms: int = 2500
     min_silence_before_commit_ms: int = 2500
     min_commit_chars: int = 20

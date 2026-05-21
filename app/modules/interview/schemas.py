@@ -90,6 +90,12 @@ class SubmitAnswerResponse(BaseModel):
     total_questions: int
 
 
+class VoiceTranscriptionDTO(BaseModel):
+    text: str
+    language: str | None = None
+    duration: float | None = None
+
+
 class SessionListItemDTO(BaseModel):
     id: int
     session_id: str

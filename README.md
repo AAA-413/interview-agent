@@ -16,6 +16,7 @@
 - **前端**：React 18 + TypeScript + Tailwind CSS v4 + AntV G6
 - **AI**：DeepSeek（deepseek-chat）+ LangChain Structured Output
 - **Embedding**：智谱 Embedding-3（2048 维截断至 1536）/ DashScope / 哈希降级
+- **语音识别**：MediaRecorder 录音上传 + 本地 faster-whisper 转写（voice-lite）
 - **异步任务**：Redis Stream 消费者组模式（xreadgroup + xack）
 - **向量检索**：pgvector + Rerank 重排序（BGE Reranker）
 - **知识图谱**：PostgreSQL 三元组表 + LLM 实体关系抽取 + GraphRAG 混合检索
@@ -58,7 +59,7 @@ npm run dev
 ### 服务地址
 
 - 后端 API：http://localhost:8002
-- 前端页面：http://localhost:5173
+- 前端页面：http://localhost:5176（`./start.sh` 默认端口；手动 `npm run dev` 会使用 Vite 默认端口）
 - API 文档：http://localhost:8002/docs
 
 ### 本地质量检查
@@ -85,6 +86,7 @@ npm run dev
 - **知识题评估**：出题时生成参考答案和 key_points 评分锚点，评估时逐点对比
 - **项目题评估**：四维评估（真实性、技术深度、深度、表达）
 - **六档评分体系**：空白(0-19) → 知道名词(20-39) → 知道定义(40-59) → 理解原理(60-74) → 能用能说清(75-89) → 深度掌控(90-100)
+- **语音输入**：录音上传到后端本地 faster-whisper 转写，转写文本可编辑后提交，不影响原有评分链路
 - **知识库集成**：评估时从用户知识库检索相关知识点作为参考
 - 简历结构化提取（项目列表、技术栈、经验等级）
 

@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,8 +25,10 @@ from app.modules.interview.schemas import (
     SessionListItemDTO,
     SubmitAnswerRequest,
     SubmitAnswerResponse,
+    VoiceTranscriptionDTO,
 )
 from app.modules.interview.session_service import interview_session_service
+from app.modules.interview.voice_service import voice_transcription_service
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +79,16 @@ async def create_session(
     )
     session = await interview_session_service.create_session(db, request, user_id)
     return Result.success(session)
+
+
+@router.post("/voice/transcribe", response_model=Result[VoiceTranscriptionDTO])
+async def transcribe_voice(
+    file: UploadFile = File(...),
+    user_id: int = Depends(get_current_user_id),
+):
+    _ = user_id
+    transcription = await voice_transcription_service.transcribe(file)
+    return Result.success(transcription)
 
 
 @router.get("/sessions/{session_id}", response_model=Result[InterviewSessionDTO])

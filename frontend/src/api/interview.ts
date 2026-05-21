@@ -7,6 +7,7 @@ import type {
   InterviewSessionDTO,
   SessionListItemDTO,
   SubmitAnswerResponse,
+  VoiceTranscriptionDTO,
 } from '../types/interview';
 import type { InterviewDiagnosisDTO, InterviewDiagnosisRequest } from '../types/diagnosis';
 import type { ProjectDrillDTO, ProjectDrillRequest } from '../types/projectDrill';
@@ -48,6 +49,14 @@ export const interviewApi = {
       { question_index: questionIndex, answer },
       { timeout: 180000 }
     );
+  },
+
+  async transcribeVoice(file: File): Promise<VoiceTranscriptionDTO> {
+    const formData = new FormData();
+    formData.append('file', file);
+    return request.upload<VoiceTranscriptionDTO>('/api/interview/voice/transcribe', formData, {
+      timeout: 180000,
+    });
   },
 
   async saveAnswer(sessionId: string, questionIndex: number, answer: string): Promise<void> {
