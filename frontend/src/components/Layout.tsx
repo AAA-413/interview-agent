@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import {
   BarChart3,
@@ -5,40 +6,69 @@ import {
   ClipboardCheck,
   Database,
   FileText,
+  LayoutDashboard,
   LogOut,
   MessageSquare,
   MessageSquareText,
   Network,
   Sparkles,
-  Upload,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { authApi } from '../api/auth';
+import { apiUrl } from '../api/request';
 
 type NavItem = {
   path: string;
   label: string;
   icon: LucideIcon;
   gradient: string;
+  exact?: boolean;
 };
 
 const navItems: NavItem[] = [
+  { path: '/dashboard', label: '工作台', icon: LayoutDashboard, gradient: 'from-slate-700 to-slate-900', exact: true },
   { path: '/diagnosis', label: '面试诊断', icon: ClipboardCheck, gradient: 'from-emerald-500 to-teal-500' },
   { path: '/project-drill', label: '项目深挖', icon: MessageSquareText, gradient: 'from-rose-500 to-pink-500' },
-  { path: '/resumes', label: '简历管理', icon: FileText, gradient: 'from-blue-500 to-cyan-500' },
-  { path: '/upload', label: '上传简历', icon: Upload, gradient: 'from-violet-500 to-purple-500' },
-  { path: '/knowledgebases', label: '知识库管理', icon: Database, gradient: 'from-emerald-500 to-teal-500' },
-  { path: '/knowledge-graph', label: '知识图谱', icon: Network, gradient: 'from-violet-500 to-purple-500' },
-  { path: '/knowledgebases/upload', label: '上传知识库', icon: BookOpen, gradient: 'from-amber-500 to-orange-500' },
-  { path: '/interviews', label: '面试记录', icon: MessageSquare, gradient: 'from-pink-500 to-rose-500' },
   { path: '/interview-hub', label: '开始面试', icon: BarChart3, gradient: 'from-indigo-500 to-blue-500' },
+  { path: '/resumes', label: '简历管理', icon: FileText, gradient: 'from-blue-500 to-cyan-500' },
+  { path: '/knowledgebases', label: '知识库', icon: Database, gradient: 'from-emerald-500 to-teal-500' },
+  { path: '/knowledge-graph', label: '知识图谱', icon: Network, gradient: 'from-violet-500 to-purple-500' },
+  { path: '/knowledgebases/smart-download', label: '智能下载', icon: BookOpen, gradient: 'from-amber-500 to-orange-500' },
+  { path: '/interviews', label: '面试记录', icon: MessageSquare, gradient: 'from-pink-500 to-rose-500' },
 ];
 
 export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [serviceOnline, setServiceOnline] = useState<boolean | null>(null);
 
-  const isActivePath = (path: string) => location.pathname === path || location.pathname.startsWith(path + '/');
+  useEffect(() => {
+    if (!localStorage.getItem('access_token')) {
+      navigate('/login', { replace: true });
+    }
+  }, [navigate]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(apiUrl('/api/health'))
+      .then(response => {
+        if (!cancelled) setServiceOnline(response.ok);
+      })
+      .catch(() => {
+        if (!cancelled) setServiceOnline(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const isActivePath = (item: NavItem) => {
+    if (item.exact) return location.pathname === item.path;
+    if (item.path === '/knowledgebases') {
+      return location.pathname === item.path || /^\/knowledgebases\/\d+/.test(location.pathname);
+    }
+    return location.pathname === item.path || location.pathname.startsWith(item.path + '/');
+  };
 
   const handleLogout = async () => {
     try {
@@ -52,7 +82,7 @@ export default function Layout() {
   };
 
   const renderDesktopNavItem = (item: NavItem) => {
-    const isActive = isActivePath(item.path);
+    const isActive = isActivePath(item);
     const Icon = item.icon;
     return (
       <button
@@ -83,7 +113,7 @@ export default function Layout() {
   };
 
   const renderMobileNavItem = (item: NavItem) => {
-    const isActive = isActivePath(item.path);
+    const isActive = isActivePath(item);
     const Icon = item.icon;
     return (
       <button
@@ -109,8 +139,8 @@ export default function Layout() {
               <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-white/20 to-transparent" />
             </div>
             <div className="min-w-0">
-              <h1 className="truncate text-base font-bold text-slate-900">AI 面试助手</h1>
-              <p className="truncate text-xs text-slate-500">智能面试模拟平台</p>
+              <h1 className="truncate text-base font-bold text-slate-900">OfferPilot</h1>
+              <p className="truncate text-xs text-slate-500">AI 面试训练工作台</p>
             </div>
           </div>
           <button
@@ -131,8 +161,8 @@ export default function Layout() {
               <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent rounded-2xl" />
             </div>
             <div>
-              <h1 className="text-xl font-bold bg-gradient-to-r from-slate-900 to-slate-700 bg-clip-text text-transparent">AI 面试助手</h1>
-              <p className="text-xs text-slate-500 font-medium">智能面试模拟平台</p>
+              <h1 className="text-xl font-bold bg-gradient-to-r from-slate-900 to-slate-700 bg-clip-text text-transparent">OfferPilot</h1>
+              <p className="text-xs text-slate-500 font-medium">AI 面试训练工作台</p>
             </div>
           </div>
         </div>
@@ -146,7 +176,9 @@ export default function Layout() {
               <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-lg shadow-green-500/50" />
               <div>
                 <p className="text-xs font-semibold text-primary-700">Python FastAPI</p>
-                <p className="text-xs text-primary-500">服务运行中</p>
+                <p className="text-xs text-primary-500">
+                  {serviceOnline === null ? '服务检测中' : serviceOnline ? '服务运行中' : '服务未连接'}
+                </p>
               </div>
             </div>
           </div>

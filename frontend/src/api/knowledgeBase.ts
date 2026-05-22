@@ -1,4 +1,4 @@
-import { request } from './request';
+import { apiUrl, request } from './request';
 import type {
   AskKnowledgeBaseRequest,
   KnowledgeBaseDetailDTO,
@@ -63,7 +63,7 @@ export const knowledgeBaseApi = {
     },
   ): Promise<void> {
     const token = localStorage.getItem('access_token');
-    const response = await fetch(`/api/knowledgebase/${id}/chat/stream`, {
+    const response = await fetch(apiUrl(`/api/knowledgebase/${id}/chat/stream`), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -165,7 +165,7 @@ export const knowledgeBaseApi = {
     },
   ): Promise<void> {
     const token = localStorage.getItem('access_token');
-    const response = await fetch('/api/cross-knowledgebase/cross/chat/stream', {
+    const response = await fetch(apiUrl('/api/cross-knowledgebase/cross/chat/stream'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

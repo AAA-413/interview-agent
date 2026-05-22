@@ -6,9 +6,19 @@ interface Result<T = unknown> {
   data: T;
 }
 
+const rawApiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
+const apiBaseUrl = rawApiBaseUrl ? rawApiBaseUrl.replace(/\/+$/, '') : undefined;
+
 const instance: AxiosInstance = axios.create({
+  baseURL: apiBaseUrl,
   timeout: 60000,
 });
+
+export function apiUrl(path: string): string {
+  if (!apiBaseUrl) return path;
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${apiBaseUrl}${normalizedPath}`;
+}
 
 // 请求拦截器：添加 token
 instance.interceptors.request.use(
