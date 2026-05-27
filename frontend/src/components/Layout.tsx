@@ -3,6 +3,7 @@ import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import {
   BarChart3,
   BookOpen,
+  CalendarCheck,
   ClipboardCheck,
   Database,
   FileText,
@@ -30,6 +31,7 @@ const navItems: NavItem[] = [
   { path: '/diagnosis', label: '面试诊断', icon: ClipboardCheck, gradient: 'from-emerald-500 to-teal-500' },
   { path: '/project-drill', label: '项目深挖', icon: MessageSquareText, gradient: 'from-rose-500 to-pink-500' },
   { path: '/interview-hub', label: '开始面试', icon: BarChart3, gradient: 'from-indigo-500 to-blue-500' },
+  { path: '/training-plan', label: '训练计划', icon: CalendarCheck, gradient: 'from-emerald-500 to-lime-500' },
   { path: '/resumes', label: '简历管理', icon: FileText, gradient: 'from-blue-500 to-cyan-500' },
   { path: '/knowledgebases', label: '知识库', icon: Database, gradient: 'from-emerald-500 to-teal-500' },
   { path: '/knowledge-graph', label: '知识图谱', icon: Network, gradient: 'from-violet-500 to-purple-500' },

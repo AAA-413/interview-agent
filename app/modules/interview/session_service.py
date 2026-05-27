@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,8 @@ from app.modules.interview.schemas import (
     InterviewQuestionDTO,
     InterviewReportDTO,
     InterviewSessionDTO,
+    KeyPoint,
+    RetryAnswerComparisonDTO,
     SubmitAnswerRequest,
     SubmitAnswerResponse,
 )
@@ -316,6 +319,122 @@ class InterviewSessionService:
         await self._enqueue_evaluation(db, session_id)
         logger.info("会话 %s 提前交卷，评估任务已入队", session_id)
 
+    async def create_retry_session(
+        self,
+        db: AsyncSession,
+        source_session_id: str,
+        question_index: int,
+        user_id: int = 0,
+    ) -> InterviewSessionDTO:
+        source = await interview_persistence_service.find_by_session_id_or_throw(db, source_session_id, user_id)
+        questions = interview_persistence_service.parse_questions_json(source.questions_json)
+        if question_index < 0 or question_index >= len(questions):
+            raise BusinessException(ErrorCode.INTERVIEW_QUESTION_NOT_FOUND, f"无效的问题索引: {question_index}")
+
+        source_question = questions[question_index]
+        evaluations = interview_persistence_service.build_question_evaluations(source, questions)
+        evaluation = next((item for item in evaluations if item.get("question_index") == question_index), {})
+        reference_answers = self._safe_reference_answers(source.reference_answers_json)
+        reference = next((item for item in reference_answers if item.get("question_index") == question_index), {})
+
+        retry_prompt = evaluation.get("next_practice_question") or source_question.question
+        retry_question = InterviewQuestionDTO(
+            question_index=0,
+            question=retry_prompt,
+            type="RETRY",
+            category=f"{source_question.category or '综合'}-同题再练",
+            topic_summary=f"来源：{source_session_id} 第 {question_index + 1} 题",
+            is_follow_up=False,
+            question_type=source_question.question_type,
+            reference_answer=reference.get("reference_answer") or source_question.reference_answer,
+            key_points=self._retry_key_points(evaluation, reference, source_question),
+            retry_source_session_id=source_session_id,
+            retry_source_question_index=question_index,
+        )
+
+        retry_session_id = uuid.uuid4().hex[:16]
+        await interview_persistence_service.save_session(
+            db=db,
+            session_id=retry_session_id,
+            resume_id=source.resume_id,
+            total_questions=1,
+            questions=[retry_question],
+            llm_provider=source.llm_provider,
+            skill_id=source.skill_id or "retry",
+            difficulty="retry",
+            user_id=user_id,
+        )
+
+        logger.info(
+            "创建同题再练会话: source=%s, question=%d, retry=%s",
+            source_session_id,
+            question_index,
+            retry_session_id,
+        )
+        return InterviewSessionDTO(
+            session_id=retry_session_id,
+            resume_text="",
+            total_questions=1,
+            current_question_index=0,
+            questions=[retry_question],
+            status="CREATED",
+            evaluate_status=None,
+            evaluate_error=None,
+        )
+
+    async def get_retry_comparison(
+        self,
+        db: AsyncSession,
+        retry_session_id: str,
+        user_id: int = 0,
+    ) -> RetryAnswerComparisonDTO:
+        retry = await interview_persistence_service.find_by_session_id_or_throw(db, retry_session_id, user_id)
+        retry_questions = interview_persistence_service.parse_questions_json(retry.questions_json)
+        if not retry_questions:
+            raise BusinessException(ErrorCode.INTERVIEW_QUESTION_NOT_FOUND, "重练会话没有题目")
+
+        retry_question = retry_questions[0]
+        source_session_id, source_question_index = self._retry_source_info(retry_question)
+        if not source_session_id or source_question_index is None:
+            raise BusinessException(ErrorCode.BAD_REQUEST, "当前会话不是同题再练会话")
+
+        source = await interview_persistence_service.find_by_session_id_or_throw(db, source_session_id, user_id)
+        source_questions = interview_persistence_service.parse_questions_json(source.questions_json)
+        if source_question_index < 0 or source_question_index >= len(source_questions):
+            raise BusinessException(ErrorCode.INTERVIEW_QUESTION_NOT_FOUND, "原题不存在或已被删除")
+
+        source_eval = self._evaluation_by_index(
+            interview_persistence_service.build_question_evaluations(source, source_questions),
+            source_question_index,
+        )
+        retry_eval = self._evaluation_by_index(
+            interview_persistence_service.build_question_evaluations(retry, retry_questions),
+            0,
+        )
+        original_score = self._score_or_none(source_eval)
+        retry_score = self._score_or_none(retry_eval)
+        score_delta = retry_score - original_score if original_score is not None and retry_score is not None else None
+        status = self._comparison_status(retry, retry_eval, retry_score)
+
+        return RetryAnswerComparisonDTO(
+            session_id=retry.session_id,
+            source_session_id=source_session_id,
+            source_question_index=source_question_index,
+            retry_question_index=0,
+            source_question=source_questions[source_question_index].question,
+            retry_question=retry_question.question,
+            original_answer=source_eval.get("user_answer") if source_eval else None,
+            retry_answer=retry_eval.get("user_answer") if retry_eval else None,
+            original_score=original_score,
+            retry_score=retry_score,
+            score_delta=score_delta,
+            original_feedback=source_eval.get("feedback") if source_eval else None,
+            retry_feedback=retry_eval.get("feedback") if retry_eval else None,
+            improvement_summary=self._comparison_summary(score_delta, status),
+            next_action=self._comparison_next_action(score_delta, status),
+            status=status,
+        )
+
     async def generate_report(self, db: AsyncSession, session_id: str, user_id: int = 0) -> InterviewReportDTO:
         entity = await interview_persistence_service.find_by_session_id_or_throw(db, session_id, user_id)
 
@@ -502,6 +621,97 @@ class InterviewSessionService:
         except Exception as e:
             logger.warning("知识库检索异常，跳过: %s", e)
             return None
+
+    @staticmethod
+    def _safe_reference_answers(raw: str | None) -> list[dict]:
+        if not raw:
+            return []
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return []
+        return data if isinstance(data, list) else []
+
+    @staticmethod
+    def _retry_key_points(
+        evaluation: dict,
+        reference: dict,
+        source_question: InterviewQuestionDTO,
+    ) -> list[KeyPoint] | None:
+        framework = evaluation.get("answer_framework")
+        if isinstance(framework, list) and framework:
+            return [KeyPoint(point=str(item), score_range="70-90", weight="HIGH") for item in framework[:5]]
+
+        ref_points = reference.get("key_points")
+        if isinstance(ref_points, list) and ref_points:
+            return [KeyPoint(point=str(item), score_range="70-90", weight="HIGH") for item in ref_points[:5]]
+
+        return source_question.key_points
+
+    @staticmethod
+    def _retry_source_info(question: InterviewQuestionDTO) -> tuple[str | None, int | None]:
+        if question.retry_source_session_id and question.retry_source_question_index is not None:
+            return question.retry_source_session_id, question.retry_source_question_index
+
+        if not question.topic_summary:
+            return None, None
+        match = re.search(r"来源：([0-9a-fA-F]+) 第 (\d+) 题", question.topic_summary)
+        if not match:
+            return None, None
+        return match.group(1), int(match.group(2)) - 1
+
+    @staticmethod
+    def _evaluation_by_index(evaluations: list[dict], question_index: int) -> dict:
+        return next((item for item in evaluations if item.get("question_index") == question_index), {})
+
+    @staticmethod
+    def _score_or_none(evaluation: dict) -> int | None:
+        if not evaluation:
+            return None
+        score = evaluation.get("score")
+        return score if isinstance(score, int) and score > 0 else None
+
+    @staticmethod
+    def _comparison_status(
+        retry: object,
+        retry_eval: dict,
+        retry_score: int | None,
+    ) -> str:
+        if not retry_eval or not retry_eval.get("user_answer"):
+            return "WAITING_ANSWER"
+        if retry_score is None or retry.status != SessionStatus.EVALUATED:
+            return "PENDING_EVALUATION"
+        return "READY"
+
+    @staticmethod
+    def _comparison_summary(score_delta: int | None, status: str) -> str:
+        if status == "WAITING_ANSWER":
+            return "完成这道重练题后，系统会把新回答和原回答放在一起对比。"
+        if status == "PENDING_EVALUATION":
+            return "新回答已提交，等待 AI 评估后展示分数变化。"
+        if score_delta is None:
+            return "已生成对比，但原题或重练题缺少有效评分。"
+        if score_delta >= 10:
+            return f"本次重练提升 {score_delta} 分，说明回答结构和证据明显更扎实。"
+        if score_delta > 0:
+            return f"本次重练提升 {score_delta} 分，方向是对的，还可以继续补充量化结果和取舍细节。"
+        if score_delta == 0:
+            return "本次重练分数持平，需要进一步拉开表达层次和证据密度。"
+        return f"本次重练低了 {abs(score_delta)} 分，建议先对照 80 分回答重组结构后再练一次。"
+
+    @staticmethod
+    def _comparison_next_action(score_delta: int | None, status: str) -> str:
+        if status == "WAITING_ANSWER":
+            return "先完成这道重练题"
+        if status == "PENDING_EVALUATION":
+            return "等待评估完成后查看对比"
+        if score_delta is None:
+            return "补齐评分后再复盘"
+        if score_delta >= 10:
+            return "沉淀成可复述模板"
+        if score_delta > 0:
+            return "继续补量化证据"
+        return "对照示范答案再练一次"
 
 
 interview_session_service = InterviewSessionService()

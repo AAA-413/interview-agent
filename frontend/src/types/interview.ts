@@ -16,6 +16,8 @@ export interface InterviewQuestionDTO {
   question_type: string;
   reference_answer: string | null;
   key_points: KeyPoint[] | null;
+  retry_source_session_id?: string | null;
+  retry_source_question_index?: number | null;
 }
 
 export interface CategoryDTO {
@@ -121,6 +123,12 @@ export interface QuestionEvaluationDTO {
   missed_points?: string[];
   errors?: string[];
   dimensions?: ProjectDimensions;
+  interviewer_judgement?: string | null;
+  answer_issues?: string[] | null;
+  answer_framework?: string[] | null;
+  answer_80?: string | null;
+  answer_90?: string | null;
+  next_practice_question?: string | null;
 }
 
 export interface ReferenceAnswerDTO {
@@ -167,4 +175,23 @@ export interface InterviewDetailDTO {
   reference_answers: ReferenceAnswerDTO[];
   created_at: string | null;
   completed_at: string | null;
+}
+
+export interface RetryAnswerComparisonDTO {
+  session_id: string;
+  source_session_id: string;
+  source_question_index: number;
+  retry_question_index: number;
+  source_question: string;
+  retry_question: string;
+  original_answer: string | null;
+  retry_answer: string | null;
+  original_score: number | null;
+  retry_score: number | null;
+  score_delta: number | null;
+  original_feedback: string | null;
+  retry_feedback: string | null;
+  improvement_summary: string;
+  next_action: string;
+  status: 'WAITING_ANSWER' | 'PENDING_EVALUATION' | 'READY' | string;
 }

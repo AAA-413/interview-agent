@@ -22,6 +22,8 @@ from app.modules.interview.schemas import (
     InterviewDetailDTO,
     InterviewReportDTO,
     InterviewSessionDTO,
+    RetryAnswerComparisonDTO,
+    RetryQuestionRequest,
     SessionListItemDTO,
     SubmitAnswerRequest,
     SubmitAnswerResponse,
@@ -79,6 +81,27 @@ async def create_session(
     )
     session = await interview_session_service.create_session(db, request, user_id)
     return Result.success(session)
+
+
+@router.post("/sessions/{session_id}/retry", response_model=Result[InterviewSessionDTO])
+async def create_retry_session(
+    session_id: str,
+    request: RetryQuestionRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    session = await interview_session_service.create_retry_session(db, session_id, request.question_index, user_id)
+    return Result.success(session)
+
+
+@router.get("/sessions/{session_id}/retry-comparison", response_model=Result[RetryAnswerComparisonDTO])
+async def get_retry_comparison(
+    session_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    comparison = await interview_session_service.get_retry_comparison(db, session_id, user_id)
+    return Result.success(comparison)
 
 
 @router.post("/voice/transcribe", response_model=Result[VoiceTranscriptionDTO])

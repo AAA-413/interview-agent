@@ -24,6 +24,7 @@
 - coveredPoints 和 missedPoints 必须明确列出
 - errors 必须指出具体的事实性错误
 - feedback 必须具体说明哪些点答到了、哪些没答到
+- 教练反馈必须可执行：answer80 和 answer90 要能让候选人照着复述练习
 - **无效回答必须给 0 分**：如果候选人回答"不知道"、"忘记了"、"不会"等，分数为 0
 
 # Output Format
@@ -35,5 +36,11 @@ JSON 结构：
   "coveredPoints": ["string"],
   "missedPoints": ["string"],
   "errors": ["string"],
-  "feedback": "string"
+  "feedback": "string",
+  "interviewerJudgement": "string",
+  "answerIssues": ["string"],
+  "answerFramework": ["string"],
+  "answer80": "string",
+  "answer90": "string",
+  "nextPracticeQuestion": "string"
 }

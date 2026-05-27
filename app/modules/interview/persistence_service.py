@@ -200,6 +200,12 @@ class InterviewPersistenceService:
                     "errors": qa.errors,
                     "dimensions": qa.dimensions.model_dump() if qa.dimensions else None,
                     "key_points": reference.key_points if reference else None,
+                    "interviewer_judgement": qa.interviewer_judgement,
+                    "answer_issues": qa.answer_issues,
+                    "answer_framework": qa.answer_framework,
+                    "answer_80": qa.answer_80,
+                    "answer_90": qa.answer_90,
+                    "next_practice_question": qa.next_practice_question,
                 }
                 await db.execute(
                     update(InterviewAnswerEntity)
@@ -344,6 +350,12 @@ class InterviewPersistenceService:
                     "missed_points": self._metadata_list(metadata, "missed_points"),
                     "errors": self._metadata_list(metadata, "errors"),
                     "dimensions": dimensions,
+                    "interviewer_judgement": self._metadata_str(metadata, "interviewer_judgement"),
+                    "answer_issues": self._metadata_list(metadata, "answer_issues"),
+                    "answer_framework": self._metadata_list(metadata, "answer_framework"),
+                    "answer_80": self._metadata_str(metadata, "answer_80"),
+                    "answer_90": self._metadata_str(metadata, "answer_90"),
+                    "next_practice_question": self._metadata_str(metadata, "next_practice_question"),
                 }
             )
         return question_evaluations
@@ -361,6 +373,11 @@ class InterviewPersistenceService:
     def _metadata_list(metadata: dict, key: str) -> list[str] | None:
         value = metadata.get(key)
         return value if isinstance(value, list) else None
+
+    @staticmethod
+    def _metadata_str(metadata: dict, key: str) -> str | None:
+        value = metadata.get(key)
+        return value if isinstance(value, str) and value.strip() else None
 
 
 interview_persistence_service = InterviewPersistenceService()

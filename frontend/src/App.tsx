@@ -15,6 +15,7 @@ const InterviewHistoryPage = lazy(() => import('./pages/InterviewHistoryPage'));
 const InterviewDetailPage = lazy(() => import('./pages/InterviewDetailPage'));
 const InterviewHubPage = lazy(() => import('./pages/InterviewHubPage'));
 const InterviewPage = lazy(() => import('./pages/InterviewPage'));
+const TrainingPlanPage = lazy(() => import('./pages/TrainingPlanPage'));
 const KnowledgeBaseListPage = lazy(() => import('./pages/KnowledgeBaseListPage'));
 const KnowledgeBaseDetailPage = lazy(() => import('./pages/KnowledgeBaseDetailPage'));
 const KnowledgeBaseUploadPage = lazy(() => import('./pages/KnowledgeBaseUploadPage'));
@@ -50,6 +51,7 @@ export default function App() {
             <Route path="interviews/:sessionId" element={<InterviewDetailPage />} />
             <Route path="interview-hub" element={<InterviewHubPage />} />
             <Route path="interview" element={<InterviewPage />} />
+            <Route path="training-plan" element={<TrainingPlanPage />} />
           </Route>
         </Routes>
       </Suspense>

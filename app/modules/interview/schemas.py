@@ -21,6 +21,8 @@ class InterviewQuestionDTO(BaseModel):
     question_type: str = "knowledge"
     reference_answer: str | None = None
     key_points: list[KeyPoint] | None = None
+    retry_source_session_id: str | None = None
+    retry_source_question_index: int | None = None
 
 
 class CreateInterviewRequest(BaseModel):
@@ -131,6 +133,12 @@ class QuestionEvaluationDTO(BaseModel):
     missed_points: list[str] | None = None
     errors: list[str] | None = None
     dimensions: ProjectDimensionsDTO | None = None
+    interviewer_judgement: str | None = None
+    answer_issues: list[str] | None = None
+    answer_framework: list[str] | None = None
+    answer_80: str | None = None
+    answer_90: str | None = None
+    next_practice_question: str | None = None
 
 
 class ReferenceAnswerDTO(BaseModel):
@@ -177,6 +185,29 @@ class InterviewDetailDTO(BaseModel):
     reference_answers: list[ReferenceAnswerDTO] = Field(default_factory=list)
     created_at: datetime | None = None
     completed_at: datetime | None = None
+
+
+class RetryQuestionRequest(BaseModel):
+    question_index: int = Field(..., ge=0)
+
+
+class RetryAnswerComparisonDTO(BaseModel):
+    session_id: str
+    source_session_id: str
+    source_question_index: int
+    retry_question_index: int = 0
+    source_question: str
+    retry_question: str
+    original_answer: str | None = None
+    retry_answer: str | None = None
+    original_score: int | None = None
+    retry_score: int | None = None
+    score_delta: int | None = None
+    original_feedback: str | None = None
+    retry_feedback: str | None = None
+    improvement_summary: str
+    next_action: str
+    status: str
 
 
 class HistoricalQuestion(BaseModel):

@@ -5,6 +5,7 @@ import type {
   InterviewQuestionDTO,
   InterviewReportDTO,
   InterviewSessionDTO,
+  RetryAnswerComparisonDTO,
   SessionListItemDTO,
   SubmitAnswerResponse,
   VoiceTranscriptionDTO,
@@ -33,6 +34,16 @@ export const interviewApi = {
     return request.post<InterviewSessionDTO>('/api/interview/sessions', req, {
       timeout: 180000,
     });
+  },
+
+  async createRetrySession(sessionId: string, questionIndex: number): Promise<InterviewSessionDTO> {
+    return request.post<InterviewSessionDTO>(`/api/interview/sessions/${sessionId}/retry`, {
+      question_index: questionIndex,
+    });
+  },
+
+  async getRetryComparison(sessionId: string): Promise<RetryAnswerComparisonDTO> {
+    return request.get<RetryAnswerComparisonDTO>(`/api/interview/sessions/${sessionId}/retry-comparison`);
   },
 
   async getSession(sessionId: string): Promise<InterviewSessionDTO> {

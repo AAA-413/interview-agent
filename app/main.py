@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 import app.database as db_module
+from app.common.config_check import build_config_check_report, log_config_check_report
 from app.common.exception_handlers import register_exception_handlers
 from app.config import settings
 from app.database import close_db, init_db, init_engine
@@ -20,6 +21,12 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     worker_tasks: list[asyncio.Task] = []
     workers: list[StreamWorker] = []
+
+    config_report = build_config_check_report(settings)
+    app.state.config_report = config_report
+    log_config_check_report(config_report, logger)
+    if settings.strict_config and config_report.has_errors:
+        raise RuntimeError("配置检查失败，请修复 ERROR 项后再启动服务")
 
     logger.info("正在初始化数据库引擎...")
     try:
@@ -190,6 +197,13 @@ def create_app() -> FastAPI:
     async def health_check():
         return {"status": "UP", "service": settings.app_name}
 
+    @app.get("/api/health/config")
+    async def config_health_check():
+        report = getattr(app.state, "config_report", None)
+        if report is None:
+            report = build_config_check_report(settings)
+        return report.model_dump()
+
     return app
 
 
@@ -197,16 +211,22 @@ def _register_routers(app: FastAPI) -> None:
     from app.modules.agent_orchestration.router import router as agent_router
     from app.modules.agent_orchestration.smart_download_router import router as smart_download_router
     from app.modules.auth.router import router as auth_router
+    from app.modules.demo.router import router as demo_router
     from app.modules.interview.router import router as interview_router
     from app.modules.interview.skill_router import router as skill_router
     from app.modules.knowledge_base.cross_kb_router import router as cross_kb_router
     from app.modules.knowledge_base.rag_router import router as rag_router
     from app.modules.knowledge_base.router import router as kb_router
     from app.modules.knowledge_graph.router import router as kg_router
+    from app.modules.organization.router import router as organization_router
     from app.modules.resume.router import router as resume_router
+    from app.modules.training.router import router as training_router
 
     app.include_router(auth_router, prefix="/api/auth", tags=["用户认证"])
     app.include_router(resume_router, prefix="/api/resumes", tags=["简历管理"])
+    app.include_router(organization_router, prefix="/api/organizations", tags=["组织与学员管理"])
+    app.include_router(demo_router, prefix="/api/demo", tags=["演示模式"])
+    app.include_router(training_router, prefix="/api/training", tags=["个人训练计划"])
     app.include_router(interview_router, prefix="/api/interview", tags=["模拟面试"])
     app.include_router(skill_router, prefix="/api/interview/skills", tags=["面试方向"])
     app.include_router(kb_router, prefix="/api/knowledgebase", tags=["知识库管理"])

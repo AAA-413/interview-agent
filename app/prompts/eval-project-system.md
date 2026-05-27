@@ -29,6 +29,7 @@
 - feedback 必须具体指出每个维度的优点和不足，并给出可直接复述的改法
 - feedback 必须包含四段：面试官判断、当前风险点、80分改法、下一步追问
 - 80分改法要给出候选人可以照着练的回答结构，不要只写泛泛建议
+- answer80 和 answer90 必须是候选人可以直接练习的回答版本，不要只写建议
 - **无效回答必须给 0 分**：如果候选人回答"不知道"、"没有项目经验"等，分数为 0
 
 # Output Format
@@ -43,5 +44,11 @@ JSON 结构：
     "depth": int,
     "expression": int
   },
-  "feedback": "string"
+  "feedback": "string",
+  "interviewerJudgement": "string",
+  "answerIssues": ["string"],
+  "answerFramework": ["string"],
+  "answer80": "string",
+  "answer90": "string",
+  "nextPracticeQuestion": "string"
 }

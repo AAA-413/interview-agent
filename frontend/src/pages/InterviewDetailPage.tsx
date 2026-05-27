@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Loader2, AlertCircle, Award, TrendingUp, Target, Clock3, ClipboardList, RotateCcw } from 'lucide-react';
 import { interviewApi } from '../api/interview';
-import type { InterviewDetailDTO, QuestionEvaluationDTO } from '../types/interview';
+import type { InterviewDetailDTO, QuestionEvaluationDTO, RetryAnswerComparisonDTO } from '../types/interview';
 
 const PROCESSING_STATUSES = new Set(['PENDING', 'PROCESSING']);
 const FEEDBACK_LABELS = ['面试官判断', '当前风险点', '80分改法', '下一步追问'];
@@ -13,6 +13,8 @@ export default function InterviewDetailPage() {
   const [detail, setDetail] = useState<InterviewDetailDTO | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [retryingQuestion, setRetryingQuestion] = useState<number | null>(null);
+  const [retryComparison, setRetryComparison] = useState<RetryAnswerComparisonDTO | null>(null);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -41,6 +43,16 @@ export default function InterviewDetailPage() {
     try {
       const data = await interviewApi.getInterviewDetail(sessionId);
       setDetail(data);
+      if (isRetrySession(data)) {
+        try {
+          const comparison = await interviewApi.getRetryComparison(sessionId);
+          setRetryComparison(comparison);
+        } catch {
+          setRetryComparison(null);
+        }
+      } else {
+        setRetryComparison(null);
+      }
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败');
@@ -48,6 +60,20 @@ export default function InterviewDetailPage() {
       if (showLoading) {
         setLoading(false);
       }
+    }
+  };
+
+  const handleRetryQuestion = async (questionIndex: number) => {
+    if (!sessionId || retryingQuestion !== null) return;
+    setRetryingQuestion(questionIndex);
+    setError('');
+    try {
+      const session = await interviewApi.createRetrySession(sessionId, questionIndex);
+      navigate('/interview', { state: { sessionId: session.session_id } });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '创建同题再练失败');
+    } finally {
+      setRetryingQuestion(null);
     }
   };
 
@@ -117,6 +143,8 @@ export default function InterviewDetailPage() {
           </div>
         </div>
       )}
+
+      {retryComparison && <RetryComparisonPanel comparison={retryComparison} />}
 
       {hasReport && (
         <>
@@ -226,6 +254,11 @@ export default function InterviewDetailPage() {
                       </div>
                     )}
                     {q.feedback && <FeedbackBlocks feedback={q.feedback} />}
+                    <OptimizedAnswerPanel
+                      evaluation={q}
+                      onRetry={() => void handleRetryQuestion(q.question_index)}
+                      retrying={retryingQuestion === q.question_index}
+                    />
 
                     {/* 知识题：关键得分点 */}
                     {q.covered_points && q.covered_points.length > 0 && (
@@ -289,6 +322,10 @@ export default function InterviewDetailPage() {
       )}
     </div>
   );
+}
+
+function isRetrySession(detail: InterviewDetailDTO): boolean {
+  return detail.difficulty === 'retry' || detail.questions.some(q => Boolean(q.retry_source_session_id));
 }
 
 type CoachAction = {
@@ -370,6 +407,95 @@ function getAverageAnswerChars(questions: QuestionEvaluationDTO[]): number {
   return Math.round(answers.reduce((sum, item) => sum + item, 0) / answers.length);
 }
 
+function RetryComparisonPanel({ comparison }: { comparison: RetryAnswerComparisonDTO }) {
+  return (
+    <div className="mb-8 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-6">
+      <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="mb-2 inline-flex items-center gap-2 rounded-lg bg-white/80 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+            <RotateCcw className="h-3.5 w-3.5" />
+            同题再练对比
+          </div>
+          <h2 className="text-lg font-semibold text-slate-950">{comparison.improvement_summary}</h2>
+          <p className="mt-1 text-sm leading-6 text-slate-600">下一步：{comparison.next_action}</p>
+        </div>
+        <div className="rounded-lg bg-white px-4 py-3 text-center shadow-sm">
+          <div className="text-xs font-medium text-slate-500">分数变化</div>
+          <div className={`mt-1 text-2xl font-bold ${scoreDeltaTone(comparison.score_delta)}`}>
+            {formatScoreDelta(comparison.score_delta)}
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-4 rounded-lg bg-white/80 p-3">
+        <div className="mb-1 text-xs font-semibold text-indigo-700">原题</div>
+        <p className="text-sm leading-6 text-slate-700">{comparison.source_question}</p>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ComparisonAnswerCard
+          title="原回答"
+          answer={comparison.original_answer}
+          score={comparison.original_score}
+          feedback={comparison.original_feedback}
+        />
+        <ComparisonAnswerCard
+          title="重练回答"
+          answer={comparison.retry_answer}
+          score={comparison.retry_score}
+          feedback={comparison.retry_feedback}
+          emptyText={comparison.status === 'WAITING_ANSWER' ? '还没有完成重练回答。' : '等待 AI 评估完成。'}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ComparisonAnswerCard({
+  title,
+  answer,
+  score,
+  feedback,
+  emptyText = '暂无回答。',
+}: {
+  title: string;
+  answer: string | null;
+  score: number | null;
+  feedback: string | null;
+  emptyText?: string;
+}) {
+  return (
+    <div className="rounded-lg bg-white p-4 shadow-sm">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+        <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
+          {score === null ? '待评估' : `${score} 分`}
+        </span>
+      </div>
+      <p className="min-h-20 text-sm leading-6 text-slate-700">{answer || emptyText}</p>
+      {feedback && (
+        <div className="mt-3 rounded-lg bg-slate-50 p-3">
+          <div className="mb-1 text-xs font-semibold text-slate-500">点评</div>
+          <p className="text-xs leading-5 text-slate-600">{feedback}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatScoreDelta(delta: number | null): string {
+  if (delta === null) return '待评估';
+  if (delta > 0) return `+${delta}`;
+  return `${delta}`;
+}
+
+function scoreDeltaTone(delta: number | null): string {
+  if (delta === null) return 'text-slate-500';
+  if (delta > 0) return 'text-emerald-600';
+  if (delta < 0) return 'text-rose-600';
+  return 'text-slate-700';
+}
+
 function FeedbackBlocks({ feedback }: { feedback: string }) {
   const sections = parseFeedbackSections(feedback);
   if (sections.length <= 1) {
@@ -388,6 +514,96 @@ function FeedbackBlocks({ feedback }: { feedback: string }) {
           <p>{section.content}</p>
         </div>
       ))}
+    </div>
+  );
+}
+
+function OptimizedAnswerPanel({
+  evaluation,
+  onRetry,
+  retrying,
+}: {
+  evaluation: QuestionEvaluationDTO;
+  onRetry: () => void;
+  retrying: boolean;
+}) {
+  const hasCoachFeedback = Boolean(
+    evaluation.interviewer_judgement ||
+    evaluation.answer_issues?.length ||
+    evaluation.answer_framework?.length ||
+    evaluation.answer_80 ||
+    evaluation.answer_90 ||
+    evaluation.next_practice_question
+  );
+
+  if (!hasCoachFeedback) return null;
+
+  return (
+    <div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50/60 p-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h4 className="text-sm font-semibold text-emerald-900">优化回答</h4>
+          <p className="mt-0.5 text-xs text-emerald-700">按教练反馈重答一次，把低分题补成可复述版本。</p>
+        </div>
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={retrying}
+          className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-200"
+        >
+          {retrying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+          同题再练
+        </button>
+      </div>
+
+      {evaluation.interviewer_judgement && (
+        <div className="mb-3 text-sm leading-6 text-emerald-900">
+          <span className="font-medium">面试官判断：</span>{evaluation.interviewer_judgement}
+        </div>
+      )}
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        {evaluation.answer_issues && evaluation.answer_issues.length > 0 && (
+          <div className="rounded-lg bg-white/70 p-3">
+            <div className="mb-2 text-xs font-semibold text-orange-700">当前问题</div>
+            <ul className="space-y-1 text-sm leading-6 text-slate-700">
+              {evaluation.answer_issues.map((issue, index) => <li key={index}>- {issue}</li>)}
+            </ul>
+          </div>
+        )}
+
+        {evaluation.answer_framework && evaluation.answer_framework.length > 0 && (
+          <div className="rounded-lg bg-white/70 p-3">
+            <div className="mb-2 text-xs font-semibold text-slate-700">推荐框架</div>
+            <div className="flex flex-wrap gap-1.5">
+              {evaluation.answer_framework.map(item => (
+                <span key={item} className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700">{item}</span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {evaluation.answer_80 && (
+        <div className="mt-3 rounded-lg bg-white/80 p-3">
+          <div className="mb-1 text-xs font-semibold text-emerald-700">80 分回答</div>
+          <p className="text-sm leading-6 text-slate-700">{evaluation.answer_80}</p>
+        </div>
+      )}
+
+      {evaluation.answer_90 && (
+        <details className="mt-2 rounded-lg bg-white/80 p-3">
+          <summary className="cursor-pointer text-xs font-semibold text-primary-700">查看 90 分回答</summary>
+          <p className="mt-2 text-sm leading-6 text-slate-700">{evaluation.answer_90}</p>
+        </details>
+      )}
+
+      {evaluation.next_practice_question && (
+        <div className="mt-2 rounded-lg bg-indigo-50 p-3">
+          <div className="mb-1 text-xs font-semibold text-indigo-700">下一道复训题</div>
+          <p className="text-sm leading-6 text-indigo-900">{evaluation.next_practice_question}</p>
+        </div>
+      )}
     </div>
   );
 }

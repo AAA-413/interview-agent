@@ -22,6 +22,7 @@ import { interviewApi } from '../api/interview';
 import { knowledgeBaseApi } from '../api/knowledgeBase';
 import { resumeApi } from '../api/resume';
 import { skillApi } from '../api/skill';
+import { demoApi } from '../api/demo';
 import type { SessionListItemDTO, SkillDTO } from '../types/interview';
 import type { KnowledgeBaseListItemDTO } from '../types/knowledgeBase';
 import type { ResumeListItemDTO } from '../types/resume';
@@ -52,6 +53,7 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData>(emptyData);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [seedingDemo, setSeedingDemo] = useState(false);
 
   const fetchDashboard = async () => {
     setLoading(true);
@@ -79,13 +81,27 @@ export default function DashboardPage() {
     fetchDashboard();
   }, []);
 
+  const handleSeedDemo = async () => {
+    if (seedingDemo) return;
+    setSeedingDemo(true);
+    setError('');
+    try {
+      const result = await demoApi.seedDemoData();
+      navigate(result.interview_report_path);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '演示数据生成失败');
+    } finally {
+      setSeedingDemo(false);
+    }
+  };
+
   const stats = useMemo(() => {
     const completedResumes = data.resumes.filter(item => item.analyze_status === 'COMPLETED');
     const scoredResumes = data.resumes.filter(item => item.latest_score !== null);
     const avgResumeScore = scoredResumes.length
       ? Math.round(scoredResumes.reduce((sum, item) => sum + (item.latest_score || 0), 0) / scoredResumes.length)
       : 0;
-    const completedSessions = data.sessions.filter(item => item.status === 'COMPLETED');
+    const completedSessions = data.sessions.filter(item => item.status === 'COMPLETED' || item.status === 'EVALUATED');
     const readyKnowledgeBases = data.knowledgeBases.filter(item => item.index_status === 'COMPLETED');
 
     const readinessScore =
@@ -124,10 +140,10 @@ export default function DashboardPage() {
       };
     }
     return {
-      title: '复盘最近一次面试',
-      detail: '查看得分、薄弱点和参考答案，把训练闭环跑起来。',
-      label: '查看记录',
-      path: '/interviews',
+      title: '生成个人训练计划',
+      detail: '用评分校准找出低可信题和薄弱维度，把下一周练习排清楚。',
+      label: '查看训练计划',
+      path: '/training-plan',
       icon: TrendingUp,
     };
   }, [stats.completedResumes.length, stats.completedSessions.length]);
@@ -157,6 +173,14 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <button
+            onClick={handleSeedDemo}
+            disabled={seedingDemo}
+            className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-700 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {seedingDemo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            演示模式
+          </button>
           <button
             onClick={fetchDashboard}
             className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
