@@ -19,6 +19,7 @@ router = APIRouter()
 
 DEMO_FILE_HASH_PREFIX = "demo-offerpilot"
 DEMO_SKILL_ID = "demo-coach-report"
+DEMO_RETRY_SKILL_ID = f"{DEMO_SKILL_ID}-retry"
 
 
 @router.post("/seed", response_model=Result[DemoSeedResponse])
@@ -29,6 +30,7 @@ async def seed_demo_data(
     resume = await _ensure_demo_resume(db, user_id)
     await _ensure_demo_analysis(db, resume)
     session = await _ensure_demo_interview_session(db, user_id, resume.id)
+    await _ensure_demo_retry_session(db, user_id, resume.id, session)
     payload = DemoSeedResponse(
         resume_id=resume.id,
         interview_session_id=session.session_id,
@@ -212,6 +214,117 @@ async def _ensure_demo_interview_session(
 
     for answer in _demo_answers(session.id):
         db.add(answer)
+    await db.flush()
+    return session
+
+
+async def _ensure_demo_retry_session(
+    db: AsyncSession,
+    user_id: int,
+    resume_id: int,
+    source: InterviewSessionEntity,
+) -> InterviewSessionEntity:
+    result = await db.execute(
+        select(InterviewSessionEntity)
+        .where(
+            InterviewSessionEntity.user_id == user_id,
+            InterviewSessionEntity.skill_id == DEMO_RETRY_SKILL_ID,
+        )
+        .order_by(InterviewSessionEntity.created_at.desc())
+        .limit(1)
+    )
+    session = result.scalar_one_or_none()
+    if session:
+        return session
+
+    question = InterviewQuestionDTO(
+        question_index=0,
+        question="如果让你把 OfferPilot 卖给一个培训机构，你会用哪 3 个指标证明它值得续费？",
+        type="RETRY",
+        category="项目介绍-同题再练",
+        topic_summary=f"来源：{source.session_id} 第 1 题",
+        question_type="project",
+        reference_answer="建议从训练完成率、同题再练提分、面试报告采纳率三个指标证明续费价值。",
+        key_points=[
+            KeyPoint(point="训练完成率", score_range="70-85", weight="HIGH"),
+            KeyPoint(point="同题再练提分", score_range="80-95", weight="HIGH"),
+            KeyPoint(point="报告采纳与续费", score_range="80-95", weight="MEDIUM"),
+        ],
+        retry_source_session_id=source.session_id,
+        retry_source_question_index=0,
+    )
+    reference_answers = [
+        {
+            "question_index": 0,
+            "question": question.question,
+            "reference_answer": question.reference_answer,
+            "key_points": [point.point for point in (question.key_points or [])],
+        }
+    ]
+    session = InterviewSessionEntity(
+        user_id=user_id,
+        session_id=uuid.uuid4().hex[:16],
+        skill_id=DEMO_RETRY_SKILL_ID,
+        difficulty="demo-retry",
+        resume_id=resume_id,
+        total_questions=1,
+        current_question_index=1,
+        status=SessionStatus.EVALUATED,
+        questions_json=json.dumps([question.model_dump()], ensure_ascii=False),
+        overall_score=79,
+        overall_feedback="同题再练后能主动用训练完成率、重练提分和采纳率证明价值，商业表达更清楚。",
+        strengths_json=json.dumps(
+            [
+                "能把个人项目转成可销售的业务指标",
+                "补上了训练闭环的结果证据",
+                "回答结构从功能清单升级为续费价值证明",
+            ],
+            ensure_ascii=False,
+        ),
+        improvements_json=json.dumps(
+            [
+                "继续补充指标口径，例如统计周期和样本量",
+                "准备客户质疑数据真实性时的回答",
+            ],
+            ensure_ascii=False,
+        ),
+        reference_answers_json=json.dumps(reference_answers, ensure_ascii=False),
+        evaluate_status=AsyncTaskStatus.COMPLETED.value,
+        llm_provider="demo",
+        completed_at=datetime.now(),
+    )
+    db.add(session)
+    await db.flush()
+
+    db.add(
+        InterviewAnswerEntity(
+            session_id=session.id,
+            question_index=0,
+            question=question.question,
+            category=question.category,
+            user_answer=(
+                "我会看三个指标：第一是训练完成率，证明学员真的按计划练；第二是同题再练平均提分，"
+                "比如低分题从 62 分提升到 79 分，证明反馈有效；第三是报告建议采纳率和续费转化，"
+                "证明教练和学员愿意持续使用。"
+            ),
+            score=79,
+            feedback="同题再练后结构明显更清晰，已经能用训练完成率、提分和续费转化表达商业价值。",
+            reference_answer=question.reference_answer,
+            key_points_json=json.dumps(
+                {
+                    "question_type": "project",
+                    "dimensions": {"authenticity": 78, "technical_depth": 74, "depth": 80, "expression": 82},
+                    "interviewer_judgement": "回答已从功能介绍转为价值证明，但指标口径还可以更严谨。",
+                    "answer_issues": ["缺少样本量和统计周期", "续费转化还需要真实数据支撑"],
+                    "answer_framework": ["业务目标", "训练完成率", "同题提分", "建议采纳率", "续费价值"],
+                    "answer_80": "我会用训练完成率、同题再练提分和报告建议采纳率来证明价值。",
+                    "answer_90": "进一步会补统计口径：按 7 天训练周期看活跃学员完成率、低分题平均提分、教练采纳建议后的续费转化。",
+                    "next_practice_question": "如果客户质疑这些指标不真实，你怎么设计数据采集和防作弊？",
+                },
+                ensure_ascii=False,
+            ),
+        )
+    )
     await db.flush()
     return session
 

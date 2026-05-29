@@ -36,6 +36,20 @@ def test_training_routes_are_registered():
     paths = response.json()["paths"]
     assert "/api/training/calibration" in paths
     assert "/api/training/plan" in paths
+    assert "/api/training/tasks/progress" in paths
+    assert "/api/training/trends" in paths
+
+
+def test_dynamic_interview_routes_are_registered():
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    assert "/api/interview/jd/parse" in paths
+    assert "/api/interview/dynamic-sessions" in paths
+    assert "/api/interview/dynamic-sessions/{session_id}/turns/{turn_id}/answer" in paths
+    assert "/api/interview/dynamic-sessions/{session_id}/report" in paths
+    assert "/api/interview/dynamic-sessions/{session_id}/topics/{topic_id}/rag-insight" in paths
 
 
 def test_protected_endpoint_requires_bearer_token():

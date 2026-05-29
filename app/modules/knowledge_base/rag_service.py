@@ -38,8 +38,6 @@ ANSWER_SYSTEM_PROMPT = (
 
 class KnowledgeBaseRagService:
     def __init__(self):
-        # 多路检索引擎将在运行时初始化（需要 db session）
-        self.retrieval_engine = None
         # 重排序服务
         self.rerank_service = get_rerank_service()
         logger.info("RAG 服务初始化完成: rerank_enabled=%s", self.rerank_service.enabled)
@@ -76,16 +74,7 @@ class KnowledgeBaseRagService:
         )
 
         try:
-            # 初始化多路检索引擎（如果尚未初始化）
-            if self.retrieval_engine is None:
-                vector_channel = VectorSearchChannel(self, knowledge_base_vector_service, db)
-                from app.modules.knowledge_graph.graph_search_channel import GraphSearchChannel
-
-                graph_channel = GraphSearchChannel(db)
-                self.retrieval_engine = MultiChannelRetrievalEngine([vector_channel, graph_channel])
-                logger.info("多路检索引擎初始化: channels=2 (Vector + Graph)")
-
-            # 使用多路检索引擎
+            retrieval_engine = self._build_retrieval_engine(db)
             query_embedding = knowledge_base_vector_service.embed_text(rewritten_query)
             context = SearchContext(
                 question=question,
@@ -94,7 +83,7 @@ class KnowledgeBaseRagService:
                 query_embedding=query_embedding,
                 rewritten_query=rewritten_query,
             )
-            candidates = await self.retrieval_engine.retrieve(context)
+            candidates = await retrieval_engine.retrieve(context)
 
             # 重排序（如果启用）
             references = await self.rerank_service.rerank(question, candidates, top_k)
@@ -151,13 +140,7 @@ class KnowledgeBaseRagService:
         )
 
         try:
-            if self.retrieval_engine is None:
-                vector_channel = VectorSearchChannel(self, knowledge_base_vector_service, db)
-                from app.modules.knowledge_graph.graph_search_channel import GraphSearchChannel
-
-                graph_channel = GraphSearchChannel(db)
-                self.retrieval_engine = MultiChannelRetrievalEngine([vector_channel, graph_channel])
-
+            retrieval_engine = self._build_retrieval_engine(db)
             query_embedding = knowledge_base_vector_service.embed_text(rewritten_query)
             context = SearchContext(
                 question=question,
@@ -166,7 +149,7 @@ class KnowledgeBaseRagService:
                 query_embedding=query_embedding,
                 rewritten_query=rewritten_query,
             )
-            candidates = await self.retrieval_engine.retrieve(context)
+            candidates = await retrieval_engine.retrieve(context)
             references = await self.rerank_service.rerank(question, candidates, top_k)
 
             yield self._sse_event("meta", {"session_id": resolved_session_id, "rewritten_query": rewritten_query})
@@ -216,6 +199,13 @@ class KnowledgeBaseRagService:
         await knowledge_base_persistence_service.find_by_id_or_throw(db, kb_id)
         chats = await knowledge_base_persistence_service.find_recent_chats(db, kb_id)
         return [knowledge_base_persistence_service.to_chat_list_item(item) for item in chats]
+
+    def _build_retrieval_engine(self, db: AsyncSession) -> MultiChannelRetrievalEngine:
+        vector_channel = VectorSearchChannel(self, knowledge_base_vector_service, db)
+        from app.modules.knowledge_graph.graph_search_channel import GraphSearchChannel
+
+        graph_channel = GraphSearchChannel(db)
+        return MultiChannelRetrievalEngine([vector_channel, graph_channel])
 
     async def _rewrite_query(self, question: str, chat_history: list[dict] | None = None) -> str:
         try:

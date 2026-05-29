@@ -7,6 +7,32 @@ from alembic import context
 from app.config import settings
 from app.models.base import Base
 
+
+def import_models() -> None:
+    """Register ORM models with SQLAlchemy metadata for Alembic autogenerate."""
+    from app.modules.agent_orchestration.models import (  # noqa: F401
+        AgentCostLogEntity,
+        AgentExecutionEntity,
+        AgentExecutionStepEntity,
+        AgentPerformanceEntity,
+    )
+    from app.modules.auth.models import UserEntity  # noqa: F401
+    from app.modules.interview.models import (  # noqa: F401
+        InterviewAnswerEntity,
+        InterviewOperationMetricEntity,
+        InterviewSessionEntity,
+        InterviewTopicEntity,
+        InterviewTurnEntity,
+    )
+    from app.modules.knowledge_base.models import KnowledgeBaseEntity, KnowledgeChunkEntity, RagChatEntity  # noqa: F401
+    from app.modules.knowledge_graph.models import KnowledgeGraphEntity, KnowledgeTriple  # noqa: F401
+    from app.modules.organization.models import OrganizationEntity, OrganizationMemberEntity  # noqa: F401
+    from app.modules.resume.models import ResumeAnalysisEntity, ResumeEntity  # noqa: F401
+    from app.modules.training.models import TrainingTaskProgressEntity  # noqa: F401
+
+
+import_models()
+
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database.dsn)
 

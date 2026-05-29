@@ -76,12 +76,14 @@ def build_config_check_report(settings: Settings, check_ports: bool = True) -> C
             )
         )
 
-    if "http://localhost:5176" not in settings.cors.origins_list:
+    required_frontend_origins = {"http://localhost:5176", "http://127.0.0.1:5176"}
+    missing_frontend_origins = required_frontend_origins.difference(settings.cors.origins_list)
+    if missing_frontend_origins:
         issues.append(
             ConfigIssueDTO(
                 severity="WARN",
                 key="CORS_ALLOWED_ORIGINS",
-                message="CORS 未包含 ./start.sh 默认前端地址 http://localhost:5176。",
+                message=f"CORS 未包含 ./start.sh 默认前端地址：{', '.join(sorted(missing_frontend_origins))}。",
             )
         )
 

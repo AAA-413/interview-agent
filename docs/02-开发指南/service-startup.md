@@ -34,7 +34,7 @@ Get-ChildItem -Path . -Recurse -Directory -Filter "__pycache__" | Remove-Item -R
 
 ```bash
 # 启动前端（新终端）
-cd frontend && npm run dev
+cd frontend && VITE_API_PROXY_TARGET=http://127.0.0.1:8002 npm run dev
 ```
 
 ## 标准启动流程
@@ -97,8 +97,8 @@ node --version  # 需要 18+
 # 检查后端端口（8002）
 netstat -ano | findstr :8002
 
-# 检查前端端口（5173）
-netstat -ano | findstr :5173
+# 检查前端端口（./start.sh 默认 5176，手动 npm run dev 默认 5173）
+netstat -ano | findstr :5176
 
 # 如果端口被占用，终止进程
 taskkill /F /PID <PID>
@@ -159,12 +159,14 @@ cd frontend
 # 首次启动需要安装依赖
 npm install
 
-# 启动开发服务器
+# 启动开发服务器；本地演示推荐走 /api 同源代理，避免 CORS 干扰
+set VITE_API_PROXY_TARGET=http://127.0.0.1:8002
 npm run dev
 ```
 
 **前端端口说明：**
-- 默认端口：5173
+- `./start.sh` 默认端口：5176
+- 手动 `npm run dev` 默认端口：5173
 - 如果被占用，自动使用 5174
 
 ### 步骤 7：验证前端启动

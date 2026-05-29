@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from statistics import mean
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.base_persistence_service import safe_json_loads
+from app.common.error_code import ErrorCode
+from app.common.exception import BusinessException
 from app.modules.interview.models import InterviewSessionEntity, SessionStatus
 from app.modules.interview.persistence_service import interview_persistence_service
 from app.modules.resume.models import ResumeAnalysisEntity, ResumeEntity
 from app.modules.resume.persistence_service import resume_persistence_service
+from app.modules.training.models import TrainingTaskProgressEntity, TrainingTaskStatus
 from app.modules.training.schemas import (
     CalibrationDimensionDTO,
     CalibrationQuestionDTO,
@@ -18,6 +24,10 @@ from app.modules.training.schemas import (
     ScoreCalibrationDTO,
     TrainingDayDTO,
     TrainingTaskDTO,
+    TrainingTaskProgressDTO,
+    TrainingTrendDTO,
+    TrainingTrendPointDTO,
+    UpdateTrainingTaskProgressRequest,
 )
 
 PROJECT_DIMENSION_LABELS = {
@@ -30,19 +40,40 @@ PROJECT_DIMENSION_LABELS = {
 PRIORITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
 
 
+@dataclass
+class RetrySummary:
+    attempt_count: int = 0
+    latest_retry_score: int | None = None
+    latest_retry_delta: int | None = None
+    latest_retry_session_id: str | None = None
+    latest_at: datetime | None = None
+
+
 class TrainingService:
     async def get_score_calibration(self, db: AsyncSession, user_id: int) -> ScoreCalibrationDTO:
         sessions = await interview_persistence_service.find_all(db, user_id=user_id)
         evaluated_sessions = [item for item in sessions if item.status == SessionStatus.EVALUATED]
-        baseline = self._average_score([item.overall_score for item in evaluated_sessions])
+        primary_evaluated_sessions = [
+            item
+            for item in evaluated_sessions
+            if self._retry_source_key(interview_persistence_service.parse_questions_json(item.questions_json)) is None
+        ]
+        baseline = self._average_score([item.overall_score for item in primary_evaluated_sessions])
+        retry_summaries = self._build_retry_summaries(evaluated_sessions)
 
         question_items: list[CalibrationQuestionDTO] = []
         dimension_scores: dict[str, list[int]] = defaultdict(list)
-        for session in evaluated_sessions:
+        for session in primary_evaluated_sessions:
             questions = interview_persistence_service.parse_questions_json(session.questions_json)
             evaluations = interview_persistence_service.build_question_evaluations(session, questions)
             for evaluation in evaluations:
-                item = self._build_question_calibration(session, evaluation, baseline)
+                question_index = int(evaluation.get("question_index") or 0)
+                item = self._build_question_calibration(
+                    session,
+                    evaluation,
+                    baseline,
+                    retry_summaries.get((session.session_id, question_index)),
+                )
                 question_items.append(item)
 
                 if item.raw_score is not None:
@@ -74,7 +105,7 @@ class TrainingService:
 
         return ScoreCalibrationDTO(
             total_sessions=len(sessions),
-            evaluated_sessions=len(evaluated_sessions),
+            evaluated_sessions=len(primary_evaluated_sessions),
             total_questions=len(question_items),
             average_raw_score=self._average_score(raw_scores),
             calibrated_score=calibrated_score,
@@ -83,7 +114,7 @@ class TrainingService:
             review_needed_count=review_needed_count,
             high_risk_count=high_risk_count,
             summary=self._calibration_summary(
-                len(evaluated_sessions), len(question_items), calibrated_score, confidence
+                len(primary_evaluated_sessions), len(question_items), calibrated_score, confidence
             ),
             questions=question_items,
             dimensions=dimensions,
@@ -102,6 +133,8 @@ class TrainingService:
         analyses = [analysis for resume in resumes if (analysis := self._latest_analysis(resume))]
 
         tasks = self._build_candidate_tasks(calibration, resumes, analyses, days)
+        progress = await self._get_progress_by_task_id(db, user_id)
+        tasks = [self._apply_progress(task, progress.get(task.id)) for task in tasks]
         plan = self._schedule_tasks(tasks, days)
         resume_score = self._average_score([analysis.overall_score for analysis in analyses])
         readiness_score = self._readiness_score(calibration, resume_score)
@@ -116,11 +149,251 @@ class TrainingService:
             quick_wins=self._quick_wins(calibration, analyses),
         )
 
+    async def update_task_progress(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        request: UpdateTrainingTaskProgressRequest,
+    ) -> TrainingTaskProgressDTO:
+        status = TrainingTaskStatus(request.status)
+        task_lookup = await self._build_current_task_lookup(db, user_id)
+        task = task_lookup.get(request.task_id)
+        if task is None:
+            raise BusinessException(ErrorCode.BAD_REQUEST, "训练任务不存在或已过期，请刷新计划后重试。")
+
+        result = await db.execute(
+            select(TrainingTaskProgressEntity).where(
+                TrainingTaskProgressEntity.user_id == user_id,
+                TrainingTaskProgressEntity.task_id == request.task_id,
+            )
+        )
+        entity = result.scalar_one_or_none()
+        completed_at = datetime.now(timezone.utc) if status == TrainingTaskStatus.COMPLETED else None
+
+        if entity is None:
+            entity = TrainingTaskProgressEntity(
+                user_id=user_id,
+                task_id=request.task_id,
+                title=task.title,
+                task_type=task.task_type,
+                source_session_id=task.source_session_id,
+                question_index=task.question_index,
+                status=status,
+                notes=request.notes,
+                completed_at=completed_at,
+            )
+            db.add(entity)
+        else:
+            entity.title = task.title
+            entity.task_type = task.task_type
+            entity.source_session_id = task.source_session_id
+            entity.question_index = task.question_index
+            entity.status = status
+            entity.notes = request.notes
+            entity.completed_at = completed_at
+
+        await db.flush()
+        return self._progress_dto(entity)
+
+    async def get_training_trend(self, db: AsyncSession, user_id: int) -> TrainingTrendDTO:
+        sessions = await interview_persistence_service.find_all(db, user_id=user_id)
+        resumes = await resume_persistence_service.find_all(db, user_id=user_id)
+        progress_items = await self._get_progress_items(db, user_id)
+        task_lookup = await self._build_current_task_lookup(db, user_id, days=14)
+        completed_progress = [
+            item
+            for item in progress_items
+            if item.status == TrainingTaskStatus.COMPLETED and item.task_id in task_lookup
+        ]
+        retry_summaries = self._build_retry_summaries(
+            [item for item in sessions if item.status == SessionStatus.EVALUATED]
+        )
+
+        points: list[TrainingTrendPointDTO] = []
+        for session in sessions:
+            if session.status != SessionStatus.EVALUATED or session.overall_score is None:
+                continue
+            questions = interview_persistence_service.parse_questions_json(session.questions_json)
+            if self._retry_source_key(questions) is not None:
+                continue
+            at = session.completed_at or session.created_at
+            points.append(
+                TrainingTrendPointDTO(
+                    date=self._date_label(at),
+                    occurred_at=self._datetime_label(at),
+                    label=f"面试报告 {session.session_id[:6]}",
+                    metric_type="INTERVIEW_SCORE",
+                    score=session.overall_score,
+                    source_id=session.session_id,
+                )
+            )
+
+        for resume in resumes:
+            for analysis in resume.analyses:
+                if analysis.overall_score is None:
+                    continue
+                points.append(
+                    TrainingTrendPointDTO(
+                        date=self._date_label(analysis.analyzed_at),
+                        occurred_at=self._datetime_label(analysis.analyzed_at),
+                        label=f"简历评分 {resume.original_filename}",
+                        metric_type="RESUME_SCORE",
+                        score=analysis.overall_score,
+                        source_id=str(resume.id),
+                    )
+                )
+
+        for key, summary in retry_summaries.items():
+            if summary.latest_retry_delta is None:
+                continue
+            points.append(
+                TrainingTrendPointDTO(
+                    date=self._date_label(summary.latest_at),
+                    occurred_at=self._datetime_label(summary.latest_at),
+                    label=self._retry_trend_label(summary.latest_retry_delta),
+                    metric_type="RETRY_DELTA",
+                    score=summary.latest_retry_score,
+                    delta=summary.latest_retry_delta,
+                    source_id=summary.latest_retry_session_id or f"{key[0]}:{key[1]}",
+                )
+            )
+
+        completed_by_date: dict[str, dict[str, Any]] = defaultdict(lambda: {"count": 0, "latest_at": None})
+        for item in completed_progress:
+            if item.completed_at:
+                bucket = completed_by_date[self._date_label(item.completed_at)]
+                bucket["count"] += 1
+                if self._datetime_sort_value(item.completed_at) >= self._datetime_sort_value(bucket["latest_at"]):
+                    bucket["latest_at"] = item.completed_at
+        for date, bucket in completed_by_date.items():
+            points.append(
+                TrainingTrendPointDTO(
+                    date=date,
+                    occurred_at=self._datetime_label(bucket["latest_at"]),
+                    label="训练完成",
+                    metric_type="TRAINING_DONE",
+                    completed_tasks=bucket["count"],
+                )
+            )
+
+        points = sorted(points, key=self._trend_sort_key)
+        latest_interview_score = self._latest_score(points, "INTERVIEW_SCORE")
+        latest_resume_score = self._latest_score(points, "RESUME_SCORE")
+        latest_retry_delta = self._latest_delta(points, "RETRY_DELTA")
+
+        return TrainingTrendDTO(
+            summary=self._trend_summary(
+                latest_interview_score,
+                latest_resume_score,
+                latest_retry_delta,
+                len(completed_progress),
+            ),
+            latest_interview_score=latest_interview_score,
+            latest_resume_score=latest_resume_score,
+            latest_retry_delta=latest_retry_delta,
+            completed_task_count=len(completed_progress),
+            trend=points[-20:],
+        )
+
+    async def _get_progress_by_task_id(
+        self,
+        db: AsyncSession,
+        user_id: int,
+    ) -> dict[str, TrainingTaskProgressEntity]:
+        return {item.task_id: item for item in await self._get_progress_items(db, user_id)}
+
+    async def _get_progress_items(self, db: AsyncSession, user_id: int) -> list[TrainingTaskProgressEntity]:
+        result = await db.execute(
+            select(TrainingTaskProgressEntity)
+            .where(TrainingTaskProgressEntity.user_id == user_id)
+            .order_by(TrainingTaskProgressEntity.updated_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def _build_current_task_lookup(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        days: int = 14,
+    ) -> dict[str, TrainingTaskDTO]:
+        calibration = await self.get_score_calibration(db, user_id)
+        resumes = await resume_persistence_service.find_all(db, user_id=user_id)
+        analyses = [analysis for resume in resumes if (analysis := self._latest_analysis(resume))]
+        tasks = self._build_candidate_tasks(calibration, resumes, analyses, days)
+        return {task.id: task for task in tasks}
+
+    def _apply_progress(
+        self,
+        task: TrainingTaskDTO,
+        progress: TrainingTaskProgressEntity | None,
+    ) -> TrainingTaskDTO:
+        if progress is None:
+            return task
+        return task.model_copy(
+            update={
+                "status": progress.status.value,
+                "completed_at": self._datetime_label(progress.completed_at),
+            }
+        )
+
+    def _build_retry_summaries(
+        self,
+        evaluated_sessions: list[InterviewSessionEntity],
+    ) -> dict[tuple[str, int], RetrySummary]:
+        source_scores: dict[tuple[str, int], int] = {}
+        parsed_questions: dict[str, list] = {}
+        parsed_evaluations: dict[str, list[dict]] = {}
+
+        for session in evaluated_sessions:
+            questions = interview_persistence_service.parse_questions_json(session.questions_json)
+            evaluations = interview_persistence_service.build_question_evaluations(session, questions)
+            parsed_questions[session.session_id] = questions
+            parsed_evaluations[session.session_id] = evaluations
+            for evaluation in evaluations:
+                score = self._score_or_none(evaluation.get("score"))
+                if score is not None:
+                    source_scores[(session.session_id, int(evaluation.get("question_index") or 0))] = score
+
+        summaries: dict[tuple[str, int], RetrySummary] = {}
+        for session in evaluated_sessions:
+            source_key = self._retry_source_key(parsed_questions.get(session.session_id, []))
+            if source_key is None:
+                continue
+
+            retry_evaluation = self._evaluation_by_index(parsed_evaluations.get(session.session_id, []), 0)
+            retry_score = self._score_or_none(retry_evaluation.get("score"))
+            source_score = source_scores.get(source_key)
+            score_delta = retry_score - source_score if retry_score is not None and source_score is not None else None
+            at = session.completed_at or session.created_at
+
+            summary = summaries.setdefault(source_key, RetrySummary())
+            summary.attempt_count += 1
+            if summary.latest_at is None or self._datetime_sort_value(at) >= self._datetime_sort_value(
+                summary.latest_at
+            ):
+                summary.latest_at = at if isinstance(at, datetime) else None
+                summary.latest_retry_score = retry_score
+                summary.latest_retry_delta = score_delta
+                summary.latest_retry_session_id = session.session_id
+        return summaries
+
+    @staticmethod
+    def _retry_source_key(questions: list) -> tuple[str, int] | None:
+        if not questions:
+            return None
+        question = questions[0]
+        source_session_id = getattr(question, "retry_source_session_id", None)
+        source_question_index = getattr(question, "retry_source_question_index", None)
+        if source_session_id and source_question_index is not None:
+            return source_session_id, source_question_index
+        return None
+
     def _build_question_calibration(
         self,
         session: InterviewSessionEntity,
         evaluation: dict[str, Any],
         baseline: int,
+        retry_summary: RetrySummary | None = None,
     ) -> CalibrationQuestionDTO:
         score = self._score_or_none(evaluation.get("score"))
         reasons: list[str] = []
@@ -172,6 +445,10 @@ class TrainingService:
             evidence_count=evidence_count,
             missing_count=missing_count,
             action=self._question_action(score, confidence),
+            retry_attempt_count=retry_summary.attempt_count if retry_summary else 0,
+            latest_retry_score=retry_summary.latest_retry_score if retry_summary else None,
+            latest_retry_delta=retry_summary.latest_retry_delta if retry_summary else None,
+            retry_signal=self._retry_signal(retry_summary.latest_retry_delta) if retry_summary else None,
         )
 
     def _build_dimensions(self, dimension_scores: dict[str, list[int]]) -> list[CalibrationDimensionDTO]:
@@ -204,19 +481,23 @@ class TrainingService:
         for item in calibration.questions[:8]:
             if item.review_priority == "LOW" and (item.raw_score or 0) >= 75:
                 continue
+            priority = self._task_priority(item)
             tasks.append(
                 TrainingTaskDTO(
                     id=f"retry-{item.session_id}-{item.question_index}",
                     day=0,
                     title=f"重练：{self._short_text(item.question, 28)}",
                     task_type="RETRY_LOW_SCORE",
-                    priority=item.review_priority,
+                    priority=priority,
                     estimate_minutes=25,
-                    reason=item.action,
+                    reason=self._task_reason(item),
                     source_session_id=item.session_id,
                     question_index=item.question_index,
                     action_path=f"/interviews/{item.session_id}",
-                    checklist=["先写 5 点提纲", "补个人决策和证据", "对照 80 分回答再提交"],
+                    checklist=self._task_checklist(item),
+                    retry_attempt_count=item.retry_attempt_count,
+                    latest_retry_delta=item.latest_retry_delta,
+                    retry_signal=item.retry_signal,
                 )
             )
 
@@ -301,7 +582,12 @@ class TrainingService:
     def _schedule_tasks(self, tasks: list[TrainingTaskDTO], days: int) -> list[TrainingDayDTO]:
         ordered_tasks = sorted(
             tasks,
-            key=lambda item: (PRIORITY_ORDER.get(item.priority, 9), item.task_type, item.id),
+            key=lambda item: (
+                PRIORITY_ORDER.get(item.priority, 9),
+                self._retry_delta_rank(item.latest_retry_delta),
+                item.task_type,
+                item.id,
+            ),
         )
         buckets: list[list[TrainingTaskDTO]] = [[] for _ in range(days)]
         for index, task in enumerate(ordered_tasks[: days * 3]):
@@ -362,6 +648,15 @@ class TrainingService:
                 if len(wins) >= 5:
                     return wins
         return wins[:5]
+
+    @staticmethod
+    def _progress_dto(entity: TrainingTaskProgressEntity) -> TrainingTaskProgressDTO:
+        return TrainingTaskProgressDTO(
+            task_id=entity.task_id,
+            status=entity.status.value,
+            completed_at=TrainingService._datetime_label(entity.completed_at),
+            notes=entity.notes,
+        )
 
     @staticmethod
     def _latest_analysis(resume: ResumeEntity) -> ResumeAnalysisEntity | None:
@@ -465,6 +760,55 @@ class TrainingService:
         return "沉淀成可复用回答模板"
 
     @staticmethod
+    def _task_priority(item: CalibrationQuestionDTO) -> str:
+        delta = item.latest_retry_delta
+        if delta is None:
+            return item.review_priority
+        if delta <= 0:
+            return "HIGH"
+        if item.latest_retry_score is not None and item.latest_retry_score < 70:
+            return "HIGH"
+        if delta < 10 or (item.latest_retry_score is not None and item.latest_retry_score < 80):
+            return "MEDIUM"
+        return "LOW"
+
+    @staticmethod
+    def _task_reason(item: CalibrationQuestionDTO) -> str:
+        delta = item.latest_retry_delta
+        if delta is None:
+            return item.action
+        if delta >= 10:
+            return f"上次同题再练提升 {delta} 分，继续沉淀成稳定模板。"
+        if delta > 0:
+            return f"上次同题再练提升 {delta} 分，但还需要补量化结果和取舍细节。"
+        if delta == 0:
+            return "上次同题再练分数持平，优先重组回答结构。"
+        return f"上次同题再练下降 {abs(delta)} 分，需要先回看 80 分答案再练。"
+
+    @staticmethod
+    def _task_checklist(item: CalibrationQuestionDTO) -> list[str]:
+        delta = item.latest_retry_delta
+        if delta is None:
+            return ["先写 5 点提纲", "补个人决策和证据", "对照 80 分回答再提交"]
+        if delta >= 10:
+            return ["保留本次有效结构", "补 1 个量化指标", "整理成可复述模板"]
+        if delta > 0:
+            return ["保留提升点", "补充取舍细节", "再做一次限时口述"]
+        return ["对照 80 分回答拆结构", "重写开头结论", "补足证据后再练一次"]
+
+    @staticmethod
+    def _retry_signal(delta: int | None) -> str | None:
+        if delta is None:
+            return None
+        if delta >= 10:
+            return f"重练 +{delta}"
+        if delta > 0:
+            return f"重练 +{delta}"
+        if delta == 0:
+            return "重练持平"
+        return f"重练 {delta}"
+
+    @staticmethod
     def _review_priority(score: int | None, confidence: int) -> str:
         if score is None or confidence < 55 or (score is not None and score < 60):
             return "HIGH"
@@ -565,6 +909,109 @@ class TrainingService:
         if day <= 2:
             return "补齐项目证据"
         return "稳定表达与复盘"
+
+    @staticmethod
+    def _date_label(value: Any) -> str:
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        return datetime.now(timezone.utc).date().isoformat()
+
+    @staticmethod
+    def _datetime_label(value: Any) -> str | None:
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return None
+
+    @staticmethod
+    def _datetime_sort_value(value: Any) -> float:
+        if not isinstance(value, datetime):
+            return 0
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc).timestamp()
+        return value.timestamp()
+
+    @staticmethod
+    def _trend_sort_key(point: TrainingTrendPointDTO) -> tuple[float, str, str]:
+        return (
+            TrainingService._iso_datetime_sort_value(point.occurred_at),
+            point.metric_type,
+            point.label,
+        )
+
+    @staticmethod
+    def _iso_datetime_sort_value(value: str | None) -> float:
+        if not value:
+            return 0
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return 0
+        return TrainingService._datetime_sort_value(parsed)
+
+    @staticmethod
+    def _latest_score(points: list[TrainingTrendPointDTO], metric_type: str) -> int | None:
+        for point in reversed(points):
+            if point.metric_type == metric_type and point.score is not None:
+                return point.score
+        return None
+
+    @staticmethod
+    def _latest_delta(points: list[TrainingTrendPointDTO], metric_type: str) -> int | None:
+        for point in reversed(points):
+            if point.metric_type == metric_type and point.delta is not None:
+                return point.delta
+        return None
+
+    @staticmethod
+    def _trend_summary(
+        latest_interview_score: int | None,
+        latest_resume_score: int | None,
+        latest_retry_delta: int | None,
+        completed_task_count: int,
+    ) -> str:
+        if (
+            latest_interview_score is None
+            and latest_resume_score is None
+            and latest_retry_delta is None
+            and completed_task_count == 0
+        ):
+            return "暂无趋势数据，先完成一次简历分析或模拟面试。"
+        parts = []
+        if latest_interview_score is not None:
+            parts.append(f"最近面试分 {latest_interview_score}")
+        if latest_resume_score is not None:
+            parts.append(f"最近简历分 {latest_resume_score}")
+        if latest_retry_delta is not None:
+            parts.append(f"最近重练{TrainingService._delta_text(latest_retry_delta)}")
+        if completed_task_count:
+            parts.append(f"已完成 {completed_task_count} 个训练任务")
+        return "，".join(parts) + "。"
+
+    @staticmethod
+    def _retry_delta_rank(delta: int | None) -> int:
+        if delta is None:
+            return 2
+        if delta <= 0:
+            return 0
+        if delta < 10:
+            return 1
+        return 3
+
+    @staticmethod
+    def _retry_trend_label(delta: int) -> str:
+        return f"同题再练{TrainingService._delta_text(delta)}"
+
+    @staticmethod
+    def _delta_text(delta: int) -> str:
+        if delta > 0:
+            return f" +{delta} 分"
+        if delta == 0:
+            return "持平"
+        return f" {delta} 分"
+
+    @staticmethod
+    def _evaluation_by_index(evaluations: list[dict], question_index: int) -> dict:
+        return next((item for item in evaluations if item.get("question_index") == question_index), {})
 
 
 training_service = TrainingService()

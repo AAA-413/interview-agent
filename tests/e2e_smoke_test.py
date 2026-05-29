@@ -28,6 +28,15 @@ def log_section(name: str):
     print(f"{'=' * 50}")
 
 
+def result_data(response: httpx.Response) -> dict:
+    if response.status_code != 200:
+        return {}
+    data = response.json()
+    if isinstance(data, dict) and data.get("code") == 0 and isinstance(data.get("data"), dict):
+        return data["data"]
+    return data if isinstance(data, dict) else {}
+
+
 def test_health(client: httpx.Client):
     log_section("1. 健康检查")
     r = client.get("/api/health")
@@ -168,63 +177,126 @@ def test_interview_diagnosis(client: httpx.Client, headers: dict):
     return ok
 
 
-def test_organization_management(client: httpx.Client, headers: dict):
-    log_section("11. 组织/学员管理")
-    ts = int(time.time())
-    student_username = f"student_{ts}"
+def test_dynamic_coach_mode(client: httpx.Client, headers: dict):
+    log_section("11. 动态教练模式")
+    jd_text = "负责 RAG 多路召回、MCP 工具集成、工作流编排、监控告警和系统稳定性。"
+
     r = client.post(
-        "/api/auth/register",
+        "/api/interview/jd/parse",
+        headers=headers,
         json={
-            "username": student_username,
-            "password": "Test123456",
-            "email": f"{student_username}@test.com",
+            "target_role": "AI Agent 后端工程师",
+            "skill_id": "ai-agent",
+            "jd_text": jd_text,
         },
     )
-    if r.status_code not in (200, 201):
-        log(f"注册学员账号 -> {r.status_code} {r.text}", False)
+    parsed_jd = result_data(r)
+    ok_parse = (
+        r.status_code == 200
+        and parsed_jd.get("quality_score", 0) > 0
+        and parsed_jd.get("topic_weights")
+        and parsed_jd.get("question_type_mix")
+    )
+    log(
+        f"POST /api/interview/jd/parse -> {r.status_code}, quality={parsed_jd.get('quality_score')}",
+        ok_parse,
+    )
+    if not ok_parse:
         return False
 
     r = client.post(
-        "/api/organizations",
+        "/api/interview/dynamic-sessions",
         headers=headers,
-        json={"name": f"E2E 训练营 {ts}", "description": "端到端测试组织"},
+        json={
+            "target_role": "AI Agent 后端工程师",
+            "jd_text": jd_text,
+            "mode": "COACH",
+            "skill_id": "ai-agent",
+        },
     )
-    data = r.json() if r.status_code == 200 else {}
-    org = data.get("data", {}) if isinstance(data, dict) else {}
-    org_id = org.get("id")
-    ok_create = r.status_code == 200 and data.get("code") == 0 and org_id is not None
-    log(f"POST /api/organizations -> {r.status_code}, id={org_id}", ok_create)
+    created = result_data(r)
+    topics = created.get("plan_summary", {}).get("topics", [])
+    current_turn = created.get("current_turn", {})
+    session_id = created.get("session_id")
+    turn_id = current_turn.get("id")
+    ok_create = (
+        r.status_code == 200
+        and created.get("status") == "INTERVIEWING"
+        and isinstance(session_id, str)
+        and len(topics) == 4
+        and turn_id is not None
+    )
+    log(f"POST /api/interview/dynamic-sessions -> {r.status_code}, topics={len(topics)}", ok_create)
     if not ok_create:
         return False
 
     r = client.post(
-        f"/api/organizations/{org_id}/members",
+        f"/api/interview/dynamic-sessions/{session_id}/turns/{turn_id}/answer",
         headers=headers,
-        json={"username_or_email": student_username, "role": "STUDENT", "note": "E2E 学员"},
+        json={
+            "answer": (
+                "我负责把 RAG 多路召回接入 Agent 工作流。首先定义召回链路，然后设计 MCP 工具调用，"
+                "最后用监控告警和降级兜底降低失败风险，延迟从 3s 降到 1.8s。"
+            )
+        },
     )
-    ok_add = r.status_code == 200 and r.json().get("code") == 0
-    log(f"POST /api/organizations/{org_id}/members -> {r.status_code}", ok_add)
-
-    r = client.get(f"/api/organizations/{org_id}/members", headers=headers)
-    members = r.json().get("data", []) if r.status_code == 200 else []
-    ok_list = r.status_code == 200 and len(members) >= 2
-    log(f"GET /api/organizations/{org_id}/members -> {r.status_code}, {len(members)} 名成员", ok_list)
-
-    r = client.get(f"/api/organizations/{org_id}/dashboard", headers=headers)
-    data = r.json() if r.status_code == 200 else {}
-    dashboard = data.get("data", {}) if isinstance(data, dict) else {}
-    summary = dashboard.get("summary", {}) if isinstance(dashboard, dict) else {}
-    ok_dashboard = (
+    answer = result_data(r)
+    decision = answer.get("decision", {})
+    evaluation = answer.get("evaluation", {})
+    ok_answer = (
         r.status_code == 200
-        and data.get("code") == 0
-        and summary.get("member_count", 0) >= 2
-        and isinstance(dashboard.get("members", []), list)
+        and decision.get("action") in {"COACH_RETRY", "NEXT_TOPIC", "END"}
+        and isinstance(evaluation.get("ability_score"), int)
+        and answer.get("current_topic")
     )
     log(
-        f"GET /api/organizations/{org_id}/dashboard -> {r.status_code}, members={summary.get('member_count')}",
-        ok_dashboard,
+        "POST /api/interview/dynamic-sessions/{session}/turns/{turn}/answer "
+        f"-> {r.status_code}, action={decision.get('action')}, score={evaluation.get('ability_score')}",
+        ok_answer,
     )
-    return ok_add and ok_list and ok_dashboard
+    if not ok_answer:
+        return False
+
+    r = client.get(f"/api/interview/dynamic-sessions/{session_id}", headers=headers)
+    detail = result_data(r)
+    ok_detail = (
+        r.status_code == 200
+        and len(detail.get("topics", [])) == 4
+        and len(detail.get("turns", [])) >= 1
+        and detail.get("structured_jd")
+    )
+    log(
+        f"GET /api/interview/dynamic-sessions/{session_id} -> {r.status_code}, turns={len(detail.get('turns', []))}",
+        ok_detail,
+    )
+    if not ok_detail:
+        return False
+
+    r = client.post(f"/api/interview/dynamic-sessions/{session_id}/complete", headers=headers)
+    report = result_data(r)
+    ok_complete = (
+        r.status_code == 200
+        and report.get("readiness_score") is not None
+        and len(report.get("topic_summaries", [])) == 4
+        and len(report.get("tomorrow_tasks", [])) == 3
+    )
+    log(
+        f"POST /api/interview/dynamic-sessions/{session_id}/complete -> {r.status_code}, "
+        f"tasks={len(report.get('tomorrow_tasks', []))}",
+        ok_complete,
+    )
+    if not ok_complete:
+        return False
+
+    r = client.get(f"/api/interview/dynamic-sessions/{session_id}/report", headers=headers)
+    fetched_report = result_data(r)
+    ok_report = (
+        r.status_code == 200
+        and fetched_report.get("session_id") == session_id
+        and len(fetched_report.get("tomorrow_tasks", [])) == 3
+    )
+    log(f"GET /api/interview/dynamic-sessions/{session_id}/report -> {r.status_code}", ok_report)
+    return ok_report
 
 
 def test_demo_mode(client: httpx.Client, headers: dict) -> str | None:
@@ -299,6 +371,22 @@ def test_training_plan(client: httpx.Client, headers: dict):
         f"GET /api/training/calibration -> {r.status_code}, questions={calibration.get('total_questions')}",
         ok_calibration,
     )
+    questions = calibration.get("questions", []) if isinstance(calibration, dict) else []
+    retry_calibration = next(
+        (
+            item
+            for item in questions
+            if isinstance(item, dict)
+            and isinstance(item.get("latest_retry_delta"), int)
+            and item.get("latest_retry_delta") > 0
+        ),
+        None,
+    )
+    ok_retry_calibration = retry_calibration is not None
+    log(
+        f"校准包含同题再练分差 -> delta={retry_calibration.get('latest_retry_delta') if retry_calibration else None}",
+        ok_retry_calibration,
+    )
 
     r = client.get("/api/training/plan?days=3", headers=headers)
     data = r.json() if r.status_code == 200 else {}
@@ -312,7 +400,86 @@ def test_training_plan(client: httpx.Client, headers: dict):
         and any(day.get("tasks") for day in days)
     )
     log(f"GET /api/training/plan?days=3 -> {r.status_code}, days={len(days)}", ok_plan)
-    return ok_calibration and ok_plan
+    if not ok_plan:
+        return False
+
+    all_tasks = [task for day in days for task in day.get("tasks", []) if isinstance(task, dict)]
+    retry_task = next(
+        (task for task in all_tasks if isinstance(task.get("latest_retry_delta"), int) and task.get("retry_signal")),
+        None,
+    )
+    ok_retry_plan = retry_task is not None
+    log(
+        f"训练计划包含重练信号 -> signal={retry_task.get('retry_signal') if retry_task else None}",
+        ok_retry_plan,
+    )
+
+    first_task = next((task for task in all_tasks if task.get("id")), None)
+    if not first_task:
+        log("训练计划没有可标记任务", False)
+        return False
+
+    r = client.put(
+        "/api/training/tasks/progress",
+        headers=headers,
+        json={
+            "task_id": first_task["id"],
+            "status": "COMPLETED",
+            "title": first_task.get("title"),
+            "task_type": first_task.get("task_type"),
+            "source_session_id": first_task.get("source_session_id"),
+            "question_index": first_task.get("question_index"),
+        },
+    )
+    data = r.json() if r.status_code == 200 else {}
+    progress = data.get("data", {}) if isinstance(data, dict) else {}
+    ok_progress = r.status_code == 200 and data.get("code") == 0 and progress.get("status") == "COMPLETED"
+    log(f"PUT /api/training/tasks/progress -> {r.status_code}, status={progress.get('status')}", ok_progress)
+
+    r = client.get("/api/training/plan?days=3", headers=headers)
+    data = r.json() if r.status_code == 200 else {}
+    refreshed_plan = data.get("data", {}) if isinstance(data, dict) else {}
+    refreshed_days = refreshed_plan.get("plan", []) if isinstance(refreshed_plan, dict) else []
+    refreshed_task = next(
+        (task for day in refreshed_days for task in day.get("tasks", []) if task.get("id") == first_task["id"]),
+        {},
+    )
+    ok_refreshed = r.status_code == 200 and refreshed_task.get("status") == "COMPLETED"
+    log(f"GET /api/training/plan?days=3 (progress) -> {r.status_code}", ok_refreshed)
+
+    r = client.get("/api/training/trends", headers=headers)
+    data = r.json() if r.status_code == 200 else {}
+    trend = data.get("data", {}) if isinstance(data, dict) else {}
+    ok_trend = (
+        r.status_code == 200
+        and data.get("code") == 0
+        and trend.get("completed_task_count", 0) >= 1
+        and isinstance(trend.get("trend", []), list)
+    )
+    log(f"GET /api/training/trends -> {r.status_code}, completed={trend.get('completed_task_count')}", ok_trend)
+    retry_trend_points = [
+        item
+        for item in trend.get("trend", [])
+        if isinstance(item, dict)
+        and item.get("metric_type") == "RETRY_DELTA"
+        and isinstance(item.get("delta"), int)
+        and item.get("delta") > 0
+    ]
+    ok_retry_trend = bool(retry_trend_points) and isinstance(trend.get("latest_retry_delta"), int)
+    log(
+        f"趋势包含同题再练分差 -> latest_delta={trend.get('latest_retry_delta')}",
+        ok_retry_trend,
+    )
+    return (
+        ok_calibration
+        and ok_retry_calibration
+        and ok_plan
+        and ok_retry_plan
+        and ok_progress
+        and ok_refreshed
+        and ok_trend
+        and ok_retry_trend
+    )
 
 
 def test_data_isolation(client: httpx.Client):
@@ -373,7 +540,7 @@ def main():
         results.append(("面试会话", test_interview_sessions(client, headers)))
         results.append(("输入校验", test_input_validation(client, headers)))
         results.append(("面试诊断", test_interview_diagnosis(client, headers)))
-        results.append(("组织/学员管理", test_organization_management(client, headers)))
+        results.append(("动态教练模式", test_dynamic_coach_mode(client, headers)))
         demo_session_id = test_demo_mode(client, headers)
         results.append(("样例数据/演示模式", demo_session_id is not None))
         results.append(("评分校准与个人训练计划", test_training_plan(client, headers)))

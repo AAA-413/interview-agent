@@ -70,6 +70,7 @@ npm run dev
 - 前端页面：http://localhost:5176（`./start.sh` 默认端口；手动 `npm run dev` 会使用 Vite 默认端口 5173）
 - 产品工作台：http://localhost:5176/dashboard
 - API 文档：http://localhost:8002/docs
+- 本地演示默认让前端通过 Vite `/api` 同源代理访问后端；`VITE_API_BASE_URL` 保持为空即可，避免跨端口 CORS 干扰。需要直连后端时，确认 `CORS_ALLOWED_ORIGINS` 同时包含当前前端的 `localhost` 和 `127.0.0.1` 地址。
 
 ### 演示路径
 

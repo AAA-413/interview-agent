@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Loader2, Sparkles, AlertCircle, Zap, Target, TrendingUp } from 'lucide-react';
+import { Loader2, Sparkles, AlertCircle, Zap, Target, TrendingUp, FileText, Bot, Layers3, Briefcase } from 'lucide-react';
 import { skillApi } from '../api/skill';
 import { resumeApi } from '../api/resume';
 import type { SkillDTO } from '../types/interview';
@@ -12,6 +12,34 @@ const difficulties = [
   { value: 'HARD', label: '高级', desc: '架构设计和深度技术', icon: '🚀', color: 'from-purple-500 to-pink-500' },
 ];
 
+const interviewModes = [
+  {
+    value: 'STATIC',
+    label: '模拟面试',
+    desc: '一次生成固定题单，适合完整自测',
+    icon: Layers3,
+  },
+  {
+    value: 'COACH',
+    label: '教练模式',
+    desc: '4 个 topic，回答后给提示并支持同题重答',
+    icon: Bot,
+  },
+  {
+    value: 'STRICT',
+    label: '严厉模式',
+    desc: '4 个 topic，每题追问两轮，不给提示，验证真实水平',
+    icon: Zap,
+  },
+];
+
+const coachGenerationSteps = [
+  '正在分析简历项目',
+  '正在匹配 JD 重点',
+  '正在选择面试主题',
+  '正在准备第一题',
+];
+
 export default function InterviewHubPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -21,9 +49,13 @@ export default function InterviewHubPage() {
   const [resumes, setResumes] = useState<ResumeListItemDTO[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<string>('');
   const [selectedResume, setSelectedResume] = useState<number | null>(stateResumeId || null);
+  const [interviewMode, setInterviewMode] = useState<'STATIC' | 'COACH' | 'STRICT'>('STATIC');
   const [difficulty, setDifficulty] = useState('MEDIUM');
   const [questionCount, setQuestionCount] = useState(8);
+  const [targetRole, setTargetRole] = useState('');
+  const [jdText, setJdText] = useState('');
   const [creating, setCreating] = useState(false);
+  const [generationStepIndex, setGenerationStepIndex] = useState(0);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -40,6 +72,19 @@ export default function InterviewHubPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    if (!creating || interviewMode === 'STATIC') {
+      setGenerationStepIndex(0);
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setGenerationStepIndex(index => Math.min(index + 1, coachGenerationSteps.length - 1));
+    }, 1200);
+
+    return () => window.clearInterval(timer);
+  }, [creating, interviewMode]);
+
   const handleStart = async () => {
     if (!selectedSkill) {
       setError('请选择面试方向');
@@ -49,13 +94,40 @@ export default function InterviewHubPage() {
     setError('');
     try {
       const { interviewApi } = await import('../api/interview');
+      if (interviewMode === 'COACH' || interviewMode === 'STRICT') {
+        const session = await interviewApi.createDynamicSession({
+          skill_id: selectedSkill,
+          resume_id: selectedResume,
+          difficulty,
+          target_role: targetRole.trim() || null,
+          jd_text: jdText.trim() || null,
+          mode: interviewMode,
+          topic_count: 4,
+        });
+        if (session.status === 'FAILED') {
+          const generationError = session.plan_summary.generation_error;
+          setError(typeof generationError === 'string' ? generationError : '面试计划生成失败，可以重试');
+          return;
+        }
+        sessionStorage.setItem(`interview_mode_${session.session_id}`, 'dynamic');
+        if (session.status !== 'PLANNING' && (!session.current_topic || !session.current_turn)) {
+          setError('面试计划生成完成，但没有拿到第一题，请重试');
+          return;
+        }
+        navigate('/interview', { state: { sessionId: session.session_id, mode: 'dynamic' } });
+        return;
+      }
+
       const session = await interviewApi.createSession({
         skill_id: selectedSkill,
         resume_id: selectedResume,
         difficulty,
         question_count: questionCount,
+        jd_text: jdText.trim() || null,
+        target_role: targetRole.trim() || null,
       });
-      navigate('/interview', { state: { sessionId: session.session_id } });
+      sessionStorage.setItem(`interview_mode_${session.session_id}`, 'static');
+      navigate('/interview', { state: { sessionId: session.session_id, mode: 'static' } });
     } catch (err) {
       setError(err instanceof Error ? err.message : '创建面试失败');
     } finally {
@@ -196,6 +268,43 @@ export default function InterviewHubPage() {
 
         <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-slate-200/60 p-6 shadow-lg">
           <div className="flex items-center gap-2 mb-5">
+            <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-blue-500 rounded-lg flex items-center justify-center">
+              <Bot className="w-4 h-4 text-white" />
+            </div>
+            <h2 className="text-lg font-semibold text-slate-900">选择面试模式</h2>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {interviewModes.map(mode => {
+              const Icon = mode.icon;
+              return (
+                <button
+                  key={mode.value}
+                  onClick={() => setInterviewMode(mode.value as 'STATIC' | 'COACH' | 'STRICT')}
+                  className={`group p-5 rounded-xl border-2 text-left transition-all duration-300 ${
+                    interviewMode === mode.value
+                      ? 'border-primary-400 bg-gradient-to-r from-primary-50 to-indigo-50 shadow-md'
+                      : 'border-slate-200 hover:border-slate-300 bg-white hover:shadow-sm'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
+                      interviewMode === mode.value ? 'bg-gradient-to-br from-primary-500 to-indigo-500' : 'bg-slate-100 group-hover:bg-slate-200'
+                    }`}>
+                      <Icon className={`w-5 h-5 ${interviewMode === mode.value ? 'text-white' : 'text-slate-500'}`} />
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-800">{mode.label}</span>
+                      <p className="text-sm text-slate-500 mt-0.5">{mode.desc}</p>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-slate-200/60 p-6 shadow-lg">
+          <div className="flex items-center gap-2 mb-5">
             <div className="w-8 h-8 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg flex items-center justify-center">
               <TrendingUp className="w-4 h-4 text-white" />
             </div>
@@ -221,6 +330,38 @@ export default function InterviewHubPage() {
         </div>
 
         <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-slate-200/60 p-6 shadow-lg">
+          <div className="flex items-center gap-2 mb-5">
+            <div className="w-8 h-8 bg-gradient-to-br from-sky-500 to-cyan-500 rounded-lg flex items-center justify-center">
+              <FileText className="w-4 h-4 text-white" />
+            </div>
+            <h2 className="text-lg font-semibold text-slate-900">岗位 JD（可选）</h2>
+          </div>
+          <div className="mb-4">
+            <label className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-700">
+              <Briefcase className="w-4 h-4 text-slate-400" />
+              目标岗位
+            </label>
+            <input
+              value={targetRole}
+              onChange={(event) => setTargetRole(event.target.value.slice(0, 120))}
+              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-primary-400 focus:ring-4 focus:ring-primary-100"
+              placeholder="例如：AI Agent 开发实习生、Java 后端开发"
+            />
+          </div>
+          <textarea
+            value={jdText}
+            onChange={(event) => setJdText(event.target.value.slice(0, 10000))}
+            rows={6}
+            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none transition focus:border-primary-400 focus:ring-4 focus:ring-primary-100"
+            placeholder="粘贴岗位职责、任职要求和加分项，AI 会优先生成与目标岗位相关的题目"
+          />
+          <div className="mt-2 flex justify-between text-xs text-slate-400">
+            <span>不填则按所选面试方向生成通用题目</span>
+            <span>{jdText.length}/10000</span>
+          </div>
+        </div>
+
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-slate-200/60 p-6 shadow-lg">
           <div className="flex items-center justify-between mb-5">
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 bg-gradient-to-br from-pink-500 to-rose-500 rounded-lg flex items-center justify-center">
@@ -230,9 +371,9 @@ export default function InterviewHubPage() {
             </div>
             <div className="flex items-center gap-3">
               <span className="text-3xl font-bold bg-gradient-to-r from-primary-600 to-indigo-600 bg-clip-text text-transparent">
-                {questionCount}
+                {interviewMode === 'COACH' || interviewMode === 'STRICT' ? 4 : questionCount}
               </span>
-              <span className="text-sm text-slate-500">题</span>
+              <span className="text-sm text-slate-500">{interviewMode === 'COACH' || interviewMode === 'STRICT' ? 'topic' : '题'}</span>
             </div>
           </div>
           <input
@@ -241,13 +382,53 @@ export default function InterviewHubPage() {
             max={15}
             value={questionCount}
             onChange={(e) => setQuestionCount(parseInt(e.target.value))}
+            disabled={interviewMode === 'COACH' || interviewMode === 'STRICT'}
             className="w-full h-2 bg-slate-200 rounded-full appearance-none cursor-pointer accent-primary-500"
           />
           <div className="flex justify-between text-xs text-slate-400 mt-2">
-            <span>3 题</span>
-            <span>15 题</span>
+            {interviewMode === 'COACH' || interviewMode === 'STRICT' ? (
+              interviewMode === 'STRICT' ? (
+                <>
+                  <span>固定 2 个项目 topic + 追问</span>
+                  <span>1 个知识 + 1 个系统设计</span>
+                </>
+              ) : (
+              <>
+                <span>固定 2 个项目 topic</span>
+                <span>1 个知识 topic + 1 个系统设计 topic</span>
+              </>
+            )) : (
+              <>
+                <span>3 题</span>
+                <span>15 题</span>
+              </>
+            )}
           </div>
         </div>
+
+        {creating && (interviewMode === 'COACH' || interviewMode === 'STRICT') && (
+          <div className="rounded-2xl border border-primary-100 bg-primary-50/70 p-5">
+            <div className="mb-4 flex items-center gap-3">
+              <Loader2 className="h-5 w-5 animate-spin text-primary-600" />
+              <span className="font-medium text-primary-800">{coachGenerationSteps[generationStepIndex]}</span>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-4">
+              {coachGenerationSteps.map((step, index) => {
+                const active = index === generationStepIndex;
+                const done = index < generationStepIndex;
+                return (
+                  <div
+                    key={step}
+                    className={`h-2 rounded-full transition-colors ${
+                      done ? 'bg-primary-500' : active ? 'bg-primary-300' : 'bg-white'
+                    }`}
+                    title={step}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <button
           onClick={handleStart}
@@ -264,12 +445,12 @@ export default function InterviewHubPage() {
           {creating ? (
             <>
               <Loader2 className="w-6 h-6 animate-spin" />
-              <span>AI 正在生成题目...</span>
+              <span>{interviewMode === 'STRICT' ? '正在生成严厉面试计划...' : interviewMode === 'COACH' ? '正在生成教练计划...' : 'AI 正在生成题目...'}</span>
             </>
           ) : (
             <>
               <Sparkles className="w-6 h-6" />
-              <span>开始面试</span>
+              <span>{interviewMode === 'STRICT' ? '开始严厉模式' : interviewMode === 'COACH' ? '开始教练模式' : '开始面试'}</span>
             </>
           )}
         </button>

@@ -90,8 +90,9 @@ class VectorSearchChannel(SearchChannel):
             kb_result = await self.db_session.execute(kb_stmt)
             source_name = kb_result.scalar_one_or_none() or "未知文档"
 
-            # 1. 生成查询向量
-            query_embedding = self.vector_service.embed_text(context.question)
+            # 1. 生成查询向量。优先使用改写后的检索查询，避免多轮问题或口语化问题绕过 rewrite。
+            search_query = context.rewritten_query or context.question
+            query_embedding = context.query_embedding or self.vector_service.embed_text(search_query)
 
             # 2. 使用 pgvector 进行向量检索
             # 优先使用 pgvector，如果 embedding 列为空则降级到内存检索
@@ -113,7 +114,7 @@ class VectorSearchChannel(SearchChannel):
                 )
                 result_fallback = await self.db_session.execute(stmt_fallback)
                 all_chunks = result_fallback.scalars().all()
-                chunks = self.rag_service._search_chunks(all_chunks, context.question, context.top_k * 2)
+                chunks = self.rag_service._search_chunks(all_chunks, search_query, context.top_k * 2)
             else:
                 # 4. 转换为 RagReferenceDTO
                 chunks = []

@@ -4,7 +4,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.result import Result
 from app.database import get_db
 from app.modules.auth.dependencies import get_current_user_id
-from app.modules.training.schemas import PersonalTrainingPlanDTO, ScoreCalibrationDTO
+from app.modules.training.schemas import (
+    PersonalTrainingPlanDTO,
+    ScoreCalibrationDTO,
+    TrainingTaskProgressDTO,
+    TrainingTrendDTO,
+    UpdateTrainingTaskProgressRequest,
+)
 from app.modules.training.service import training_service
 
 router = APIRouter()
@@ -27,3 +33,22 @@ async def get_personal_training_plan(
 ):
     plan = await training_service.get_personal_training_plan(db, user_id, days)
     return Result.success(plan)
+
+
+@router.put("/tasks/progress", response_model=Result[TrainingTaskProgressDTO])
+async def update_training_task_progress(
+    request: UpdateTrainingTaskProgressRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    progress = await training_service.update_task_progress(db, user_id, request)
+    return Result.success(progress)
+
+
+@router.get("/trends", response_model=Result[TrainingTrendDTO])
+async def get_training_trend(
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    trend = await training_service.get_training_trend(db, user_id)
+    return Result.success(trend)

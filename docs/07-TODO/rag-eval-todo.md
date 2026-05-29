@@ -87,3 +87,19 @@
 - `pre_warm_entity_cache` 在评估开始前一次性提取所有问题的实体
 - `evaluate_strategy` 使用 `asyncio.gather` + `Semaphore(5)` 并行评估
 - 效果：222 次 LLM 调用 → 74 次，每个策略内 74 个问题并行处理
+
+## 6. 评估报告可信化（高优先级）
+
+**问题：** 当前 RAG 评估报告已经能展示 Recall、MRR、Hit@K 和延迟，但结论部分仍存在人工固定话术，可能与实际指标不一致。例如当重排序指标没有提升时，报告仍可能写出“稳定提升 5-10%”。
+
+**方案：**
+- 报告结论全部由 `tests/rag_eval_results.json` 指标计算生成，禁止写死提升幅度。
+- 增加质量阈值判断：单 KB、跨 KB、关系型/概念型问题分别给出 PASS/WARN/FAIL。
+- 增加回答质量评估，不只评估检索：引用覆盖率、低相关拒答、答案是否超出引用、推荐追问是否相关。
+- 在 CI 或质量脚本中支持“只生成报告”和“带阈值失败”两种模式，避免演示报告和工程门禁混在一起。
+
+**涉及文件：**
+- `scripts/rag_eval_report.py` — 指标驱动结论和阈值判断
+- `scripts/rag_eval_runner.py` — 保留每题检索结果，支持错误案例分析
+- `tests/rag_eval_report.md` — 重新生成可信报告
+- `docs/02-开发指南/rag-eval-testing.md` — 更新评估口径和报告解读方式

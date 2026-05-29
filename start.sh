@@ -231,18 +231,20 @@ start_frontend() {
   assert_port_available "$FRONTEND_PORT" "$pid_file" "$marker" "frontend"
 
   log "Starting frontend on http://127.0.0.1:$FRONTEND_PORT ..."
+  local api_proxy_target="http://127.0.0.1:$BACKEND_PORT"
   if command_exists screen; then
     local frontend_dir_q vite_q log_q
     printf -v frontend_dir_q "%q" "$ROOT_DIR/frontend"
     printf -v vite_q "%q" "$ROOT_DIR/frontend/node_modules/.bin/vite"
     printf -v log_q "%q" "$log_file"
     screen -dmS "$session_name" bash -lc \
-      "cd $frontend_dir_q && exec $vite_q --host $FRONTEND_HOST --port $FRONTEND_PORT --strictPort > $log_q 2>&1"
+      "cd $frontend_dir_q && VITE_API_PROXY_TARGET=$api_proxy_target exec $vite_q --host $FRONTEND_HOST --port $FRONTEND_PORT --strictPort > $log_q 2>&1"
     echo "screen:$session_name" > "$pid_file"
     echo "$FRONTEND_PORT" > "$port_file"
   else
     (
       cd "$ROOT_DIR/frontend"
+      export VITE_API_PROXY_TARGET="$api_proxy_target"
       nohup "$ROOT_DIR/frontend/node_modules/.bin/vite" \
         --host "$FRONTEND_HOST" \
         --port "$FRONTEND_PORT" \

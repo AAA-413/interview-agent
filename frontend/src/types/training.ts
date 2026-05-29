@@ -14,6 +14,10 @@ export interface CalibrationQuestionDTO {
   evidence_count: number;
   missing_count: number;
   action: string;
+  retry_attempt_count: number;
+  latest_retry_score: number | null;
+  latest_retry_delta: number | null;
+  retry_signal: string | null;
 }
 
 export interface CalibrationDimensionDTO {
@@ -52,6 +56,11 @@ export interface TrainingTaskDTO {
   question_index: number | null;
   action_path: string | null;
   checklist: string[];
+  status: 'TODO' | 'COMPLETED' | string;
+  completed_at: string | null;
+  retry_attempt_count: number;
+  latest_retry_delta: number | null;
+  retry_signal: string | null;
 }
 
 export interface TrainingDayDTO {
@@ -70,4 +79,41 @@ export interface PersonalTrainingPlanDTO {
   calibration: ScoreCalibrationDTO;
   plan: TrainingDayDTO[];
   quick_wins: string[];
+}
+
+export interface UpdateTrainingTaskProgressRequest {
+  task_id: string;
+  status: 'TODO' | 'COMPLETED';
+  title?: string | null;
+  task_type?: string | null;
+  source_session_id?: string | null;
+  question_index?: number | null;
+  notes?: string | null;
+}
+
+export interface TrainingTaskProgressDTO {
+  task_id: string;
+  status: 'TODO' | 'COMPLETED' | string;
+  completed_at: string | null;
+  notes: string | null;
+}
+
+export interface TrainingTrendPointDTO {
+  date: string;
+  occurred_at: string | null;
+  label: string;
+  metric_type: 'INTERVIEW_SCORE' | 'RESUME_SCORE' | 'RETRY_DELTA' | 'TRAINING_DONE' | string;
+  score: number | null;
+  delta: number | null;
+  completed_tasks: number;
+  source_id: string | null;
+}
+
+export interface TrainingTrendDTO {
+  summary: string;
+  latest_interview_score: number | null;
+  latest_resume_score: number | null;
+  latest_retry_delta: number | null;
+  completed_task_count: number;
+  trend: TrainingTrendPointDTO[];
 }

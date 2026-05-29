@@ -1,12 +1,21 @@
 import { request } from './request';
 import type {
   CreateInterviewRequest,
+  DynamicInterviewCreateRequest,
+  DynamicInterviewCreateResponse,
+  DynamicReportDTO,
+  DynamicSessionDetailDTO,
+  DynamicTopicRagInsightDTO,
+  DynamicTurnAnswerResponse,
   InterviewDetailDTO,
   InterviewQuestionDTO,
   InterviewReportDTO,
   InterviewSessionDTO,
+  JDParseRequest,
   RetryAnswerComparisonDTO,
   SessionListItemDTO,
+  StructuredJD,
+  SubmitDynamicTurnAnswerRequest,
   SubmitAnswerResponse,
   VoiceTranscriptionDTO,
 } from '../types/interview';
@@ -14,6 +23,10 @@ import type { InterviewDiagnosisDTO, InterviewDiagnosisRequest } from '../types/
 import type { ProjectDrillDTO, ProjectDrillRequest } from '../types/projectDrill';
 
 export const interviewApi = {
+  async parseJD(req: JDParseRequest): Promise<StructuredJD> {
+    return request.post<StructuredJD>('/api/interview/jd/parse', req);
+  },
+
   async createDiagnosis(req: InterviewDiagnosisRequest): Promise<InterviewDiagnosisDTO> {
     return request.post<InterviewDiagnosisDTO>('/api/interview/diagnosis', req, {
       timeout: 60000,
@@ -34,6 +47,44 @@ export const interviewApi = {
     return request.post<InterviewSessionDTO>('/api/interview/sessions', req, {
       timeout: 180000,
     });
+  },
+
+  async createDynamicSession(req: DynamicInterviewCreateRequest): Promise<DynamicInterviewCreateResponse> {
+    return request.post<DynamicInterviewCreateResponse>('/api/interview/dynamic-sessions', req, {
+      timeout: 180000,
+    });
+  },
+
+  async getDynamicSession(sessionId: string): Promise<DynamicSessionDetailDTO> {
+    return request.get<DynamicSessionDetailDTO>(`/api/interview/dynamic-sessions/${sessionId}`);
+  },
+
+  async submitDynamicTurnAnswer(
+    sessionId: string,
+    turnId: number,
+    req: SubmitDynamicTurnAnswerRequest
+  ): Promise<DynamicTurnAnswerResponse> {
+    return request.post<DynamicTurnAnswerResponse>(
+      `/api/interview/dynamic-sessions/${sessionId}/turns/${turnId}/answer`,
+      req,
+      { timeout: 180000 }
+    );
+  },
+
+  async completeDynamicSession(sessionId: string): Promise<DynamicReportDTO> {
+    return request.post<DynamicReportDTO>(`/api/interview/dynamic-sessions/${sessionId}/complete`, undefined, {
+      timeout: 180000,
+    });
+  },
+
+  async getDynamicReport(sessionId: string): Promise<DynamicReportDTO> {
+    return request.get<DynamicReportDTO>(`/api/interview/dynamic-sessions/${sessionId}/report`);
+  },
+
+  async getDynamicTopicRagInsight(sessionId: string, topicId: number): Promise<DynamicTopicRagInsightDTO> {
+    return request.get<DynamicTopicRagInsightDTO>(
+      `/api/interview/dynamic-sessions/${sessionId}/topics/${topicId}/rag-insight`
+    );
   },
 
   async createRetrySession(sessionId: string, questionIndex: number): Promise<InterviewSessionDTO> {

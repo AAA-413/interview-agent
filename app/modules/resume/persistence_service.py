@@ -25,12 +25,20 @@ class ResumePersistenceService(BasePersistenceService[ResumeEntity]):
     model = ResumeEntity
     not_found_error = ErrorCode.RESUME_NOT_FOUND
 
-    async def find_by_file_hash(self, db: AsyncSession, file_hash: str) -> ResumeEntity | None:
-        result = await db.execute(select(ResumeEntity).where(ResumeEntity.file_hash == file_hash))
+    async def find_by_file_hash(
+        self, db: AsyncSession, file_hash: str, user_id: int | None = None
+    ) -> ResumeEntity | None:
+        query = select(ResumeEntity).where(ResumeEntity.file_hash == file_hash)
+        if user_id is not None:
+            query = query.where(ResumeEntity.user_id == user_id)
+        result = await db.execute(query)
         return result.scalar_one_or_none()
 
-    async def exists_by_file_hash(self, db: AsyncSession, file_hash: str) -> bool:
-        result = await db.execute(select(ResumeEntity.id).where(ResumeEntity.file_hash == file_hash))
+    async def exists_by_file_hash(self, db: AsyncSession, file_hash: str, user_id: int | None = None) -> bool:
+        query = select(ResumeEntity.id).where(ResumeEntity.file_hash == file_hash)
+        if user_id is not None:
+            query = query.where(ResumeEntity.user_id == user_id)
+        result = await db.execute(query)
         return result.scalar_one_or_none() is not None
 
     async def find_all(self, db: AsyncSession, user_id: int | None = None) -> list[ResumeEntity]:

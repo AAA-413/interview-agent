@@ -1,0 +1,353 @@
+{
+  "run_id": "2026-05-29",
+  "generated_at": "2026-05-29 14:47",
+  "version": "1.0.0",
+  "sample_count": 5,
+  "total_checks": 44,
+  "passed": 29,
+  "failed": 15,
+  "pass_rate": 65.9,
+  "by_sample": {
+    "A": {
+      "passed": 5,
+      "failed": 2,
+      "rate": 71.4
+    },
+    "B": {
+      "passed": 5,
+      "failed": 2,
+      "rate": 71.4
+    },
+    "C": {
+      "passed": 9,
+      "failed": 7,
+      "rate": 56.2
+    },
+    "D": {
+      "passed": 5,
+      "failed": 2,
+      "rate": 71.4
+    },
+    "E": {
+      "passed": 5,
+      "failed": 2,
+      "rate": 71.4
+    }
+  },
+  "all_failures": [
+    "[F_TOPIC_MISSING] rag_multi_channel_retrieval not in plan",
+    "[F_TOPIC_MISSING] mcp_tool_integration not in plan",
+    "[F_TOPIC_MISSING] cache_penetration_avalanche not in plan",
+    "[F_TOPIC_MISSING] mysql_indexing_optimization not in plan",
+    "[F_score_band_strong_react_state_management] score=50, expected [80, 95]",
+    "[F_decision_action_normal_react_state_management] action=NEXT_TOPIC for normal answer",
+    "[F_score_band_normal_react_state_management] score=45, expected [60, 82]",
+    "[F_decision_action_vague_react_state_management] action=NEXT_TOPIC for vague answer",
+    "[F_decision_action_off_topic_react_state_management] action=NEXT_TOPIC for off_topic answer",
+    "[S_ranking_accuracy_react_state_management] scores: strong=50, normal=45, vague=47, off_topic=25",
+    "[F_TOPIC_MISSING] frontend_performance not in plan",
+    "[F_TOPIC_MISSING] async_task_queue_design not in plan",
+    "[F_TOPIC_MISSING] api_idempotency_design not in plan",
+    "[F_TOPIC_MISSING] lora_finetuning_practice not in plan",
+    "[F_TOPIC_MISSING] dpo_alignment not in plan"
+  ],
+  "quality_lines": {
+    "question_quality": {
+      "rate": 100.0,
+      "checks": 29,
+      "failures": 0
+    },
+    "followup_quality": {
+      "rate": 44.4,
+      "checks": 15,
+      "failures": 14
+    },
+    "scoring_quality": {
+      "rate": 0.0,
+      "checks": 28,
+      "failures": 1
+    }
+  },
+  "thresholds": {
+    "demo_ready": false,
+    "internal_test_ready": false,
+    "public_trial_ready": false
+  },
+  "_samples": [
+    {
+      "id": "A",
+      "label": "AI Agent / RAG 开发",
+      "resume_text": "参与 AI Agent 智能助手系统开发。负责 LLM 调用层、Prompt 模板管理、RAG 多通道检索（BM25 + 向量 + Cross-Encoder 重排序）和知识库构建。使用 FastAPI 实现 SSE 流式接口，集成 pgvector 向量存储。实现 MCP Stdio/SSE 工具调用协议。支持多租户 tenant_id 隔离和 DynamicContext 上下文管理。",
+      "jd_text": "AI Agent 开发实习生：参与 AI Agent 应用开发，负责 LLM 调用、Prompt 设计、RAG 检索增强、知识库构建、向量检索、工具调用/MCP 协议、多 Agent 协作、FastAPI 后端接口、Python 工程化和线上效果评估。",
+      "target_role": "AI Agent 开发实习生",
+      "skill_id": "ai-agent",
+      "expected_topic_keys": [
+        "rag_multi_channel_retrieval",
+        "mcp_tool_integration",
+        "project_role_ownership",
+        "project_metric_validation"
+      ],
+      "forbidden_claims": [
+        "多 Agent 协作框架从零搭建",
+        "千亿参数模型微调"
+      ],
+      "expected_question_type_mix": {
+        "PROJECT": 2,
+        "KNOWLEDGE": 1,
+        "SYSTEM_DESIGN": 1
+      },
+      "sample_answers": {
+        "rag_multi_channel_retrieval": {
+          "strong": "我们设计了 BM25 + 向量检索 + Cross-Encoder 重排序的三阶段检索。BM25 负责关键词召回、向量检索做语义匹配，Cross-Encoder 对 Top-20 做精排。Query 先经过 Query Rewrite 补全上下文，再用 intent classifier 决定是走知识库还是走工具调用。上线后检索 Top-5 准确率从 62% 提升到 84%，延迟增加约 120ms。",
+          "normal": "用了 BM25 和向量检索做混合检索，还加了一个重排序模型。检索流程是先把问题向量化，然后去 pgvector 里找最相似的 chunk，再跟 BM25 的结果合并后排序。",
+          "vague": "RAG 就是检索增强生成，我们现在用了一些向量数据库和检索算法，效果还不错。主要就是把文档切成 chunk，然后用 embedding 去搜。",
+          "off_topic": "我觉得 RAG 主要是前端渲染的问题，React 的虚拟 DOM diff 算法很关键，应该用服务端渲染来提升首屏速度。"
+        },
+        "mcp_tool_integration": {
+          "strong": "实现了 MCP Stdio 和 SSE 两种传输协议的工具调用。Stdio 用于本地工具（文件读写、shell 执行），SSE 用于远程服务调用。工具注册采用声明式配置，每个工具定义包含 name、description、input_schema 和 endpoint。关键难点是超时处理和工具返回结果的 token 预算控制——我们限制工具返回结果不超过 2048 token。",
+          "normal": "我们用 MCP 协议来接入外部工具。定义了工具描述 schema，LLM 根据用户意图选择调用哪个工具。主要做了 Stdio 和 SSE 两种方式。",
+          "vague": "MCP 是模型上下文协议，可以接入各种工具。我们项目里用了一些工具来帮助 LLM 完成任务，效果挺好的。",
+          "off_topic": "MCP 和微服务架构很像，应该用 Docker Compose 来编排，然后加上 Kubernetes 做服务发现和负载均衡。"
+        }
+      },
+      "expected_score_bands": {
+        "strong": [
+          80,
+          95
+        ],
+        "normal": [
+          60,
+          82
+        ],
+        "vague": [
+          30,
+          60
+        ],
+        "off_topic": [
+          0,
+          40
+        ]
+      }
+    },
+    {
+      "id": "B",
+      "label": "Java 后端 / Redis / MySQL",
+      "resume_text": "参与电商订单系统开发。负责订单状态机设计和实现，使用 Spring Boot + MyBatis。设计 Redis 缓存策略（Cache-Aside 模式）处理热点商品查询，QPS 从 1200 提升到 8000。实现 MySQL 读写分离和分库分表（ShardingSphere），处理订单数据归档。优化慢 SQL，将复杂查询从 3.2s 降到 180ms。",
+      "jd_text": "Java 后端开发工程师：负责核心业务系统设计与开发。要求精通 Java、Spring Boot、MySQL 性能优化、Redis 缓存策略、分布式系统设计。有高并发、高可用系统经验优先。",
+      "target_role": "Java 后端开发工程师",
+      "skill_id": "java-backend",
+      "expected_topic_keys": [
+        "cache_penetration_avalanche",
+        "mysql_indexing_optimization",
+        "project_metric_validation",
+        "high_concurrency_design"
+      ],
+      "forbidden_claims": [
+        "从零设计分布式事务框架",
+        "自研消息队列"
+      ],
+      "expected_question_type_mix": {
+        "PROJECT": 2,
+        "KNOWLEDGE": 1,
+        "SYSTEM_DESIGN": 1
+      },
+      "sample_answers": {
+        "cache_penetration_avalanche": {
+          "strong": "热点商品查询采用 Cache-Aside 模式，读的时候先查 Redis，miss 再查 MySQL 并回写缓存。缓存穿透用布隆过滤器拦截不存在的商品 ID，缓存击穿对热点 key 加互斥锁，缓存雪崩给不同 key 设置随机过期时间（基准 TTL ± 15%）。还用了二级缓存——本地 Caffeine 缓存 + Redis。QPS 从 1200 提到 8000，P99 延迟从 450ms 降到 35ms。",
+          "normal": "我们用了 Redis 做缓存。读请求先查 Redis，没有再查 MySQL。对于热点数据用了互斥锁防止击穿。过期时间设了不同的值防止雪崩。",
+          "vague": "Redis 做缓存很好用，我们项目里很多地方都用了。缓存可以大幅提升性能，减少数据库压力。主要是把热点数据放在 Redis 里。",
+          "off_topic": "缓存应该用 CDN 来做，CloudFront 或者阿里云 CDN 可以缓存静态资源，配合 Nginx 做反向代理，性能会更好。"
+        },
+        "mysql_indexing_optimization": {
+          "strong": "慢 SQL 优化主要从三个方向入手：1) 索引优化——用 EXPLAIN 分析执行计划，发现全表扫描后加了联合索引 (status, create_time)，覆盖索引避免回表；2) SQL 重写——把 OR 条件拆成 UNION ALL，避免索引失效；3) 分库分表——按 user_id 哈希分 16 个库，每库 64 张表。最终复杂查询从 3.2s 降到 180ms。",
+          "normal": "优化了 MySQL 慢查询，加了合适的索引，用 EXPLAIN 看了一下执行计划。把一些复杂的查询拆分成了更简单的查询，性能提升了不少。",
+          "vague": "数据库优化就是加索引，索引加对了查询就快了。MySQL 的 InnoDB 引擎还可以，配合 B+ 树索引。",
+          "off_topic": "MySQL 太老了，应该用 MongoDB。文档型数据库对电商这种灵活的商品属性更好，不需要提前定义 schema。"
+        }
+      },
+      "expected_score_bands": {
+        "strong": [
+          80,
+          95
+        ],
+        "normal": [
+          60,
+          82
+        ],
+        "vague": [
+          30,
+          60
+        ],
+        "off_topic": [
+          0,
+          40
+        ]
+      }
+    },
+    {
+      "id": "C",
+      "label": "前端 / React / 性能优化",
+      "resume_text": "参与 SaaS 管理后台前端开发。使用 React 18 + TypeScript + Tailwind CSS 构建组件库，封装 30+ 通用组件。实现虚拟滚动（react-window）优化万级列表渲染，列表帧率从 15fps 提升到 55fps。使用 React.lazy + Suspense 做代码分割，首屏加载减少 40%。实现 WebSocket 实时通知和离线缓存（Service Worker）。",
+      "jd_text": "前端开发工程师：负责 SaaS 平台前端架构与性能优化。要求精通 React、TypeScript、CSS 工程化、前端性能优化。有组件库建设、前端工程化经验优先。",
+      "target_role": "前端开发工程师",
+      "skill_id": "frontend",
+      "expected_topic_keys": [
+        "react_state_management",
+        "frontend_performance",
+        "project_role_ownership",
+        "scalability_design"
+      ],
+      "forbidden_claims": [
+        "自研前端框架替代 React",
+        "微前端架构从零搭建"
+      ],
+      "expected_question_type_mix": {
+        "PROJECT": 2,
+        "KNOWLEDGE": 1,
+        "SYSTEM_DESIGN": 1
+      },
+      "sample_answers": {
+        "react_state_management": {
+          "strong": "组件库的状态管理分层：组件内状态用 useState/useReducer，跨组件共享用 Context + useMemo 避免不必要的重渲染。复杂业务状态用 Zustand（轻量、无 boilerplate）。服务端状态统一用 React Query 管理缓存、乐观更新和重试策略。关键优化是状态归一化——避免同一数据在多处存储导致不一致。",
+          "normal": "我们项目用 React 的 useState 和 useContext 管理状态。有一些全局状态用了 Redux，但是后来觉得太重了就换成了 Zustand。",
+          "vague": "React 状态管理有很多方案，Redux、MobX、Zustand 都可以。我觉得选一个团队熟悉的就行，重要的是保持一致性。",
+          "off_topic": "状态管理不应该在前端做，应该全部放到后端。用数据库存储所有状态，前端只是展示层。GraphQL 就是为此设计的。"
+        },
+        "frontend_performance": {
+          "strong": "做了四层优化：1) 渲染层——虚拟滚动 react-window 处理万级列表，帧率从 15fps 到 55fps；2) 加载层——React.lazy + Suspense 做路由级代码分割，首屏 JS 体积减少 40%；3) 缓存层——Service Worker 缓存静态资源和 API 响应，离线可用；4) 网络层——关键 API 预加载（prefetch），图片懒加载 + WebP 格式。整体 LCP 从 3.8s 降到 1.4s。",
+          "normal": "做了代码分割和懒加载，用 React.lazy 把不常用的页面拆分出去。列表渲染用了虚拟滚动，图片做了懒加载。首页加载速度提升了不少。",
+          "vague": "前端性能优化就是减少请求、压缩资源、用 CDN。React 本身性能还可以，写好代码就行。",
+          "off_topic": "性能优化应该用 SSR，Next.js 的服务端渲染才是未来。客户端渲染怎么优化都不如 SSR 快。"
+        }
+      },
+      "expected_score_bands": {
+        "strong": [
+          80,
+          95
+        ],
+        "normal": [
+          60,
+          82
+        ],
+        "vague": [
+          30,
+          60
+        ],
+        "off_topic": [
+          0,
+          40
+        ]
+      }
+    },
+    {
+      "id": "D",
+      "label": "Python 后端 / FastAPI",
+      "resume_text": "参与内部工具平台后端开发。使用 FastAPI + SQLAlchemy async 构建 RESTful API。实现异步任务队列（Redis Streams + Consumer Group），支持任务重试、超时和幂等。集成 MinIO 对象存储处理文件上传。使用 Pydantic 做请求验证和配置管理。编写 pytest 异步测试覆盖核心接口。",
+      "jd_text": "Python 后端开发工程师：负责 API 服务和数据平台开发。要求精通 Python、FastAPI、异步编程、数据库设计、任务队列。有系统设计和高可用经验优先。",
+      "target_role": "Python 后端开发工程师",
+      "skill_id": "python-backend",
+      "expected_topic_keys": [
+        "async_task_queue_design",
+        "api_idempotency_design",
+        "project_role_ownership",
+        "availability_fault_tolerance"
+      ],
+      "forbidden_claims": [
+        "从零设计分布式调度平台",
+        "自研 ORM 框架"
+      ],
+      "expected_question_type_mix": {
+        "PROJECT": 2,
+        "KNOWLEDGE": 1,
+        "SYSTEM_DESIGN": 1
+      },
+      "sample_answers": {
+        "async_task_queue_design": {
+          "strong": "基于 Redis Streams 实现异步任务队列。Producer 用 XADD 发送任务，Consumer Group 用 XREADGROUP 消费。每个任务有唯一 message_id 做幂等——消费前先查 Redis 是否已处理。超时任务用 Pending Entries List (XPENDING) 检测，超过 5 分钟未 ACK 的自动重试（最多 3 次）。Consumer 故障时通过 XCLAIM 转移任务到健康实例。",
+          "normal": "用了 Redis Streams 做任务队列。生产者发消息，消费者从 stream 里读。支持任务重试和超时处理。Consumer Group 可以多个实例并行消费。",
+          "vague": "异步任务用消息队列就行，Redis 或者 RabbitMQ 都可以。任务放到队列里，worker 从队列里取出来执行。",
+          "off_topic": "异步任务应该用多线程，Python 的 ThreadPoolExecutor 就能搞定。不需要引入 Redis 这么重的组件。"
+        },
+        "api_idempotency_design": {
+          "strong": "幂等设计分三层：1) 接口层——写操作要求客户端传 Idempotency-Key，服务端用 Redis 存储 (key, status, result)，24 小时过期；2) 业务层——订单创建先查是否已存在相同 request_id 的记录；3) 任务层——异步任务用 message_id 去重。关键 tradeoff：存储幂等 key 的成本 vs 重复操作的风险，我们选择对金额相关接口强制幂等。",
+          "normal": "重要的写接口加了幂等处理。客户端传一个唯一 key，服务端检查这个 key 有没有被处理过，处理过就直接返回之前的结果。用 Redis 存储这些 key。",
+          "vague": "幂等就是同一个请求多次调用结果一样。GET 请求天然幂等，POST 需要自己处理。一般用数据库唯一约束就行。",
+          "off_topic": "幂等不重要，前端做防重复提交就够了。用户不会没事重复提交的，加个 loading 状态禁用按钮就行。"
+        }
+      },
+      "expected_score_bands": {
+        "strong": [
+          80,
+          95
+        ],
+        "normal": [
+          60,
+          82
+        ],
+        "vague": [
+          30,
+          60
+        ],
+        "off_topic": [
+          0,
+          40
+        ]
+      }
+    },
+    {
+      "id": "E",
+      "label": "LLM 微调 / LoRA / DPO",
+      "resume_text": "参与大模型微调项目。使用 LoRA 对 ChatGLM-6B 做指令微调，在 4 张 A100 上训练。实现 DPO（Direct Preference Optimization）替代 RLHF 做偏好对齐，人工标注 2000 条对比数据。设计自动评估流水线——用 GPT-4 做 judge 对微调后模型打分，结合人工抽检校准。微调后模型在内部评测集上胜率从 42% 提升到 67%。",
+      "jd_text": "LLM 算法工程师：负责大模型微调和评估。要求熟悉 LoRA/QLoRA、DPO/RLHF、Prompt Engineering、模型评估。有实际微调项目经验和 GPU 训练经验优先。",
+      "target_role": "LLM 算法工程师",
+      "skill_id": "llm-finetuning-rl",
+      "expected_topic_keys": [
+        "lora_finetuning_practice",
+        "dpo_alignment",
+        "project_metric_validation",
+        "cost_latency_tradeoff"
+      ],
+      "forbidden_claims": [
+        "从零预训练大语言模型",
+        "千卡集群训练调度"
+      ],
+      "expected_question_type_mix": {
+        "PROJECT": 2,
+        "KNOWLEDGE": 1,
+        "SYSTEM_DESIGN": 1
+      },
+      "sample_answers": {
+        "lora_finetuning_practice": {
+          "strong": "用 LoRA 对 ChatGLM-6B 做指令微调。配置：rank=8, alpha=16, target_modules=['q_proj', 'v_proj', 'k_proj', 'o_proj']。数据集 5000 条指令-回答对，覆盖代码生成、文本摘要、对话三个任务。训练 3 个 epoch，learning rate 3e-4 with cosine schedule。关键发现：rank=8 和 rank=16 效果接近，但参数量只有 1/3；target_modules 加上 k_proj 对对话质量提升明显。",
+          "normal": "用 LoRA 微调了 ChatGLM，在 A100 上训练。加了 adapter 层，只训练少量参数。效果比全量微调差一点但省了很多资源。",
+          "vague": "LoRA 就是低秩适配，可以在不训练全部参数的情况下微调大模型。现在很流行，很多公司都在用。",
+          "off_topic": "微调太费资源了，不如直接写 Prompt。现在的模型 zero-shot 能力很强，精心设计 prompt 就能达到微调 80% 的效果。"
+        },
+        "dpo_alignment": {
+          "strong": "DPO 替代 RLHF 做偏好对齐。流程：1) 收集 SFT 模型在 500 个 prompt 上的回复对（好/差各一条）；2) 人工标注偏好，标注一致性用 Fleiss' Kappa 检查（达到 0.72）；3) DPO 训练 1 epoch，beta=0.1，reference model 用 SFT checkpoint。相比 RLHF 省掉了 reward model 训练和 PPO 调参。内部 eval 胜率从 42% 到 67%。但要警惕 reward hacking——模型可能学会迎合表面偏好而非真正提升质量。",
+          "normal": "我们用 DPO 做对齐，比 RLHF 简单——不需要训练 reward model。收集了一些好坏回答的对比数据，让模型直接学习偏好。效果提升明显。",
+          "vague": "DPO 是对齐技术，可以让模型更符合人类偏好。比 RLHF 简单，不需要强化学习。",
+          "off_topic": "模型对齐应该靠规则引擎，写一些正则表达式过滤敏感词，比训练模型靠谱多了。训练出来的对齐不可控。"
+        }
+      },
+      "expected_score_bands": {
+        "strong": [
+          80,
+          95
+        ],
+        "normal": [
+          60,
+          82
+        ],
+        "vague": [
+          30,
+          60
+        ],
+        "off_topic": [
+          0,
+          40
+        ]
+      }
+    }
+  ]
+}

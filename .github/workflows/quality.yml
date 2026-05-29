@@ -1,0 +1,69 @@
+name: Quality
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend Quality
+    runs-on: ubuntu-latest
+
+    env:
+      JWT_SECRET_KEY: test-secret
+      AI_BAILIAN_API_KEY: dummy-key
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install backend dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          grep -v '^unstructured' requirements.txt > /tmp/requirements-ci.txt
+          .venv/bin/python -m pip install -r /tmp/requirements-ci.txt pytest pytest-asyncio ruff
+
+      - name: Compile Python
+        run: .venv/bin/python -m compileall -q app scripts tests
+
+      - name: Ruff check
+        run: .venv/bin/ruff check .
+
+      - name: Ruff format check
+        run: .venv/bin/ruff format --check .
+
+      - name: Pytest
+        run: .venv/bin/pytest -q
+
+  frontend:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build frontend
+        run: npm run build

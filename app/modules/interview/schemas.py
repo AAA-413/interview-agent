@@ -42,6 +42,197 @@ class CreateInterviewRequest(BaseModel):
     level: str | None = Field(default=None, max_length=30)
 
 
+class StructuredJD(BaseModel):
+    raw_jd: str = ""
+    quality_score: int = Field(default=0, ge=0, le=100)
+    quality_level: str = "LOW"
+    missing_parts: list[str] = Field(default_factory=list)
+    user_suggestion: str | None = None
+    role_title: str | None = None
+    role_domain: str = "common_engineering"
+    seniority: str = "unknown"
+    required_skills: list[str] = Field(default_factory=list)
+    preferred_skills: list[str] = Field(default_factory=list)
+    responsibilities: list[str] = Field(default_factory=list)
+    domain_keywords: list[str] = Field(default_factory=list)
+    topic_weights: dict[str, float] = Field(default_factory=dict)
+    question_type_mix: dict[str, float] = Field(default_factory=dict)
+
+
+class JDParseRequest(BaseModel):
+    target_role: str | None = Field(default=None, max_length=120)
+    skill_id: str | None = Field(default=None, max_length=64)
+    jd_text: str | None = Field(default=None, max_length=10000)
+
+
+class DynamicInterviewCreateRequest(BaseModel):
+    resume_id: int | None = None
+    target_role: str | None = Field(default=None, max_length=120)
+    target_company: str | None = Field(default=None, max_length=120)
+    level: str | None = Field(default=None, max_length=40)
+    jd_text: str | None = Field(default=None, max_length=10000)
+    mode: str = Field(default="COACH", max_length=20)
+    topic_count: int = Field(default=4, ge=4, le=4)
+    skill_id: str | None = Field(default=None, max_length=64)
+    difficulty: str | None = Field(default=None, max_length=16)
+    llm_provider: str | None = Field(default=None, max_length=50)
+
+
+class DynamicTopicDTO(BaseModel):
+    id: int | None = None
+    topic_key: str
+    topic_title: str
+    skill_key: str
+    question_type: str
+    source_type: str = "mixed"
+    evidence_snippet: str | None = None
+    main_question: str
+    topic_order: int
+    status: str = "PENDING"
+    max_turns: int = 3
+    turn_count: int = 0
+    best_score: int | None = None
+    final_score: int | None = None
+    followup_goals: list[str] = Field(default_factory=list)
+    exit_criteria: list[str] = Field(default_factory=list)
+    rubric: dict[str, str] = Field(default_factory=dict)
+
+
+class DynamicTurnDTO(BaseModel):
+    id: int | None = None
+    topic_id: int | None = None
+    turn_type: str
+    turn_order: int
+    question: str
+    answer: str | None = None
+    ability_score: int | None = None
+    decision_action: str | None = None
+    feedback: str | None = None
+    signals: dict[str, list[str]] = Field(default_factory=dict)
+    evaluation: dict = Field(default_factory=dict)
+    decision: dict = Field(default_factory=dict)
+    coach_hint: dict | None = None
+    answered_at: datetime | None = None
+
+
+class DynamicInterviewCreateResponse(BaseModel):
+    session_id: str
+    status: str
+    structured_jd: StructuredJD
+    current_topic: DynamicTopicDTO | None = None
+    current_turn: DynamicTurnDTO | None = None
+    plan_summary: dict = Field(default_factory=dict)
+
+
+class SubmitDynamicTurnAnswerRequest(BaseModel):
+    answer: str = Field(..., min_length=1, max_length=10000)
+
+
+class DynamicTurnEvaluationDTO(BaseModel):
+    ability_score: int = Field(default=0, ge=0, le=100)
+    feedback: str
+    signals: dict[str, list[str]] = Field(default_factory=dict)
+    dimension_scores: dict[str, int] = Field(default_factory=dict)
+
+
+class DynamicDecisionDTO(BaseModel):
+    action: str
+    reason: str
+    hint: dict | None = None
+    next_question: str | None = None
+
+
+class DynamicTurnAnswerResponse(BaseModel):
+    status: str = "INTERVIEWING"
+    evaluation: DynamicTurnEvaluationDTO
+    decision: DynamicDecisionDTO
+    next_turn: DynamicTurnDTO | None = None
+    current_topic: DynamicTopicDTO | None = None
+    topic_progress: dict = Field(default_factory=dict)
+    report: "DynamicReportDTO | None" = None
+
+
+class DynamicSessionDetailDTO(BaseModel):
+    session_id: str
+    status: str
+    mode: str = "COACH"
+    target_role: str | None = None
+    jd_text: str | None = None
+    structured_jd: StructuredJD | None = None
+    topics: list[DynamicTopicDTO] = Field(default_factory=list)
+    turns: list[DynamicTurnDTO] = Field(default_factory=list)
+    current_topic: DynamicTopicDTO | None = None
+    current_turn: DynamicTurnDTO | None = None
+    plan_summary: dict = Field(default_factory=dict)
+    final_report: "DynamicReportDTO | None" = None
+
+
+class DynamicTopicSummaryDTO(BaseModel):
+    topic_id: int | None = None
+    topic_key: str
+    topic_title: str
+    question_type: str
+    evidence_snippet: str | None = None
+    main_question: str
+    initial_score: int | None = None
+    final_score: int | None = None
+    best_score: int | None = None
+    score_delta: int | None = None
+    strengths: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
+    next_training_action: str
+
+
+class TomorrowTaskDTO(BaseModel):
+    task_type: str
+    topic_key: str
+    evidence_hash: str | None = None
+    weakness_type: str
+    priority_score: float
+    title: str
+    reason: str
+    action: str
+    status: str = "TODO"
+
+
+class DynamicReportDTO(BaseModel):
+    session_id: str
+    readiness_score: int = 0
+    type_scores: dict[str, int | None] = Field(default_factory=dict)
+    ability_scores: dict[str, int] = Field(default_factory=dict)
+    top_risks: list[str] = Field(default_factory=list)
+    topic_summaries: list[DynamicTopicSummaryDTO] = Field(default_factory=list)
+    tomorrow_tasks: list[TomorrowTaskDTO] = Field(default_factory=list)
+    retry_deltas: list[dict] = Field(default_factory=list)
+    resume_fix_suggestions: list[str] = Field(default_factory=list)
+
+
+class DynamicRagCitationDTO(BaseModel):
+    knowledge_base_id: int
+    chunk_id: int
+    source_name: str
+    title: str | None = None
+    content_preview: str
+    score: float
+
+
+class DynamicTopicRagInsightDTO(BaseModel):
+    topic_id: int | None = None
+    topic_key: str
+    topic_title: str
+    question_type: str
+    source_status: str
+    retrieval_confidence: float = 0.0
+    fallback_reason: str | None = None
+    answer_issue: str
+    explanation: str
+    citations: list[DynamicRagCitationDTO] = Field(default_factory=list)
+    recommended_materials: list[str] = Field(default_factory=list)
+    study_steps: list[str] = Field(default_factory=list)
+    next_practice: str
+
+
 class CategoryDTO(BaseModel):
     key: str
     label: str

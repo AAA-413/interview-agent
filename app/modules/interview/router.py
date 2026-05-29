@@ -10,7 +10,10 @@ from app.database import get_db
 from app.modules.auth.dependencies import get_current_user_id
 from app.modules.interview.diagnosis_schemas import InterviewDiagnosisDTO, InterviewDiagnosisRequest
 from app.modules.interview.diagnosis_service import interview_diagnosis_service
+from app.modules.interview.dynamic_persistence_service import dynamic_interview_persistence_service
+from app.modules.interview.dynamic_service import dynamic_interview_service
 from app.modules.interview.history_service import interview_history_service
+from app.modules.interview.jd_parse_service import jd_parse_service
 from app.modules.interview.persistence_service import interview_persistence_service
 from app.modules.interview.project_drill_schemas import (
     ProjectDrillDTO,
@@ -19,14 +22,23 @@ from app.modules.interview.project_drill_schemas import (
 from app.modules.interview.project_drill_service import project_drill_service
 from app.modules.interview.schemas import (
     CreateInterviewRequest,
+    DynamicInterviewCreateRequest,
+    DynamicInterviewCreateResponse,
+    DynamicReportDTO,
+    DynamicSessionDetailDTO,
+    DynamicTopicRagInsightDTO,
+    DynamicTurnAnswerResponse,
     InterviewDetailDTO,
     InterviewReportDTO,
     InterviewSessionDTO,
+    JDParseRequest,
     RetryAnswerComparisonDTO,
     RetryQuestionRequest,
     SessionListItemDTO,
+    StructuredJD,
     SubmitAnswerRequest,
     SubmitAnswerResponse,
+    SubmitDynamicTurnAnswerRequest,
     VoiceTranscriptionDTO,
 )
 from app.modules.interview.session_service import interview_session_service
@@ -35,6 +47,94 @@ from app.modules.interview.voice_service import voice_transcription_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.post("/jd/parse", response_model=Result[StructuredJD])
+async def parse_jd(
+    request: JDParseRequest,
+    user_id: int = Depends(get_current_user_id),
+):
+    _ = user_id
+    structured_jd = jd_parse_service.parse(request.jd_text, request.target_role, request.skill_id)
+    return Result.success(structured_jd)
+
+
+@router.post("/dynamic-sessions", response_model=Result[DynamicInterviewCreateResponse])
+async def create_dynamic_session(
+    request: DynamicInterviewCreateRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    session = await dynamic_interview_service.create_session(db, request, user_id)
+    return Result.success(session)
+
+
+@router.get("/dynamic-sessions/{session_id}", response_model=Result[DynamicSessionDetailDTO])
+async def get_dynamic_session(
+    session_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    detail = await dynamic_interview_service.get_session_detail(db, session_id, user_id)
+    return Result.success(detail)
+
+
+@router.post(
+    "/dynamic-sessions/{session_id}/turns/{turn_id}/answer",
+    response_model=Result[DynamicTurnAnswerResponse],
+)
+async def submit_dynamic_turn_answer(
+    session_id: str,
+    turn_id: int,
+    request: SubmitDynamicTurnAnswerRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    response = await dynamic_interview_service.submit_turn_answer(db, session_id, turn_id, request, user_id)
+    return Result.success(response)
+
+
+@router.post("/dynamic-sessions/{session_id}/complete", response_model=Result[DynamicReportDTO])
+async def complete_dynamic_session(
+    session_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    report = await dynamic_interview_service.complete_session(db, session_id, user_id)
+    return Result.success(report)
+
+
+@router.get("/dynamic-sessions/{session_id}/report", response_model=Result[DynamicReportDTO])
+async def get_dynamic_report(
+    session_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    report = await dynamic_interview_service.get_report(db, session_id, user_id)
+    return Result.success(report)
+
+
+@router.get(
+    "/dynamic-sessions/{session_id}/topics/{topic_id}/rag-insight",
+    response_model=Result[DynamicTopicRagInsightDTO],
+)
+async def get_dynamic_topic_rag_insight(
+    session_id: str,
+    topic_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    insight = await dynamic_interview_service.get_topic_rag_insight(db, session_id, topic_id, user_id)
+    return Result.success(insight)
+
+
+@router.get("/user-topic-profile", response_model=Result[dict])
+async def get_user_topic_profile(
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    profile = await dynamic_interview_persistence_service.get_user_topic_profile(db, user_id)
+    return Result.success(profile)
 
 
 @router.post("/diagnosis", response_model=Result[InterviewDiagnosisDTO])

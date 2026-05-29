@@ -22,6 +22,17 @@ logger = logging.getLogger(__name__)
 
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
 MAX_REFERENCE_CONTEXT_CHARS = 6000
+REFERENCE_FREE_KNOWLEDGE_SCORE_CAP = 75
+
+REFERENCE_FREE_KNOWLEDGE_SYSTEM_PROMPT = """
+你是一位严谨的技术面试官。请在没有标准参考答案和得分点的情况下，基于通用技术常识评估候选人的知识题回答。
+
+评分必须保守：
+- 不能因为表达流畅就给高分，必须看概念准确性、关键机制、适用场景和边界。
+- 如果回答明显无关、空泛、编造或说“不会/不知道”，给 0 分。
+- 没有参考答案时最高只能给 75 分；即使回答很好，也只能说明“看起来合格”，不能判定深度掌控。
+- feedback 必须说明这是“缺少标准得分点时的保守评分”。
+""".strip()
 
 
 class _StructuredDTO(BaseModel):
@@ -199,7 +210,7 @@ class UnifiedEvaluationService:
                             effective_type = parent_qa.question_type
                             break
 
-                if effective_type == "project" or (not qa.reference_answer and not qa.key_points):
+                if effective_type == "project":
                     # Project evaluation
                     result = await self.evaluate_project_question(
                         chat_model,
@@ -287,18 +298,53 @@ class UnifiedEvaluationService:
                                 ),
                             )
                     else:
-                        # Fallback to basic evaluation
-                        evaluations[index] = _QuestionEvalDTO(
-                            question_index=qa.question_index,
-                            score=0,
-                            feedback="无参考答案",
-                            **self._coach_fields(
-                                qa=qa,
-                                score=0,
-                                feedback="无参考答案",
-                                question_type=qa.question_type,
-                            ),
+                        result = await self.evaluate_reference_free_knowledge_question(
+                            chat_model,
+                            qa.question,
+                            qa.user_answer,
                         )
+                        if result:
+                            capped_score = min(result.score, REFERENCE_FREE_KNOWLEDGE_SCORE_CAP)
+                            feedback = result.feedback
+                            if result.score > REFERENCE_FREE_KNOWLEDGE_SCORE_CAP:
+                                feedback = (
+                                    f"{feedback}\n\n缺少标准参考答案和关键得分点，本题按保守口径最高计 "
+                                    f"{REFERENCE_FREE_KNOWLEDGE_SCORE_CAP} 分。"
+                                )
+                            coach_fields = self._coach_fields(
+                                qa=qa,
+                                score=capped_score,
+                                feedback=feedback,
+                                question_type="knowledge",
+                                raw=result,
+                                missed_points=result.missed_points,
+                                errors=result.errors,
+                            )
+                            evaluations[index] = _QuestionEvalDTO(
+                                question_index=qa.question_index,
+                                score=capped_score,
+                                feedback=feedback,
+                                question_type="knowledge",
+                                reference_answer="",
+                                key_points=[],
+                                covered_points=result.covered_points,
+                                missed_points=result.missed_points,
+                                errors=result.errors,
+                                **coach_fields,
+                            )
+                        else:
+                            evaluations[index] = _QuestionEvalDTO(
+                                question_index=qa.question_index,
+                                score=0,
+                                feedback="缺少标准参考答案和关键得分点，且评估失败，无法给出可信评分。",
+                                question_type="knowledge",
+                                **self._coach_fields(
+                                    qa=qa,
+                                    score=0,
+                                    feedback="缺少标准参考答案和关键得分点，且评估失败，无法给出可信评分。",
+                                    question_type="knowledge",
+                                ),
+                            )
 
         tasks = [evaluate_one(i, qa) for i, qa in enumerate(qa_records)]
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -729,6 +775,45 @@ class UnifiedEvaluationService:
             )
         except Exception as e:
             logger.error("知识题评估失败: %s", e)
+            return None
+
+    async def evaluate_reference_free_knowledge_question(
+        self,
+        chat_model: ChatOpenAI,
+        question: str,
+        user_answer: str,
+    ) -> _KnowledgeEvalDTO | None:
+        if not user_answer or not user_answer.strip():
+            return _KnowledgeEvalDTO(score=0, feedback="未作答")
+
+        user_prompt = f"""请保守评估以下知识题回答。
+
+## 问题
+{question}
+
+## 候选人回答
+{user_answer}
+
+## 输出要求
+1. coveredPoints 写候选人答对的核心概念或机制。
+2. missedPoints 写缺少的关键概念、场景、边界或风险。
+3. errors 写事实性错误；没有则为空数组。
+4. score 最高不得超过 {REFERENCE_FREE_KNOWLEDGE_SCORE_CAP}。
+5. answer80 和 answer90 仍需给出可复述版本，但要说明这是通用参考，不是本题标准答案。
+"""
+
+        try:
+            return await structured_output_invoker.invoke(
+                chat_model=chat_model,
+                system_prompt=REFERENCE_FREE_KNOWLEDGE_SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                output_model=_KnowledgeEvalDTO,
+                error_code=ErrorCode.INTERVIEW_EVALUATION_FAILED,
+                error_prefix="无参考知识题评估失败：",
+                log_context="无参考知识题评估",
+            )
+        except Exception as e:
+            logger.error("无参考知识题评估失败: %s", e)
             return None
 
     async def evaluate_project_question(

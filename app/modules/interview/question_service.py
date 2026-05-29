@@ -40,6 +40,12 @@ DIFFICULTY_DESCRIPTIONS = {
     "senior": "3年+经验。考察架构设计和深度调优。",
 }
 
+DIFFICULTY_ALIASES = {
+    "easy": "junior",
+    "medium": "mid",
+    "hard": "senior",
+}
+
 GENERIC_FALLBACK_QUESTIONS = [
     ("请描述一个你主导解决的技术难题，你的分析思路是什么？", "GENERAL", "综合能力"),
     ("你在做技术方案选型时，通常考虑哪些因素？请举例说明。", "GENERAL", "综合能力"),
@@ -103,7 +109,7 @@ class InterviewQuestionService:
         jd_text: str | None = None,
     ) -> list[InterviewQuestionDTO]:
         skill = self._resolve_skill(skill_id, custom_categories, jd_text)
-        difficulty_desc = DIFFICULTY_DESCRIPTIONS.get(difficulty or "mid", DIFFICULTY_DESCRIPTIONS["mid"])
+        difficulty_desc = self._resolve_difficulty_description(difficulty)
         has_resume = bool(resume_text and resume_text.strip())
         historical_section = self._build_historical_section(historical_questions)
 
@@ -177,6 +183,7 @@ class InterviewQuestionService:
                 "difficultyDescription": difficulty_desc,
                 "resumeText": resume_text,
                 "historicalSection": historical_section,
+                "jdSection": self._build_jd_section(skill.source_jd),
             }
 
             system_prompt = self._resume_system_prompt
@@ -262,9 +269,20 @@ class InterviewQuestionService:
     def _resolve_skill(
         self, skill_id: str | None, custom_categories: list[CategoryDTO] | None, jd_text: str | None
     ) -> SkillDTO:
+        normalized_jd = jd_text.strip() if jd_text and jd_text.strip() else None
         if skill_id == "custom" and custom_categories:
-            return interview_skill_service.build_custom_skill(custom_categories, jd_text or "")
-        return interview_skill_service.get_skill(skill_id or settings.interview.default_skill_id)
+            return interview_skill_service.build_custom_skill(custom_categories, normalized_jd or "")
+
+        skill = interview_skill_service.get_skill(skill_id or settings.interview.default_skill_id)
+        if normalized_jd:
+            return skill.model_copy(update={"source_jd": normalized_jd})
+        return skill
+
+    @staticmethod
+    def _resolve_difficulty_description(difficulty: str | None) -> str:
+        normalized = (difficulty or "mid").strip().lower()
+        normalized = DIFFICULTY_ALIASES.get(normalized, normalized)
+        return DIFFICULTY_DESCRIPTIONS.get(normalized, DIFFICULTY_DESCRIPTIONS["mid"])
 
     def _convert_to_questions(self, dto: _QuestionListDTO | None) -> list[InterviewQuestionDTO]:
         from app.modules.interview.schemas import KeyPoint
