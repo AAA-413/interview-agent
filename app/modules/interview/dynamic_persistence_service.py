@@ -202,7 +202,9 @@ class DynamicInterviewPersistenceService:
         await db.flush()
         return entity
 
-    async def find_session(self, db: AsyncSession, session_id: str, user_id: int | None = None) -> InterviewSessionEntity | None:
+    async def find_session(
+        self, db: AsyncSession, session_id: str, user_id: int | None = None
+    ) -> InterviewSessionEntity | None:
         stmt = select(InterviewSessionEntity).where(
             InterviewSessionEntity.session_id == session_id,
             InterviewSessionEntity.engine_type == InterviewEngineType.DYNAMIC.value,
@@ -212,7 +214,9 @@ class DynamicInterviewPersistenceService:
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def find_session_or_throw(self, db: AsyncSession, session_id: str, user_id: int | None = None) -> InterviewSessionEntity:
+    async def find_session_or_throw(
+        self, db: AsyncSession, session_id: str, user_id: int | None = None
+    ) -> InterviewSessionEntity:
         entity = await self.find_session(db, session_id, user_id)
         if entity is None:
             raise BusinessException(ErrorCode.INTERVIEW_SESSION_NOT_FOUND)
@@ -263,7 +267,9 @@ class DynamicInterviewPersistenceService:
 
     async def list_turns_by_topic(self, db: AsyncSession, topic_id: int) -> list[InterviewTurnEntity]:
         result = await db.execute(
-            select(InterviewTurnEntity).where(InterviewTurnEntity.topic_id == topic_id).order_by(InterviewTurnEntity.turn_order)
+            select(InterviewTurnEntity)
+            .where(InterviewTurnEntity.topic_id == topic_id)
+            .order_by(InterviewTurnEntity.turn_order)
         )
         return list(result.scalars().all())
 
@@ -509,24 +515,18 @@ class DynamicInterviewPersistenceService:
     ) -> dict:
         """Aggregate historical topic data into a simple profile: counts, avg scores, low-score topics."""
         cutoff = datetime.now() - timedelta(days=lookback_days)
-        session_stmt = (
-            select(InterviewSessionEntity.id)
-            .where(
-                InterviewSessionEntity.user_id == user_id,
-                InterviewSessionEntity.engine_type == InterviewEngineType.DYNAMIC.value,
-                InterviewSessionEntity.status == SessionStatus.COMPLETED.value,
-                InterviewSessionEntity.completed_at >= cutoff,
-            )
+        session_stmt = select(InterviewSessionEntity.id).where(
+            InterviewSessionEntity.user_id == user_id,
+            InterviewSessionEntity.engine_type == InterviewEngineType.DYNAMIC.value,
+            InterviewSessionEntity.status == SessionStatus.COMPLETED.value,
+            InterviewSessionEntity.completed_at >= cutoff,
         )
         session_result = await db.execute(session_stmt)
         session_ids = [row[0] for row in session_result.fetchall()]
         if not session_ids:
             return {"topic_counts": {}, "low_score_topics": [], "total_sessions": 0}
 
-        topic_stmt = (
-            select(InterviewTopicEntity)
-            .where(InterviewTopicEntity.session_id.in_(session_ids))
-        )
+        topic_stmt = select(InterviewTopicEntity).where(InterviewTopicEntity.session_id.in_(session_ids))
         topic_result = await db.execute(topic_stmt)
         all_topics = list(topic_result.scalars().all())
 
@@ -548,8 +548,7 @@ class DynamicInterviewPersistenceService:
             }
 
         low_score_topics = [
-            key for key, entry in profile.items()
-            if entry["avg_score"] is not None and entry["avg_score"] < 60
+            key for key, entry in profile.items() if entry["avg_score"] is not None and entry["avg_score"] < 60
         ]
 
         return {

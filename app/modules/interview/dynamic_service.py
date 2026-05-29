@@ -78,7 +78,9 @@ class InterviewPlanService:
         low_score_keys = set(user_topic_profile.get("low_score_topics", []) if user_topic_profile else [])
 
         project_candidates = self._project_candidates(profile, structured_jd, target_role, request.skill_id)
-        knowledge_candidate = self._knowledge_candidate(structured_jd, target_role, request.skill_id, project_candidates)
+        knowledge_candidate = self._knowledge_candidate(
+            structured_jd, target_role, request.skill_id, project_candidates
+        )
         system_candidate = self._system_design_candidate(structured_jd.role_domain, target_role)
 
         self._apply_dedup(project_candidates, recent_keys, low_score_keys)
@@ -226,7 +228,9 @@ class InterviewPlanService:
             skill_id=skill_id,
             role_domain=structured_jd.role_domain,
         )
-        topic = topic_registry_service.get_topic(normalized.topic_key) or topic_registry_service.get_topic("other_knowledge")
+        topic = topic_registry_service.get_topic(normalized.topic_key) or topic_registry_service.get_topic(
+            "other_knowledge"
+        )
         return _TopicCandidate(
             topic=topic,
             question_type="KNOWLEDGE",
@@ -335,7 +339,13 @@ class InterviewPlanService:
 
     @staticmethod
     def _project_evidence(project: ProjectInfo) -> str:
-        parts = [project.name, project.role, project.description, "、".join(project.tech_stack), "、".join(project.highlights)]
+        parts = [
+            project.name,
+            project.role,
+            project.description,
+            "、".join(project.tech_stack),
+            "、".join(project.highlights),
+        ]
         text = "；".join(part for part in parts if part)
         return text[:500] if text else "简历项目证据不足。"
 
@@ -616,7 +626,10 @@ class StrictInterviewPolicy:
     ) -> DynamicDecisionDTO:
         del coach_hint
         followup_count = sum(1 for item in answered_turns_after_current if item.turn_type == TurnType.FOLLOW_UP.value)
-        if turn.turn_type in {TurnType.MAIN.value, TurnType.FOLLOW_UP.value} and followup_count < self.max_followups_per_topic:
+        if (
+            turn.turn_type in {TurnType.MAIN.value, TurnType.FOLLOW_UP.value}
+            and followup_count < self.max_followups_per_topic
+        ):
             return DynamicDecisionDTO(
                 action=DecisionAction.FOLLOW_UP.value,
                 reason="严厉模式下继续验证回答真实性、细节和抗压稳定性。",
@@ -652,13 +665,8 @@ class StrictInterviewPolicy:
             )
         if topic.question_type == "SYSTEM_DESIGN":
             if followup_number == 1:
-                return (
-                    f"{gap_text}请把方案继续压实：核心模块职责、数据流、容量或延迟瓶颈分别是什么？"
-                )
-            return (
-                f"{gap_text}继续追问：当依赖超时、数据不一致或成本超预算时，"
-                "你会如何降级、监控和取舍？"
-            )
+                return f"{gap_text}请把方案继续压实：核心模块职责、数据流、容量或延迟瓶颈分别是什么？"
+            return f"{gap_text}继续追问：当依赖超时、数据不一致或成本超预算时，你会如何降级、监控和取舍？"
         if followup_number == 1:
             return f"{gap_text}请把「{topic.topic_title}」的核心机制拆成步骤，并指出最容易答错的边界。"
         return f"{gap_text}继续追问：请结合一个工程场景说明异常处理、适用限制和技术取舍。"
@@ -806,8 +814,14 @@ class DynamicInterviewReportService:
         candidates = sorted(topic_summaries, key=lambda item: item.final_score if item.final_score is not None else 0)
         tasks: list[TomorrowTaskDTO] = []
         project = next((item for item in candidates if item.question_type == "PROJECT"), None)
-        knowledge_or_system = next((item for item in candidates if item.question_type in {"KNOWLEDGE", "SYSTEM_DESIGN"}), None)
-        expression = next((item for item in candidates if "表达" in " ".join(item.gaps + item.risks)), None) or candidates[0] if candidates else None
+        knowledge_or_system = next(
+            (item for item in candidates if item.question_type in {"KNOWLEDGE", "SYSTEM_DESIGN"}), None
+        )
+        expression = (
+            next((item for item in candidates if "表达" in " ".join(item.gaps + item.risks)), None) or candidates[0]
+            if candidates
+            else None
+        )
 
         for summary in [project, knowledge_or_system, expression]:
             if summary and len(tasks) < 3:
@@ -851,7 +865,9 @@ class DynamicInterviewReportService:
         )
 
     @staticmethod
-    def _next_training_action(topic: InterviewTopicEntity, gaps: list[str], risks: list[str], score_delta: int | None) -> str:
+    def _next_training_action(
+        topic: InterviewTopicEntity, gaps: list[str], risks: list[str], score_delta: int | None
+    ) -> str:
         focus = (gaps or risks or ["补齐结构化表达"])[0]
         if score_delta is not None and score_delta >= 10:
             return f"把本轮有效重答沉淀成模板，同时继续强化：{focus}"
@@ -861,7 +877,9 @@ class DynamicInterviewReportService:
     def _resume_fix_suggestions(topic_summaries: list[DynamicTopicSummaryDTO]) -> list[str]:
         suggestions = []
         for summary in topic_summaries:
-            if summary.question_type == "PROJECT" and any("简历证据" in risk or "证据" in risk for risk in summary.risks):
+            if summary.question_type == "PROJECT" and any(
+                "简历证据" in risk or "证据" in risk for risk in summary.risks
+            ):
                 suggestions.append(f"在简历中补充「{summary.topic_title}」的指标、职责和结果证据。")
         return suggestions[:3]
 
@@ -881,7 +899,9 @@ class DynamicRagCoachService:
         confident_citations = [item for item in citations if item.score >= self.min_confidence][:3]
         confidence = max((item.score for item in confident_citations), default=0.0)
         source_status = "PERSONAL_KB_HIT" if confident_citations else "NO_KB_HIT"
-        fallback_reason = None if confident_citations else "个人知识库暂未找到足够相关资料，以下为未引用知识库资料的通用讲解。"
+        fallback_reason = (
+            None if confident_citations else "个人知识库暂未找到足够相关资料，以下为未引用知识库资料的通用讲解。"
+        )
         answer_issue = self._answer_issue(turns, topic)
 
         return DynamicTopicRagInsightDTO(
@@ -1108,7 +1128,11 @@ class DynamicInterviewService:
                 session,
                 "TOPIC_PLAN",
                 lambda: self.plan_service.build_plan(
-                    request, structured_jd, resume_detail, recent_topic_keys=recent_topics, user_topic_profile=user_profile
+                    request,
+                    structured_jd,
+                    resume_detail,
+                    recent_topic_keys=recent_topics,
+                    user_topic_profile=user_profile,
                 ),
             )
         except Exception as exc:
@@ -1226,7 +1250,9 @@ class DynamicInterviewService:
                 turn_id=turn.id,
             )
         except Exception as exc:
-            logger.warning("动态面试评分失败，使用兜底评分: session_id=%s, turn_id=%s, error=%s", session_id, turn_id, exc)
+            logger.warning(
+                "动态面试评分失败，使用兜底评分: session_id=%s, turn_id=%s, error=%s", session_id, turn_id, exc
+            )
             evaluation = self.evaluator.fallback_evaluation(topic)
 
         try:
@@ -1241,8 +1267,14 @@ class DynamicInterviewService:
                     turn_id=turn.id,
                 )
         except Exception as exc:
-            logger.warning("动态面试教练提示失败，使用规则提示: session_id=%s, turn_id=%s, error=%s", session_id, turn_id, exc)
-            coach_hint = None if session.interview_mode == InterviewMode.STRICT.value else self.evaluator.fallback_coach_hint(topic, evaluation)
+            logger.warning(
+                "动态面试教练提示失败，使用规则提示: session_id=%s, turn_id=%s, error=%s", session_id, turn_id, exc
+            )
+            coach_hint = (
+                None
+                if session.interview_mode == InterviewMode.STRICT.value
+                else self.evaluator.fallback_coach_hint(topic, evaluation)
+            )
 
         answered_after = previous_turns + [
             turn_dto.model_copy(update={"answer": request.answer, "ability_score": evaluation.ability_score})
@@ -1315,7 +1347,9 @@ class DynamicInterviewService:
             next_turn = dynamic_interview_persistence_service.turn_to_dto(next_turn_entity)
         elif decision.action == DecisionAction.NEXT_TOPIC.value and next_topic_entity is not None:
             await dynamic_interview_persistence_service.activate_topic(db, next_topic_entity.id, session.id)
-            existing_next_turns = await dynamic_interview_persistence_service.list_turns_by_topic(db, next_topic_entity.id)
+            existing_next_turns = await dynamic_interview_persistence_service.list_turns_by_topic(
+                db, next_topic_entity.id
+            )
             next_turn_entity = next(
                 (item for item in existing_next_turns if item.turn_type == TurnType.MAIN.value),
                 None,

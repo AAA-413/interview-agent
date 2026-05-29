@@ -52,11 +52,13 @@ def check_question_quality(sample: dict, topics: list[DynamicTopicDTO], plan_sum
     results = []
 
     # 1. Topic count
-    results.append({
-        "check": "topic_count",
-        "passed": len(topics) == 4,
-        "detail": f"got {len(topics)}",
-    })
+    results.append(
+        {
+            "check": "topic_count",
+            "passed": len(topics) == 4,
+            "detail": f"got {len(topics)}",
+        }
+    )
 
     # 2. Question type mix
     actual_mix = {
@@ -65,20 +67,26 @@ def check_question_quality(sample: dict, topics: list[DynamicTopicDTO], plan_sum
     }
     expected_mix = sample["expected_question_type_mix"]
     mix_ok = actual_mix == expected_mix
-    results.append({
-        "check": "question_type_mix",
-        "passed": mix_ok,
-        "detail": f"expected {expected_mix}, got {actual_mix}",
-    })
+    results.append(
+        {
+            "check": "question_type_mix",
+            "passed": mix_ok,
+            "detail": f"expected {expected_mix}, got {actual_mix}",
+        }
+    )
 
     # 3. Project topics have evidence
     project_topics = [t for t in topics if t.question_type == "PROJECT"]
     missing_evidence = [t.topic_key for t in project_topics if not t.evidence_snippet]
-    results.append({
-        "check": "project_evidence_grounding",
-        "passed": len(missing_evidence) == 0,
-        "detail": f"missing evidence for: {missing_evidence}" if missing_evidence else "all project topics have evidence",
-    })
+    results.append(
+        {
+            "check": "project_evidence_grounding",
+            "passed": len(missing_evidence) == 0,
+            "detail": f"missing evidence for: {missing_evidence}"
+            if missing_evidence
+            else "all project topics have evidence",
+        }
+    )
 
     # 4. Forbidden claims check (simple keyword-based)
     forbidden = sample.get("forbidden_claims", [])
@@ -87,19 +95,23 @@ def check_question_quality(sample: dict, topics: list[DynamicTopicDTO], plan_sum
         for claim in forbidden:
             if claim.lower() in (t.main_question or "").lower():
                 violations.append(f"{t.topic_key}: {claim}")
-    results.append({
-        "check": "forbidden_claims",
-        "passed": len(violations) == 0,
-        "detail": f"violations: {violations}" if violations else "no forbidden claims detected",
-    })
+    results.append(
+        {
+            "check": "forbidden_claims",
+            "passed": len(violations) == 0,
+            "detail": f"violations: {violations}" if violations else "no forbidden claims detected",
+        }
+    )
 
     # 5. Topic diversity (at least 3 distinct topic_keys)
     unique_keys = {t.topic_key for t in topics}
-    results.append({
-        "check": "topic_diversity",
-        "passed": len(unique_keys) >= 3,
-        "detail": f"{len(unique_keys)} distinct topic_keys",
-    })
+    results.append(
+        {
+            "check": "topic_diversity",
+            "passed": len(unique_keys) >= 3,
+            "detail": f"{len(unique_keys)} distinct topic_keys",
+        }
+    )
 
     return results
 
@@ -124,29 +136,35 @@ def check_followup_quality(
         "off_topic": ["FOLLOW_UP", "COACH_RETRY"],
     }
     valid = action in expected_actions.get(answer_type, [])
-    results.append({
-        "check": f"decision_action_{answer_type}",
-        "passed": valid,
-        "detail": f"action={action} for {answer_type} answer",
-    })
+    results.append(
+        {
+            "check": f"decision_action_{answer_type}",
+            "passed": valid,
+            "detail": f"action={action} for {answer_type} answer",
+        }
+    )
 
     # 2. Score band check
     low, high = expected_score_range
     in_band = low <= actual_score <= high
-    results.append({
-        "check": f"score_band_{answer_type}",
-        "passed": in_band,
-        "detail": f"score={actual_score}, expected [{low}, {high}]",
-    })
+    results.append(
+        {
+            "check": f"score_band_{answer_type}",
+            "passed": in_band,
+            "detail": f"score={actual_score}, expected [{low}, {high}]",
+        }
+    )
 
     # 3. Follow-up relevance (for strong answers, should not be unnecessary)
     if answer_type == "strong":
         unnecessary = action == "COACH_RETRY"
-        results.append({
-            "check": "unnecessary_retry_strong",
-            "passed": not unnecessary,
-            "detail": f"strong answer got {'COACH_RETRY (unexpected)' if unnecessary else action + ' (expected)'}",
-        })
+        results.append(
+            {
+                "check": "unnecessary_retry_strong",
+                "passed": not unnecessary,
+                "detail": f"strong answer got {'COACH_RETRY (unexpected)' if unnecessary else action + ' (expected)'}",
+            }
+        )
 
     return results
 
@@ -156,11 +174,13 @@ def check_scoring_quality(scores: dict[str, int]) -> list[dict]:
 
     # Ranking: strong > normal > vague > off_topic
     ranking_ok = scores.get("strong", 0) > scores.get("normal", 0) > scores.get("vague", 0) > scores.get("off_topic", 0)
-    results.append({
-        "check": "ranking_accuracy",
-        "passed": ranking_ok,
-        "detail": f"scores: strong={scores.get('strong')}, normal={scores.get('normal')}, vague={scores.get('vague')}, off_topic={scores.get('off_topic')}",
-    })
+    results.append(
+        {
+            "check": "ranking_accuracy",
+            "passed": ranking_ok,
+            "detail": f"scores: strong={scores.get('strong')}, normal={scores.get('normal')}, vague={scores.get('vague')}, off_topic={scores.get('off_topic')}",
+        }
+    )
 
     return results
 
@@ -173,25 +193,31 @@ def check_coach_quality(hint: dict | None) -> list[dict]:
         message = hint["message"]
         # Heuristic: full answer typically > 500 chars or contains "完整答案" patterns
         no_full_answer = len(message) < 500 and "标准答案" not in message and "完整回答" not in message
-        results.append({
-            "check": "hint_no_answer_leakage",
-            "passed": no_full_answer,
-            "detail": f"hint length={len(message)}, has_full_answer_markers={not no_full_answer}",
-        })
+        results.append(
+            {
+                "check": "hint_no_answer_leakage",
+                "passed": no_full_answer,
+                "detail": f"hint length={len(message)}, has_full_answer_markers={not no_full_answer}",
+            }
+        )
 
         # Hint should have structure
         has_structure = bool(hint.get("structure") or hint.get("focus_gaps"))
-        results.append({
-            "check": "hint_actionability",
-            "passed": has_structure,
-            "detail": f"has structure/focus_gaps: {has_structure}",
-        })
+        results.append(
+            {
+                "check": "hint_actionability",
+                "passed": has_structure,
+                "detail": f"has structure/focus_gaps: {has_structure}",
+            }
+        )
     else:
-        results.append({
-            "check": "hint_present",
-            "passed": False,
-            "detail": "no hint generated",
-        })
+        results.append(
+            {
+                "check": "hint_present",
+                "passed": False,
+                "detail": "no hint generated",
+            }
+        )
 
     return results
 
@@ -209,23 +235,29 @@ def check_rag_quality(insight: dict | None) -> list[dict]:
     # No-hit honesty
     if status == "NO_KB_HIT":
         no_fake_citations = len(insight.get("citations", [])) == 0
-        results.append({
-            "check": "no_hit_honesty",
-            "passed": no_fake_citations,
-            "detail": f"NO_KB_HIT with {len(insight.get('citations', []))} citations",
-        })
+        results.append(
+            {
+                "check": "no_hit_honesty",
+                "passed": no_fake_citations,
+                "detail": f"NO_KB_HIT with {len(insight.get('citations', []))} citations",
+            }
+        )
 
     # Low confidence should not force citations
     if confidence < 0.5:
         low_conf_no_citations = len(insight.get("citations", [])) <= 1
-        results.append({
-            "check": "low_confidence_no_forced_citations",
-            "passed": low_conf_no_citations,
-            "detail": f"confidence={confidence}, citations={len(insight.get('citations', []))}",
-        })
+        results.append(
+            {
+                "check": "low_confidence_no_forced_citations",
+                "passed": low_conf_no_citations,
+                "detail": f"confidence={confidence}, citations={len(insight.get('citations', []))}",
+            }
+        )
 
     if not results:
-        results.append({"check": "rag_insight_status", "passed": True, "detail": f"status={status}, confidence={confidence}"})
+        results.append(
+            {"check": "rag_insight_status", "passed": True, "detail": f"status={status}, confidence={confidence}"}
+        )
 
     return results
 
@@ -236,7 +268,9 @@ def evaluate_sample(sample: dict) -> QualityResult:
     evaluator = DynamicAnswerEvaluationService()
 
     # --- 1. Plan generation ---
-    structured = jd_parse_service.parse(sample["jd_text"], target_role=sample["target_role"], skill_id=sample["skill_id"])
+    structured = jd_parse_service.parse(
+        sample["jd_text"], target_role=sample["target_role"], skill_id=sample["skill_id"]
+    )
     request = DynamicInterviewCreateRequest(
         target_role=sample["target_role"],
         jd_text=sample["jd_text"],
@@ -275,12 +309,15 @@ def evaluate_sample(sample: dict) -> QualityResult:
                 evaluation = evaluator.evaluate(matching_topic, turn, answer_text, [])
             except Exception:
                 import traceback
+
                 traceback.print_exc()
                 evaluation = evaluator.fallback_evaluation(matching_topic)
 
             # Score band & ranking
             expected_range = sample["expected_score_bands"].get(answer_type, [0, 100])
-            for check in check_followup_quality(sample, matching_topic, answer_type, {"action": "NEXT_TOPIC"}, expected_range, evaluation.ability_score):
+            for check in check_followup_quality(
+                sample, matching_topic, answer_type, {"action": "NEXT_TOPIC"}, expected_range, evaluation.ability_score
+            ):
                 key = f"F_{check['check']}_{topic_key}"
                 result.checks[key] = check
                 if check["passed"]:
@@ -359,14 +396,8 @@ def generate_report(dataset: dict, results: list[QualityResult]) -> dict:
 
 
 def _line_rate(results: list[QualityResult], prefix: str) -> float:
-    total = sum(
-        1 for r in results
-        for k in r.checks if k.startswith(prefix)
-    )
-    passed = sum(
-        1 for r in results
-        for k, v in r.checks.items() if k.startswith(prefix) and v["passed"]
-    )
+    total = sum(1 for r in results for k in r.checks if k.startswith(prefix))
+    passed = sum(1 for r in results for k, v in r.checks.items() if k.startswith(prefix) and v["passed"])
     return round(passed / total * 100, 1) if total > 0 else 0
 
 
@@ -403,13 +434,15 @@ def write_report_md(report_data: dict, output_dir: str) -> None:
         lines.append("当前版本：**不建议发布** ⚠️")
         lines.append(f"通过率 {report_data['pass_rate']}% 未达到演示门槛 (75%)")
 
-    lines.extend([
-        "",
-        "## 五条质量线",
-        "",
-        "| 质量线 | 通过率 | 失败数 |",
-        "|--------|--------|--------|",
-    ])
+    lines.extend(
+        [
+            "",
+            "## 五条质量线",
+            "",
+            "| 质量线 | 通过率 | 失败数 |",
+            "|--------|--------|--------|",
+        ]
+    )
     for line_name, line_data in report_data["quality_lines"].items():
         label = {
             "question_quality": "出题质量",
@@ -418,45 +451,53 @@ def write_report_md(report_data: dict, output_dir: str) -> None:
         }.get(line_name, line_name)
         lines.append(f"| {label} | {line_data['rate']}% | {line_data['failures']} |")
 
-    lines.extend([
-        "",
-        "## 分样本通过率",
-        "",
-        "| 样本 | 通过率 | Pass/Fail |",
-        "|------|--------|-----------|",
-    ])
+    lines.extend(
+        [
+            "",
+            "## 分样本通过率",
+            "",
+            "| 样本 | 通过率 | Pass/Fail |",
+            "|------|--------|-----------|",
+        ]
+    )
     for sample_id, sample_data in report_data["by_sample"].items():
         sample_label = next(
             (s["label"] for s in report_data.get("_samples", []) if s.get("id") == sample_id),
             sample_id,
         )
-        lines.append(f"| {sample_label} | {sample_data['rate']}% | {sample_data['passed']}/{sample_data['passed'] + sample_data['failed']} |")
+        lines.append(
+            f"| {sample_label} | {sample_data['rate']}% | {sample_data['passed']}/{sample_data['passed'] + sample_data['failed']} |"
+        )
 
     if report_data["all_failures"]:
-        lines.extend([
-            "",
-            "## 失败清单",
-            "",
-        ])
+        lines.extend(
+            [
+                "",
+                "## 失败清单",
+                "",
+            ]
+        )
         for f in report_data["all_failures"][:20]:
             lines.append(f"- {f}")
         if len(report_data["all_failures"]) > 20:
             lines.append(f"- ... 及另外 {len(report_data['all_failures']) - 20} 条")
 
-    lines.extend([
-        "",
-        "## 建议动作",
-        "",
-        "- 出题质量低于 80%：检查 Topic Registry 映射和 JD 解析规则",
-        "- 追问质量低于 70%：优化 StrictInterviewPolicy 追问逻辑",
-        "- 评分质量低于 80%：校准评分 prompt 和维度权重",
-        "",
-        "## 下次改进",
-        "",
-        "- 接入真实 LLM 评估追问质量和教练提示质量",
-        "- 增加人工抽检层",
-        "- 建立版本对比机制",
-    ])
+    lines.extend(
+        [
+            "",
+            "## 建议动作",
+            "",
+            "- 出题质量低于 80%：检查 Topic Registry 映射和 JD 解析规则",
+            "- 追问质量低于 70%：优化 StrictInterviewPolicy 追问逻辑",
+            "- 评分质量低于 80%：校准评分 prompt 和维度权重",
+            "",
+            "## 下次改进",
+            "",
+            "- 接入真实 LLM 评估追问质量和教练提示质量",
+            "- 增加人工抽检层",
+            "- 建立版本对比机制",
+        ]
+    )
 
     with open(os.path.join(output_dir, "report.md"), "w") as f:
         f.write("\n".join(lines) + "\n")

@@ -114,10 +114,16 @@ class InterviewSessionEntity(Base):
         back_populates="session", cascade="all, delete-orphan", lazy="selectin"
     )
     topics: Mapped[list["InterviewTopicEntity"]] = relationship(
-        back_populates="session", cascade="all, delete-orphan", lazy="selectin", order_by="InterviewTopicEntity.topic_order"
+        back_populates="session",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="InterviewTopicEntity.topic_order",
     )
     turns: Mapped[list["InterviewTurnEntity"]] = relationship(
-        back_populates="session", cascade="all, delete-orphan", lazy="selectin", order_by="InterviewTurnEntity.created_at"
+        back_populates="session",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="InterviewTurnEntity.created_at",
     )
     operation_metrics: Mapped[list["InterviewOperationMetricEntity"]] = relationship(
         back_populates="session",
@@ -162,7 +168,9 @@ class InterviewTopicEntity(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    session_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("interview_sessions.id", ondelete="CASCADE"), nullable=False)
+    session_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("interview_sessions.id", ondelete="CASCADE"), nullable=False
+    )
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     resume_id: Mapped[int | None] = mapped_column(BigInteger)
     topic_key: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -203,8 +211,12 @@ class InterviewTurnEntity(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    session_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("interview_sessions.id", ondelete="CASCADE"), nullable=False)
-    topic_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("interview_topics.id", ondelete="CASCADE"), nullable=False)
+    session_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("interview_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    topic_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("interview_topics.id", ondelete="CASCADE"), nullable=False
+    )
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     turn_type: Mapped[str] = mapped_column(String(30), nullable=False)
     turn_order: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -233,7 +245,9 @@ class InterviewOperationMetricEntity(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    session_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("interview_sessions.id", ondelete="CASCADE"), nullable=False)
+    session_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("interview_sessions.id", ondelete="CASCADE"), nullable=False
+    )
     topic_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("interview_topics.id", ondelete="SET NULL"))
     turn_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("interview_turns.id", ondelete="SET NULL"))
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)

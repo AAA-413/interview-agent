@@ -79,9 +79,15 @@ def upgrade() -> None:
     )
     op.create_index("idx_interview_topic_session_order", "interview_topics", ["session_id", "topic_order"])
     op.create_index("idx_interview_topic_user_created", "interview_topics", ["user_id", "created_at"])
-    op.create_index("idx_interview_topic_user_topic_created", "interview_topics", ["user_id", "topic_key", "created_at"])
-    op.create_index("idx_interview_topic_user_type_created", "interview_topics", ["user_id", "question_type", "created_at"])
-    op.create_index("idx_interview_topic_user_skill_created", "interview_topics", ["user_id", "skill_key", "created_at"])
+    op.create_index(
+        "idx_interview_topic_user_topic_created", "interview_topics", ["user_id", "topic_key", "created_at"]
+    )
+    op.create_index(
+        "idx_interview_topic_user_type_created", "interview_topics", ["user_id", "question_type", "created_at"]
+    )
+    op.create_index(
+        "idx_interview_topic_user_skill_created", "interview_topics", ["user_id", "skill_key", "created_at"]
+    )
     op.create_index("idx_interview_topic_evidence_hash", "interview_topics", ["user_id", "evidence_hash"])
 
     op.create_table(
@@ -113,7 +119,9 @@ def upgrade() -> None:
     op.create_index("idx_interview_turn_topic_order", "interview_turns", ["topic_id", "turn_order"])
     op.create_index("idx_interview_turn_user_created", "interview_turns", ["user_id", "created_at"])
     op.create_index("idx_interview_turn_user_type_created", "interview_turns", ["user_id", "turn_type", "created_at"])
-    op.create_index("idx_interview_turn_decision_action", "interview_turns", ["user_id", "decision_action", "created_at"])
+    op.create_index(
+        "idx_interview_turn_decision_action", "interview_turns", ["user_id", "decision_action", "created_at"]
+    )
 
 
 def downgrade() -> None:

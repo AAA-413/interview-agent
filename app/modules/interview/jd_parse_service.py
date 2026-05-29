@@ -15,7 +15,9 @@ class _SkillRule:
 
 
 SKILL_RULES: tuple[_SkillRule, ...] = (
-    _SkillRule("Python", "FastAPI Python asyncio SQLAlchemy", ("python", "fastapi", "django", "flask", "sqlalchemy", "asyncio")),
+    _SkillRule(
+        "Python", "FastAPI Python asyncio SQLAlchemy", ("python", "fastapi", "django", "flask", "sqlalchemy", "asyncio")
+    ),
     _SkillRule("Java", "Java Spring JVM MyBatis", ("java", "spring", "spring boot", "mybatis", "jvm")),
     _SkillRule("React", "React 状态管理 Hooks Redux Zustand", ("react", "hooks", "redux", "zustand")),
     _SkillRule("Vue", "Vue 状态管理 Pinia Vuex", ("vue", "pinia", "vuex")),
@@ -23,10 +25,14 @@ SKILL_RULES: tuple[_SkillRule, ...] = (
     _SkillRule("Redis", "Redis 缓存一致性 Streams 分布式锁", ("redis", "缓存", "hotkey", "streams", "分布式锁")),
     _SkillRule("MySQL", "MySQL 索引优化 事务隔离 SQL 查询优化", ("mysql", "索引", "事务", "sql")),
     _SkillRule("消息队列", "消息队列可靠性 MQ", ("消息队列", "mq", "kafka", "rabbitmq", "rocketmq")),
-    _SkillRule("RAG", "RAG 多通道检索 BM25 向量检索 Cross-Encoder", ("rag", "检索增强", "多通道检索", "多路召回", "bm25")),
+    _SkillRule(
+        "RAG", "RAG 多通道检索 BM25 向量检索 Cross-Encoder", ("rag", "检索增强", "多通道检索", "多路召回", "bm25")
+    ),
     _SkillRule("Embedding", "Embedding 向量检索 pgvector", ("embedding", "向量", "vector", "pgvector")),
     _SkillRule("MCP", "MCP 工具集成", ("mcp", "model context protocol")),
-    _SkillRule("Agent", "Agent 规划 执行 多 Agent 工具选择", ("agent", "智能体", "multi-agent", "多 agent", "规划执行")),
+    _SkillRule(
+        "Agent", "Agent 规划 执行 多 Agent 工具选择", ("agent", "智能体", "multi-agent", "多 agent", "规划执行")
+    ),
     _SkillRule("Prompt", "Prompt 工程 结构化输出", ("prompt", "提示词", "结构化输出")),
     _SkillRule("LLM", "LLM 应用 上下文 成本 评估", ("llm", "大模型", "模型应用", "function calling", "tool calling")),
     _SkillRule("微调", "LoRA QLoRA SFT DPO RLHF", ("微调", "lora", "qlora", "sft", "dpo", "rlhf")),
@@ -301,7 +307,9 @@ class JDParseService:
     def _infer_role_title(raw_jd: str, role_domain: str) -> str:
         for line in raw_jd.splitlines():
             line = line.strip(" -：:")
-            if 2 <= len(line) <= 40 and any(token in line for token in ["开发", "工程师", "实习", "架构", "Agent", "LLM"]):
+            if 2 <= len(line) <= 40 and any(
+                token in line for token in ["开发", "工程师", "实习", "架构", "Agent", "LLM"]
+            ):
                 return line
         labels = {
             "ai_agent": "AI Agent 开发",

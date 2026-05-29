@@ -94,7 +94,9 @@ def test_coach_mode_first_answer_returns_retry_hint_without_full_answer():
         topic=topic,
         turn=turn,
         evaluation=evaluation,
-        answered_turns_after_current=[turn.model_copy(update={"answer": "用了 RAG，效果还可以。", "ability_score": evaluation.ability_score})],
+        answered_turns_after_current=[
+            turn.model_copy(update={"answer": "用了 RAG，效果还可以。", "ability_score": evaluation.ability_score})
+        ],
         has_next_topic=True,
         coach_hint=hint,
     )
