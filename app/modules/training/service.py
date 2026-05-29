@@ -12,7 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.base_persistence_service import safe_json_loads
 from app.common.error_code import ErrorCode
 from app.common.exception import BusinessException
-from app.modules.interview.models import InterviewSessionEntity, SessionStatus
+from app.modules.interview.dynamic_persistence_service import dynamic_interview_persistence_service
+from app.modules.interview.models import (
+    InterviewEngineType,
+    InterviewSessionEntity,
+    SessionStatus,
+)
 from app.modules.interview.persistence_service import interview_persistence_service
 from app.modules.resume.models import ResumeAnalysisEntity, ResumeEntity
 from app.modules.resume.persistence_service import resume_persistence_service
@@ -133,6 +138,8 @@ class TrainingService:
         analyses = [analysis for resume in resumes if (analysis := self._latest_analysis(resume))]
 
         tasks = self._build_candidate_tasks(calibration, resumes, analyses, days)
+        dynamic_tasks = await self._build_dynamic_tomorrow_tasks(db, user_id)
+        tasks.extend(dynamic_tasks)
         progress = await self._get_progress_by_task_id(db, user_id)
         tasks = [self._apply_progress(task, progress.get(task.id)) for task in tasks]
         plan = self._schedule_tasks(tasks, days)
@@ -320,6 +327,7 @@ class TrainingService:
         resumes = await resume_persistence_service.find_all(db, user_id=user_id)
         analyses = [analysis for resume in resumes if (analysis := self._latest_analysis(resume))]
         tasks = self._build_candidate_tasks(calibration, resumes, analyses, days)
+        tasks.extend(await self._build_dynamic_tomorrow_tasks(db, user_id))
         return {task.id: task for task in tasks}
 
     def _apply_progress(
@@ -607,6 +615,77 @@ class TrainingService:
                 )
             )
         return plan
+
+    async def _build_dynamic_tomorrow_tasks(
+        self,
+        db: AsyncSession,
+        user_id: int,
+    ) -> list[TrainingTaskDTO]:
+        """Pull tomorrow_tasks from recent dynamic interview reports into the training plan."""
+        tasks: list[TrainingTaskDTO] = []
+
+        session_result = await db.execute(
+            select(InterviewSessionEntity)
+            .where(
+                InterviewSessionEntity.user_id == user_id,
+                InterviewSessionEntity.engine_type == InterviewEngineType.DYNAMIC.value,
+                InterviewSessionEntity.status == SessionStatus.COMPLETED.value,
+            )
+            .order_by(InterviewSessionEntity.completed_at.desc())
+            .limit(3)
+        )
+        dynamic_sessions = list(session_result.scalars().all())
+
+        for session in dynamic_sessions:
+            report_data = safe_json_loads(session.final_report_json, {})
+            tomorrow_items = report_data.get("tomorrow_tasks", [])
+            if not isinstance(tomorrow_items, list):
+                continue
+
+            for idx, item in enumerate(tomorrow_items):
+                if not isinstance(item, dict):
+                    continue
+                tasks.append(
+                    TrainingTaskDTO(
+                        id=f"dyn-{session.session_id}-{idx}",
+                        day=0,
+                        title=str(item.get("title") or f"训练任务 {idx + 1}"),
+                        task_type=str(item.get("task_type", "RETRY_TOPIC")),
+                        priority=item.get("priority_score", 0.5) > 0.6 and "HIGH" or "MEDIUM",
+                        estimate_minutes=20,
+                        reason=str(item.get("reason") or item.get("action", "")),
+                        source_session_id=session.session_id,
+                        question_index=None,
+                        action_path=f"/interviews/{session.session_id}",
+                        checklist=[
+                            str(item.get("action", "完成练习")),
+                            "对照报告中的参考答案自查",
+                            "记录一个改进点",
+                        ],
+                    )
+                )
+
+        topic_profile = await dynamic_interview_persistence_service.get_user_topic_profile(db, user_id)
+        for topic_key in topic_profile.get("low_score_topics", [])[:3]:
+            topic_info = topic_profile.get("topic_counts", {}).get(topic_key, {})
+            avg_score = topic_info.get("avg_score", 0) or 0
+            tasks.append(
+                TrainingTaskDTO(
+                    id=f"dyn-retry-{topic_key}",
+                    day=0,
+                    title=f"重练低分 topic：{topic_key}",
+                    task_type="RETRY_TOPIC",
+                    priority="HIGH",
+                    estimate_minutes=25,
+                    reason=f"历史均分 {avg_score}，需要再练巩固",
+                    source_session_id=None,
+                    question_index=None,
+                    action_path="/interview-hub",
+                    checklist=["复习 topic 相关知识", "准备一个完整回答", "在教练模式下重练"],
+                )
+            )
+
+        return tasks
 
     def _fill_daily_tasks(self, tasks: list[TrainingTaskDTO], days: int) -> None:
         templates = [

@@ -1110,107 +1110,120 @@ class DynamicInterviewService:
             },
         )
 
-        structured_jd = None
-        current_operation = "JD_PARSE"
-        recent_topics, user_profile = None, None
-        try:
-            structured_jd = await self._track_operation(
-                db,
-                session,
-                "JD_PARSE",
-                lambda: jd_parse_service.parse(request.jd_text, request.target_role, request.skill_id),
-            )
-            recent_topics = await dynamic_interview_persistence_service.list_recent_topic_keys(db, user_id)
-            user_profile = await dynamic_interview_persistence_service.get_user_topic_profile(db, user_id)
-            current_operation = "TOPIC_PLAN"
-            topics, plan_summary = await self._track_operation(
-                db,
-                session,
-                "TOPIC_PLAN",
-                lambda: self.plan_service.build_plan(
-                    request,
-                    structured_jd,
-                    resume_detail,
-                    recent_topic_keys=recent_topics,
-                    user_topic_profile=user_profile,
-                ),
-            )
-        except Exception as exc:
-            message = f"面试计划生成失败，可以重试；已保存你的会话配置。错误类型：{exc.__class__.__name__}"
-            logger.warning("动态面试计划生成失败: session_id=%s, error=%s", session.session_id, exc, exc_info=True)
-            await dynamic_interview_persistence_service.mark_session_failed(
-                db,
-                session,
-                message=message,
-                plan_summary={
-                    "generation_stages": self._generation_stage_summary(failed_key=current_operation),
-                },
-                structured_jd=structured_jd,
-            )
-            return DynamicInterviewCreateResponse(
-                session_id=session.session_id,
-                status=SessionStatus.FAILED.value,
-                structured_jd=structured_jd or jd_parse_service.parse(None, request.target_role, request.skill_id),
-                current_topic=None,
-                current_turn=None,
-                plan_summary=dynamic_interview_persistence_service.plan_summary_from_session(session),
-            )
-
-        plan_summary = {
-            **plan_summary,
-            "generation_status": SessionStatus.INTERVIEWING.value,
-            "generation_stages": self._generation_stage_summary(completed=True),
-            "latency_targets_ms": {
-                "create_session": 15000,
-                "submit_answer": 10000,
-            },
-        }
-        await dynamic_interview_persistence_service.complete_planning_session(
-            db,
-            session,
-            structured_jd=structured_jd,
-            plan_summary=plan_summary,
+        import asyncio as _asyncio
+        _asyncio.create_task(
+            self._generate_plan_background(session.session_id, request, resume_detail, user_id)
         )
-
-        topic_entities: list[InterviewTopicEntity] = []
-        for topic in topics:
-            topic_entity = await dynamic_interview_persistence_service.create_topic(
-                db,
-                session_entity_id=session.id,
-                user_id=user_id,
-                resume_id=request.resume_id,
-                topic=topic,
-                evidence_hash=self._evidence_hash(topic.evidence_snippet),
-            )
-            topic_entities.append(topic_entity)
-
-        first_topic = topic_entities[0]
-        await dynamic_interview_persistence_service.set_current_topic(db, session.id, first_topic.id)
-        first_turn = await self._track_operation(
-            db,
-            session,
-            "MAIN_QUESTION_GENERATE",
-            lambda: dynamic_interview_persistence_service.create_turn(
-                db,
-                session_entity_id=session.id,
-                topic_id=first_topic.id,
-                user_id=user_id,
-                turn_type=TurnType.MAIN.value,
-                turn_order=1,
-                question=first_topic.main_question,
-            ),
-            topic_id=first_topic.id,
-        )
-        await db.flush()
 
         return DynamicInterviewCreateResponse(
             session_id=session.session_id,
-            status=SessionStatus.INTERVIEWING.value,
-            structured_jd=structured_jd,
-            current_topic=dynamic_interview_persistence_service.topic_to_dto(first_topic),
-            current_turn=dynamic_interview_persistence_service.turn_to_dto(first_turn),
-            plan_summary=plan_summary,
+            status=SessionStatus.PLANNING.value,
+            structured_jd=jd_parse_service.parse(None, request.target_role, request.skill_id),
+            current_topic=None,
+            current_turn=None,
+            plan_summary={
+                "generation_status": SessionStatus.PLANNING.value,
+                "generation_stages": self._generation_stage_summary(active_key="JD_PARSE"),
+            },
         )
+
+    async def _generate_plan_background(
+        self,
+        session_id: str,
+        request: DynamicInterviewCreateRequest,
+        resume_detail: ResumeDetailDTO | None,
+        user_id: int,
+    ) -> None:
+        from app.database import async_session_factory
+
+        async with async_session_factory() as bg_db:
+            try:
+                session = await dynamic_interview_persistence_service.find_session(bg_db, session_id, user_id)
+                if session is None:
+                    return
+
+                current_operation = "JD_PARSE"
+                structured_jd = await self._track_operation(
+                    bg_db,
+                    session,
+                    "JD_PARSE",
+                    lambda: jd_parse_service.parse(request.jd_text, request.target_role, request.skill_id),
+                )
+                recent_topics = await dynamic_interview_persistence_service.list_recent_topic_keys(bg_db, user_id)
+                user_profile = await dynamic_interview_persistence_service.get_user_topic_profile(bg_db, user_id)
+                current_operation = "TOPIC_PLAN"
+                topics, plan_summary = await self._track_operation(
+                    bg_db,
+                    session,
+                    "TOPIC_PLAN",
+                    lambda: self.plan_service.build_plan(
+                        request,
+                        structured_jd,
+                        resume_detail,
+                        recent_topic_keys=recent_topics,
+                        user_topic_profile=user_profile,
+                    ),
+                )
+            except Exception as exc:
+                message = f"面试计划生成失败，可以重试；已保存你的会话配置。错误类型：{exc.__class__.__name__}"
+                logger.warning("动态面试计划生成失败: session_id=%s, error=%s", session_id, exc, exc_info=True)
+                await dynamic_interview_persistence_service.mark_session_failed(
+                    bg_db,
+                    session,
+                    message=message,
+                    plan_summary={
+                        "generation_stages": self._generation_stage_summary(failed_key=current_operation),
+                    },
+                    structured_jd=structured_jd,
+                )
+                return
+
+            plan_summary = {
+                **plan_summary,
+                "generation_status": SessionStatus.INTERVIEWING.value,
+                "generation_stages": self._generation_stage_summary(completed=True),
+                "latency_targets_ms": {
+                    "create_session": 15000,
+                    "submit_answer": 10000,
+                },
+            }
+            await dynamic_interview_persistence_service.complete_planning_session(
+                bg_db,
+                session,
+                structured_jd=structured_jd,
+                plan_summary=plan_summary,
+            )
+
+            topic_entities: list[InterviewTopicEntity] = []
+            for topic in topics:
+                topic_entity = await dynamic_interview_persistence_service.create_topic(
+                    bg_db,
+                    session_entity_id=session.id,
+                    user_id=user_id,
+                    resume_id=request.resume_id,
+                    topic=topic,
+                    evidence_hash=self._evidence_hash(topic.evidence_snippet),
+                )
+                topic_entities.append(topic_entity)
+
+            first_topic = topic_entities[0]
+            await dynamic_interview_persistence_service.set_current_topic(bg_db, session.id, first_topic.id)
+            await self._track_operation(
+                bg_db,
+                session,
+                "MAIN_QUESTION_GENERATE",
+                lambda: dynamic_interview_persistence_service.create_turn(
+                    bg_db,
+                    session_entity_id=session.id,
+                    topic_id=first_topic.id,
+                    user_id=user_id,
+                    turn_type=TurnType.MAIN.value,
+                    turn_order=1,
+                    question=first_topic.main_question,
+                ),
+                topic_id=first_topic.id,
+            )
+            await bg_db.commit()
 
     async def submit_turn_answer(
         self,
