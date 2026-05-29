@@ -228,8 +228,19 @@ class JDParseService:
         weights: dict[str, float] = {}
         quality_multiplier = 1.0 if quality_score >= 75 else 0.78 if quality_score >= 50 else 0.55
         skill_to_hint = {rule.skill: rule.topic_hint for rule in SKILL_RULES}
+        skill_to_topics = {
+            "RAG": ("rag_multi_channel_retrieval",),
+            "MCP": ("mcp_tool_integration",),
+            "Redis": ("redis_cache_penetration_hotkey", "redis_cache_consistency"),
+            "MySQL": ("mysql_index_optimization",),
+            "React": ("react_state_management",),
+            "TypeScript": ("typescript_type_design",),
+            "微调": ("lora_qlora_finetuning", "dpo_preference_optimization"),
+        }
 
         for skill in required_skills:
+            for topic_key in skill_to_topics.get(skill, ()):
+                self._merge_weight(weights, topic_key, 0.88)
             hint = skill_to_hint.get(skill, skill)
             result = topic_registry_service.normalize(
                 raw_topic=hint,
@@ -254,6 +265,15 @@ class JDParseService:
             self._merge_weight(weights, result.topic_key, 0.72 * quality_multiplier)
 
         for responsibility in responsibilities:
+            lowered_responsibility = responsibility.lower()
+            if "性能优化" in responsibility and role_domain == "frontend":
+                self._merge_weight(weights, "frontend_performance_optimization", 0.86)
+            if "任务队列" in responsibility or "异步任务" in responsibility:
+                self._merge_weight(weights, "async_task_pipeline", 0.86)
+            if "幂等" in responsibility:
+                self._merge_weight(weights, "idempotency_design", 0.86)
+            if "redis streams" in lowered_responsibility:
+                self._merge_weight(weights, "async_task_pipeline", 0.88)
             result = topic_registry_service.normalize(
                 raw_topic=responsibility,
                 evidence_snippet=responsibility,

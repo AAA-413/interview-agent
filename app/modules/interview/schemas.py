@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -71,7 +72,7 @@ class DynamicInterviewCreateRequest(BaseModel):
     target_company: str | None = Field(default=None, max_length=120)
     level: str | None = Field(default=None, max_length=40)
     jd_text: str | None = Field(default=None, max_length=10000)
-    mode: str = Field(default="COACH", max_length=20)
+    mode: Literal["COACH", "STRICT"] = "COACH"
     topic_count: int = Field(default=4, ge=4, le=4)
     skill_id: str | None = Field(default=None, max_length=64)
     difficulty: str | None = Field(default=None, max_length=16)

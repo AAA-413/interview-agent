@@ -15,8 +15,11 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
+import asyncio
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -24,6 +27,7 @@ from datetime import datetime
 from app.modules.interview.dynamic_service import (
     DynamicAnswerEvaluationService,
     InterviewPlanService,
+    StrictInterviewPolicy,
 )
 from app.modules.interview.jd_parse_service import jd_parse_service
 from app.modules.interview.schemas import (
@@ -31,6 +35,17 @@ from app.modules.interview.schemas import (
     DynamicTopicDTO,
     DynamicTurnDTO,
 )
+from app.modules.resume.schemas import AnalysisHistoryDTO, ProjectInfo, ResumeDetailDTO, ResumeProfile, TechStack
+
+TOPIC_ALIASES = {
+    "cache_penetration_avalanche": "redis_cache_penetration_hotkey",
+    "mysql_indexing_optimization": "mysql_index_optimization",
+    "frontend_performance": "frontend_performance_optimization",
+    "async_task_queue_design": "async_task_pipeline",
+    "api_idempotency_design": "idempotency_design",
+    "lora_finetuning_practice": "lora_qlora_finetuning",
+    "dpo_alignment": "dpo_preference_optimization",
+}
 
 
 @dataclass
@@ -46,6 +61,38 @@ def load_dataset() -> dict:
     dataset_path = os.path.join(os.path.dirname(__file__), "quality_baselines", "2026-05-29", "eval_dataset.json")
     with open(dataset_path) as f:
         return json.load(f)
+
+
+def sample_resume_detail(sample: dict) -> ResumeDetailDTO:
+    resume_text = sample.get("resume_text", "")
+    skills = jd_parse_service.parse(sample.get("jd_text"), sample.get("target_role"), sample.get("skill_id")).required_skills
+    project = ProjectInfo(
+        name=sample.get("label", "代表性项目"),
+        role=sample.get("target_role", "候选人"),
+        tech_stack=skills,
+        description=resume_text,
+        highlights=[resume_text[:180]] if resume_text else [],
+    )
+    return ResumeDetailDTO(
+        id=0,
+        filename=f"quality-{sample['id']}.txt",
+        file_size=len(resume_text.encode()),
+        uploaded_at=datetime(2026, 5, 29, 9, 0, 0),
+        resume_text=resume_text,
+        analyses=[
+            AnalysisHistoryDTO(
+                id=0,
+                analyzed_at=datetime(2026, 5, 29, 9, 0, 0),
+                profile=ResumeProfile(
+                    projects=[project],
+                    tech_stacks=[TechStack(name=skill, proficiency="熟悉", context=resume_text[:80]) for skill in skills],
+                    experience_level="quality_sample",
+                    has_projects=True,
+                    summary=resume_text[:160],
+                ),
+            )
+        ],
+    )
 
 
 def check_question_quality(sample: dict, topics: list[DynamicTopicDTO], plan_summary: dict) -> list[dict]:
@@ -275,8 +322,9 @@ def evaluate_sample(sample: dict) -> QualityResult:
         target_role=sample["target_role"],
         jd_text=sample["jd_text"],
         skill_id=sample["skill_id"],
+        mode="STRICT",
     )
-    topics, plan_summary = InterviewPlanService().build_plan(request, structured, None)
+    topics, plan_summary = InterviewPlanService().build_plan(request, structured, sample_resume_detail(sample))
 
     for check in check_question_quality(sample, topics, plan_summary):
         key = f"Q_{check['check']}"
@@ -290,7 +338,8 @@ def evaluate_sample(sample: dict) -> QualityResult:
     # --- 2. Per-topic followup & scoring ---
     all_scores: dict[str, list[int]] = {}
     for topic_key, answers in sample.get("sample_answers", {}).items():
-        matching_topic = next((t for t in topics if t.topic_key == topic_key), None)
+        canonical_topic_key = TOPIC_ALIASES.get(topic_key, topic_key)
+        matching_topic = next((t for t in topics if t.topic_key in {topic_key, canonical_topic_key}), None)
         if matching_topic is None:
             result.failures.append(f"[F_TOPIC_MISSING] {topic_key} not in plan")
             result.failed += 1
@@ -313,10 +362,25 @@ def evaluate_sample(sample: dict) -> QualityResult:
                 traceback.print_exc()
                 evaluation = evaluator.fallback_evaluation(matching_topic)
 
+            decision = StrictInterviewPolicy().decide(
+                topic=matching_topic,
+                turn=turn,
+                evaluation=evaluation,
+                answered_turns_after_current=[
+                    turn.model_copy(update={"answer": answer_text, "ability_score": evaluation.ability_score})
+                ],
+                has_next_topic=True,
+            )
+
             # Score band & ranking
             expected_range = sample["expected_score_bands"].get(answer_type, [0, 100])
             for check in check_followup_quality(
-                sample, matching_topic, answer_type, {"action": "NEXT_TOPIC"}, expected_range, evaluation.ability_score
+                sample,
+                matching_topic,
+                answer_type,
+                decision.model_dump(),
+                expected_range,
+                evaluation.ability_score,
             ):
                 key = f"F_{check['check']}_{topic_key}"
                 result.checks[key] = check
@@ -340,6 +404,205 @@ def evaluate_sample(sample: dict) -> QualityResult:
                     result.failures.append(f"[{key}] {check['detail']}")
 
     return result
+
+
+def _topics_for_sample(sample: dict) -> list[DynamicTopicDTO]:
+    structured = jd_parse_service.parse(
+        sample["jd_text"], target_role=sample["target_role"], skill_id=sample["skill_id"]
+    )
+    request = DynamicInterviewCreateRequest(
+        target_role=sample["target_role"],
+        jd_text=sample["jd_text"],
+        skill_id=sample["skill_id"],
+        mode="STRICT",
+    )
+    topics, _ = InterviewPlanService().build_plan(request, structured, sample_resume_detail(sample))
+    return topics
+
+
+async def augment_with_llm_judge(
+    sample: dict,
+    result: QualityResult,
+    *,
+    provider: str | None = None,
+    max_topics: int | None = None,
+) -> None:
+    """Use the real configured LLM as an external judge for answer ranking and follow-up quality."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    from app.common.ai.llm_provider import llm_registry
+
+    topics = _topics_for_sample(sample)
+    evaluator = DynamicAnswerEvaluationService()
+    chat_model = llm_registry.get_chat_model(provider)
+    judged = 0
+
+    for topic_key, answers in sample.get("sample_answers", {}).items():
+        if max_topics is not None and judged >= max_topics:
+            break
+        canonical_topic_key = TOPIC_ALIASES.get(topic_key, topic_key)
+        topic = next((t for t in topics if t.topic_key in {topic_key, canonical_topic_key}), None)
+        if topic is None:
+            continue
+
+        deterministic = {}
+        for answer_type, answer_text in answers.items():
+            turn = DynamicTurnDTO(
+                id=1,
+                topic_id=topic.id,
+                turn_type="MAIN",
+                turn_order=1,
+                question=topic.main_question,
+            )
+            evaluation = evaluator.evaluate(topic, turn, answer_text, [])
+            decision = StrictInterviewPolicy().decide(
+                topic=topic,
+                turn=turn,
+                evaluation=evaluation,
+                answered_turns_after_current=[
+                    turn.model_copy(update={"answer": answer_text, "ability_score": evaluation.ability_score})
+                ],
+                has_next_topic=True,
+            )
+            deterministic[answer_type] = {
+                "score": evaluation.ability_score,
+                "decision_action": decision.action,
+                "followup_question": decision.next_question,
+                "signals": evaluation.signals,
+                "answer": answer_text,
+            }
+
+        prompt = _llm_judge_prompt(sample, topic, deterministic)
+        try:
+            response = await chat_model.ainvoke(
+                [
+                    SystemMessage(
+                        content=(
+                            "你是技术面试质量评审员，只评估面试系统质量。"
+                            "必须只输出 JSON，不要 markdown，不要额外解释。"
+                        )
+                    ),
+                    HumanMessage(content=prompt),
+                ]
+            )
+            payload = _parse_json_object(str(response.content))
+        except Exception as exc:
+            check = {
+                "check": f"llm_judge_available_{topic_key}",
+                "passed": False,
+                "detail": f"LLM judge failed: {exc.__class__.__name__}: {exc}",
+            }
+            _record_check(result, f"J_available_{topic_key}", check)
+            judged += 1
+            continue
+
+        checks = [
+            {
+                "check": f"llm_ranking_{topic_key}",
+                "passed": bool(payload.get("ranking_ok")),
+                "detail": str(payload.get("ranking_reason", ""))[:240],
+            },
+            {
+                "check": f"llm_score_alignment_{topic_key}",
+                "passed": bool(payload.get("score_alignment_ok")),
+                "detail": str(payload.get("score_alignment_reason", ""))[:240],
+            },
+            {
+                "check": f"llm_followup_quality_{topic_key}",
+                "passed": bool(payload.get("followup_quality_ok")),
+                "detail": str(payload.get("followup_reason", ""))[:240],
+            },
+        ]
+        for check in checks:
+            _record_check(result, f"J_{check['check']}", check)
+        judged += 1
+
+
+def _record_check(result: QualityResult, key: str, check: dict) -> None:
+    result.checks[key] = check
+    if check["passed"]:
+        result.passed += 1
+    else:
+        result.failed += 1
+        result.failures.append(f"[{key}] {check['detail']}")
+
+
+def _llm_judge_prompt(sample: dict, topic: DynamicTopicDTO, deterministic: dict) -> str:
+    compact_answers = {
+        key: {
+            "score": value["score"],
+            "decision_action": value["decision_action"],
+            "followup_question": value["followup_question"],
+            "signals": value["signals"],
+            "answer": value["answer"][:900],
+        }
+        for key, value in deterministic.items()
+    }
+    return json.dumps(
+        {
+            "task": "评估动态面试系统对一个 topic 的评分排序和追问质量是否可信。",
+            "expected_answer_order": ["strong", "normal", "vague", "off_topic"],
+            "rubric": {
+                "ranking_ok": "strong 应明显好于 normal，normal 好于 vague，off_topic 应最低或接近最低。",
+                "score_alignment_ok": "分数要大致符合回答质量；强回答不应低分，跑偏回答不应高分。",
+                "followup_quality_ok": "追问要针对缺口，不能泄露答案；严厉模式可继续追问细节、指标、边界、取舍。",
+            },
+            "sample_label": sample.get("label"),
+            "target_role": sample.get("target_role"),
+            "topic": topic.model_dump(),
+            "answers_and_system_outputs": compact_answers,
+            "output_schema": {
+                "ranking_ok": "boolean",
+                "ranking_reason": "string",
+                "score_alignment_ok": "boolean",
+                "score_alignment_reason": "string",
+                "followup_quality_ok": "boolean",
+                "followup_reason": "string",
+            },
+        },
+        ensure_ascii=False,
+    )
+
+
+def _parse_json_object(text: str) -> dict:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```(?:json)?\s*", "", stripped)
+        stripped = re.sub(r"\s*```$", "", stripped)
+    try:
+        data = json.loads(stripped)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", stripped, re.S)
+        if not match:
+            raise
+        data = json.loads(match.group(0))
+    if not isinstance(data, dict):
+        raise ValueError("LLM judge response is not a JSON object")
+    return data
+
+
+def _llm_judge_preflight_error(provider: str | None) -> str | None:
+    """Return a user-facing error when the configured real LLM judge cannot start."""
+    provider_name = provider or "dashscope"
+    if provider_name != "dashscope":
+        return None
+
+    from app.config import settings
+
+    api_key = settings.ai.bailian_api_key.strip()
+    placeholder_values = {
+        "",
+        "your_api_key",
+        "your_dashscope_api_key",
+        "your_deepseek_api_key",
+        "sk-xxx",
+    }
+    if api_key.lower() in placeholder_values:
+        return (
+            "LLM judge requires a real AI_BAILIAN_API_KEY in .env or environment. "
+            "Set AI_BAILIAN_API_KEY and rerun with --with-llm-judge."
+        )
+    return None
 
 
 def generate_report(dataset: dict, results: list[QualityResult]) -> dict:
@@ -371,18 +634,23 @@ def generate_report(dataset: dict, results: list[QualityResult]) -> dict:
         "quality_lines": {
             "question_quality": {
                 "rate": _line_rate(results, "Q_"),
-                "checks": total_passed - sum(1 for f in _line_failures(results, "Q_")),
+                "checks": _line_total(results, "Q_"),
                 "failures": len(_line_failures(results, "Q_")),
             },
             "followup_quality": {
                 "rate": _line_rate(results, "F_"),
-                "checks": total_passed - sum(1 for f in _line_failures(results, "F_")),
+                "checks": _line_total(results, "F_"),
                 "failures": len(_line_failures(results, "F_")),
             },
             "scoring_quality": {
                 "rate": _line_rate(results, "S_"),
-                "checks": total_passed - sum(1 for f in _line_failures(results, "S_")),
+                "checks": _line_total(results, "S_"),
                 "failures": len(_line_failures(results, "S_")),
+            },
+            "llm_judge": {
+                "rate": _line_rate(results, "J_"),
+                "checks": _line_total(results, "J_"),
+                "failures": len(_line_failures(results, "J_")),
             },
         },
         "thresholds": {
@@ -399,6 +667,10 @@ def _line_rate(results: list[QualityResult], prefix: str) -> float:
     total = sum(1 for r in results for k in r.checks if k.startswith(prefix))
     passed = sum(1 for r in results for k, v in r.checks.items() if k.startswith(prefix) and v["passed"])
     return round(passed / total * 100, 1) if total > 0 else 0
+
+
+def _line_total(results: list[QualityResult], prefix: str) -> int:
+    return sum(1 for r in results for k in r.checks if k.startswith(prefix))
 
 
 def _line_failures(results: list[QualityResult], prefix: str) -> list[str]:
@@ -448,7 +720,10 @@ def write_report_md(report_data: dict, output_dir: str) -> None:
             "question_quality": "出题质量",
             "followup_quality": "追问质量",
             "scoring_quality": "评分质量",
+            "llm_judge": "LLM 评审",
         }.get(line_name, line_name)
+        if line_name == "llm_judge" and line_data["rate"] == 0 and line_data["failures"] == 0:
+            continue
         lines.append(f"| {label} | {line_data['rate']}% | {line_data['failures']} |")
 
     lines.extend(
@@ -490,10 +765,11 @@ def write_report_md(report_data: dict, output_dir: str) -> None:
             "- 出题质量低于 80%：检查 Topic Registry 映射和 JD 解析规则",
             "- 追问质量低于 70%：优化 StrictInterviewPolicy 追问逻辑",
             "- 评分质量低于 80%：校准评分 prompt 和维度权重",
+            "- LLM 评审低于 80%：抽查 judge 原因并回放真实面试样本",
             "",
             "## 下次改进",
             "",
-            "- 接入真实 LLM 评估追问质量和教练提示质量",
+            "- 扩大真实 LLM judge 覆盖样本和版本对比",
             "- 增加人工抽检层",
             "- 建立版本对比机制",
         ]
@@ -503,7 +779,24 @@ def write_report_md(report_data: dict, output_dir: str) -> None:
         f.write("\n".join(lines) + "\n")
 
 
-def main():
+async def async_main():
+    parser = argparse.ArgumentParser(description="Run dynamic interview quality baseline checks.")
+    parser.add_argument("--with-llm-judge", action="store_true", help="Call the configured real LLM as judge.")
+    parser.add_argument("--llm-provider", default=None, help="LLM provider name registered in llm_registry.")
+    parser.add_argument(
+        "--llm-max-topics",
+        type=int,
+        default=None,
+        help="Maximum judged topics per sample. Omit to judge all matching sample topics.",
+    )
+    args = parser.parse_args()
+
+    if args.with_llm_judge:
+        preflight_error = _llm_judge_preflight_error(args.llm_provider)
+        if preflight_error:
+            print(preflight_error, file=sys.stderr)
+            sys.exit(2)
+
     dataset = load_dataset()
     print(f"Evaluating {len(dataset['samples'])} samples...")
 
@@ -511,6 +804,13 @@ def main():
     for sample in dataset["samples"]:
         print(f"  Sample {sample['id']} ({sample['label']})...", end=" ")
         result = evaluate_sample(sample)
+        if args.with_llm_judge:
+            await augment_with_llm_judge(
+                sample,
+                result,
+                provider=args.llm_provider,
+                max_topics=args.llm_max_topics,
+            )
         results.append(result)
         print(f"passed={result.passed}, failed={result.failed}")
 
@@ -541,4 +841,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(async_main())

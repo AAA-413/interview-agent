@@ -40,9 +40,9 @@ class KnowledgeBaseUploadService:
         )
 
         file_hash = file_hash_service.calculate_hash(file_bytes)
-        existing = await knowledge_base_persistence_service.find_by_file_hash(db, file_hash)
+        existing = await knowledge_base_persistence_service.find_by_file_hash(db, file_hash, user_id=user_id)
         if existing:
-            logger.info("知识库文档已存在(哈希去重): id=%d", existing.id)
+            logger.info("知识库文档已存在(用户内哈希去重): id=%d, user_id=%d", existing.id, user_id)
             return existing
 
         storage_key, storage_url = await file_storage_service.upload_knowledge_base(

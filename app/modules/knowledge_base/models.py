@@ -18,7 +18,7 @@ class RagChatStatus(str, enum.Enum):
 class KnowledgeBaseEntity(Base):
     __tablename__ = "knowledge_bases"
     __table_args__ = (
-        Index("idx_kb_file_hash", "file_hash", unique=True),
+        Index("idx_kb_user_file_hash", "user_id", "file_hash", unique=True),
         Index("idx_kb_created_at", "created_at"),
         Index("idx_kb_index_status_created", "index_status", "created_at"),
     )
@@ -27,7 +27,7 @@ class KnowledgeBaseEntity(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(String(1000))
-    file_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    file_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(500), nullable=False)
     file_size: Mapped[int | None] = mapped_column(BigInteger)
     content_type: Mapped[str | None] = mapped_column(String(200))

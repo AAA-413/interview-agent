@@ -1,6 +1,9 @@
 import json
 from datetime import datetime
 
+import pytest
+from pydantic import ValidationError
+
 from app.modules.interview.dynamic_persistence_service import dynamic_interview_persistence_service
 from app.modules.interview.dynamic_service import (
     CoachInterviewPolicy,
@@ -8,6 +11,7 @@ from app.modules.interview.dynamic_service import (
     DynamicInterviewReportService,
     DynamicRagCoachService,
     InterviewPlanService,
+    StrictInterviewPolicy,
 )
 from app.modules.interview.jd_parse_service import jd_parse_service
 from app.modules.interview.models import InterviewSessionEntity, InterviewTopicEntity, InterviewTurnEntity
@@ -106,6 +110,136 @@ def test_coach_mode_first_answer_returns_retry_hint_without_full_answer():
     assert "guardrail" in decision.hint
     assert "完整可照抄答案" in decision.hint["guardrail"]
     assert decision.next_question == topic.main_question
+
+
+def test_dynamic_create_request_rejects_unknown_mode():
+    with pytest.raises(ValidationError):
+        DynamicInterviewCreateRequest(mode="STRICTT")
+
+
+def test_strict_mode_first_answer_returns_followup_without_hint_or_retry():
+    topic = DynamicTopicDTO(
+        topic_key="rag_multi_channel_retrieval",
+        topic_title="RAG 多通道检索",
+        skill_key="rag",
+        question_type="PROJECT",
+        source_type="resume",
+        evidence_snippet="智能问答项目：向量检索 + BM25 多路召回，Cross-Encoder 重排序。",
+        main_question="请讲清楚 RAG 多通道检索链路和你的贡献。",
+        topic_order=1,
+    )
+    turn = DynamicTurnDTO(turn_type="MAIN", turn_order=1, question=topic.main_question)
+    evaluation = DynamicAnswerEvaluationService().evaluate(topic, turn, "用了 RAG，效果还可以。", [])
+
+    decision = StrictInterviewPolicy().decide(
+        topic=topic,
+        turn=turn,
+        evaluation=evaluation,
+        answered_turns_after_current=[
+            turn.model_copy(update={"answer": "用了 RAG，效果还可以。", "ability_score": evaluation.ability_score})
+        ],
+        has_next_topic=True,
+        coach_hint={"message": "不应该出现在严厉模式"},
+    )
+
+    assert decision.action == "FOLLOW_UP"
+    assert decision.hint is None
+    assert decision.next_question
+    assert "个人负责" in decision.next_question
+
+
+def test_project_scoring_keeps_concrete_normal_above_generic_vague():
+    evaluator = DynamicAnswerEvaluationService()
+    cases = [
+        (
+            DynamicTopicDTO(
+                topic_key="redis_cache_penetration_hotkey",
+                topic_title="缓存穿透与热点 Key",
+                skill_key="redis",
+                question_type="PROJECT",
+                source_type="resume",
+                evidence_snippet=(
+                    "参与电商订单系统开发。设计 Redis 缓存策略（Cache-Aside 模式）处理热点商品查询，"
+                    "使用互斥锁和随机过期时间保护热点数据，QPS 从 1200 提升到 8000。"
+                ),
+                main_question="请讲清楚缓存穿透、击穿、雪崩和热点数据保护。",
+                topic_order=1,
+            ),
+            {
+                "strong": "热点商品查询采用 Cache-Aside 模式，读的时候先查 Redis，miss 再查 MySQL 并回写缓存。缓存穿透用布隆过滤器，缓存击穿对热点 key 加互斥锁，缓存雪崩给不同 key 设置随机过期时间。QPS 从 1200 提到 8000。",
+                "normal": "我们用了 Redis 做缓存。读请求先查 Redis，没有再查 MySQL。对于热点数据用了互斥锁防止击穿。过期时间设了不同的值防止雪崩。",
+                "vague": "Redis 做缓存很好用，我们项目里很多地方都用了。缓存可以大幅提升性能，减少数据库压力。主要是把热点数据放在 Redis 里。",
+                "off_topic": "缓存应该用 CDN 来做，CloudFront 可以缓存静态资源，配合 Nginx 做反向代理。",
+            },
+        ),
+        (
+            DynamicTopicDTO(
+                topic_key="react_state_management",
+                topic_title="React 状态管理",
+                skill_key="react",
+                question_type="PROJECT",
+                source_type="resume",
+                evidence_snippet=(
+                    "使用 React 18 + TypeScript + Tailwind CSS 构建组件库，封装 30+ 通用组件。"
+                    "使用 useState、useContext、Redux、Zustand 管理组件状态。"
+                ),
+                main_question="请讲清楚组件库里的 React 状态管理方案。",
+                topic_order=1,
+            ),
+            {
+                "strong": "组件库的状态管理分层：组件内状态用 useState/useReducer，跨组件共享用 Context + useMemo 避免不必要的重渲染。复杂业务状态用 Zustand，服务端状态统一用 React Query 管理缓存和重试策略。",
+                "normal": "我们项目用 React 的 useState 和 useContext 管理状态。有一些全局状态用了 Redux，但是后来觉得太重了就换成了 Zustand。",
+                "vague": "React 状态管理有很多方案，Redux、MobX、Zustand 都可以。我觉得选一个团队熟悉的就行，重要的是保持一致性。",
+                "off_topic": "状态管理不应该在前端做，应该全部放到后端。用数据库存储所有状态，前端只是展示层。",
+            },
+        ),
+        (
+            DynamicTopicDTO(
+                topic_key="async_task_pipeline",
+                topic_title="异步任务流水线",
+                skill_key="python",
+                question_type="PROJECT",
+                source_type="resume",
+                evidence_snippet=(
+                    "实现异步任务队列（Redis Streams + Consumer Group），支持任务重试、超时和幂等。"
+                ),
+                main_question="请讲清楚 Redis Streams 异步任务队列的设计。",
+                topic_order=1,
+            ),
+            {
+                "strong": "基于 Redis Streams 实现异步任务队列。Producer 用 XADD 发送任务，Consumer Group 用 XREADGROUP 消费。每个任务有唯一 message_id 做幂等，超时任务用 XPENDING 检测，超过 5 分钟未 ACK 自动重试。",
+                "normal": "用了 Redis Streams 做任务队列。生产者发消息，消费者从 stream 里读。支持任务重试和超时处理。Consumer Group 可以多个实例并行消费。",
+                "vague": "异步任务用消息队列就行，Redis 或者 RabbitMQ 都可以。任务放到队列里，worker 从队列里取出来执行。",
+                "off_topic": "异步任务应该用多线程，Python 的 ThreadPoolExecutor 就能搞定。不需要引入 Redis 这么重的组件。",
+            },
+        ),
+        (
+            DynamicTopicDTO(
+                topic_key="lora_qlora_finetuning",
+                topic_title="LoRA/QLoRA 微调实践",
+                skill_key="llm_finetuning",
+                question_type="PROJECT",
+                source_type="resume",
+                evidence_snippet="使用 LoRA 对 ChatGLM-6B 做指令微调，在 4 张 A100 上训练。",
+                main_question="请讲清楚 LoRA 微调实践。",
+                topic_order=1,
+            ),
+            {
+                "strong": "用 LoRA 对 ChatGLM-6B 做指令微调。配置 rank=8, alpha=16, target_modules 包含 q_proj 和 v_proj。数据集 5000 条指令-回答对，训练 3 个 epoch。",
+                "normal": "用 LoRA 微调了 ChatGLM，在 A100 上训练。加了 adapter 层，只训练少量参数。效果比全量微调差一点但省了很多资源。",
+                "vague": "LoRA 就是低秩适配，可以在不训练全部参数的情况下微调大模型。现在很流行，很多公司都在用。",
+                "off_topic": "微调太费资源了，不如直接写 Prompt。现在的模型 zero-shot 能力很强，精心设计 prompt 就能达到微调 80% 的效果。",
+            },
+        ),
+    ]
+
+    for topic, answers in cases:
+        turn = DynamicTurnDTO(id=1, topic_id=topic.id, turn_type="MAIN", turn_order=1, question=topic.main_question)
+        scores = {label: evaluator.evaluate(topic, turn, answer, []).ability_score for label, answer in answers.items()}
+
+        assert scores["strong"] > scores["normal"] > scores["vague"] > scores["off_topic"]
+        assert scores["normal"] >= 60
+        assert scores["vague"] <= 60
 
 
 def test_turn_to_dto_keeps_missing_coach_hint_as_none():

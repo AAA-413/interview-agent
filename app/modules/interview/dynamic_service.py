@@ -86,7 +86,7 @@ class InterviewPlanService:
         self._apply_dedup(project_candidates, recent_keys, low_score_keys)
         self._apply_dedup([knowledge_candidate], recent_keys, low_score_keys)
 
-        selected = project_candidates[:2] + [knowledge_candidate, system_candidate]
+        selected = self._select_project_candidates(project_candidates, limit=2) + [knowledge_candidate, system_candidate]
         selected = self._ensure_four_topics(selected, target_role)
         topics = [
             self._candidate_to_topic(
@@ -150,6 +150,8 @@ class InterviewPlanService:
             topic = topic_registry_service.get_topic(normalized.topic_key)
             if topic is None or normalized.fallback_reason:
                 topic = topic_registry_service.get_topic("project_role_ownership")
+            elif topic.topic_key == "multi_agent_collaboration" and not self._has_multi_agent_evidence(evidence):
+                topic = None
             if topic:
                 candidates.append(
                     _TopicCandidate(
@@ -158,6 +160,51 @@ class InterviewPlanService:
                         evidence=evidence,
                         source_type="resume",
                         weight=structured_jd.topic_weights.get(topic.topic_key, 0.52) + 0.12,
+                    )
+                )
+
+            evidence_lower = evidence.lower()
+            for topic_key, weight in structured_jd.topic_weights.items():
+                weighted_topic = topic_registry_service.get_topic(topic_key)
+                if weighted_topic is None or "PROJECT" not in weighted_topic.supported_question_types:
+                    continue
+                if weighted_topic.skill_key in {"typescript", "fastapi"}:
+                    continue
+                aliases = (weighted_topic.topic_key, weighted_topic.label, weighted_topic.skill_key, *weighted_topic.aliases)
+                if not any(alias and alias.lower() in evidence_lower for alias in aliases):
+                    continue
+                candidates.append(
+                    _TopicCandidate(
+                        topic=weighted_topic,
+                        question_type="PROJECT",
+                        evidence=evidence,
+                        source_type="resume",
+                        weight=min(weight + 0.18, 1.0),
+                    )
+                )
+
+            evidence_priority_topics = (
+                "frontend_performance_optimization",
+                "async_task_pipeline",
+                "idempotency_design",
+                "redis_cache_penetration_hotkey",
+                "mysql_index_optimization",
+                "mcp_tool_integration",
+            )
+            for topic_key in evidence_priority_topics:
+                priority_topic = topic_registry_service.get_topic(topic_key)
+                if priority_topic is None:
+                    continue
+                aliases = (priority_topic.topic_key, priority_topic.label, *priority_topic.aliases)
+                if not any(alias and alias.lower() in evidence_lower for alias in aliases):
+                    continue
+                candidates.append(
+                    _TopicCandidate(
+                        topic=priority_topic,
+                        question_type="PROJECT",
+                        evidence=evidence,
+                        source_type="resume",
+                        weight=0.96,
                     )
                 )
 
@@ -197,8 +244,53 @@ class InterviewPlanService:
                     )
                 )
 
-        candidates.sort(key=lambda item: item.weight, reverse=True)
+        candidates.sort(
+            key=lambda item: (item.weight, self._project_topic_priority(item.topic.topic_key)),
+            reverse=True,
+        )
         return self._dedupe_candidates(candidates, "PROJECT")
+
+    @staticmethod
+    def _select_project_candidates(candidates: list[_TopicCandidate], limit: int) -> list[_TopicCandidate]:
+        selected: list[_TopicCandidate] = []
+        used_skills: set[str] = set()
+        for candidate in candidates:
+            if len(selected) >= limit:
+                break
+            if candidate.topic.skill_key in used_skills:
+                continue
+            selected.append(candidate)
+            used_skills.add(candidate.topic.skill_key)
+        for candidate in candidates:
+            if len(selected) >= limit:
+                break
+            if candidate.topic.topic_key in {item.topic.topic_key for item in selected}:
+                continue
+            selected.append(candidate)
+        return selected[:limit]
+
+    @staticmethod
+    def _project_topic_priority(topic_key: str) -> int:
+        priority = {
+            "rag_multi_channel_retrieval": 100,
+            "mcp_tool_integration": 98,
+            "redis_cache_penetration_hotkey": 96,
+            "mysql_index_optimization": 94,
+            "react_state_management": 92,
+            "frontend_performance_optimization": 90,
+            "async_task_pipeline": 88,
+            "idempotency_design": 86,
+            "lora_qlora_finetuning": 84,
+            "dpo_preference_optimization": 82,
+            "redis_cache_consistency": 60,
+            "multi_agent_collaboration": 20,
+        }
+        return priority.get(topic_key, 50)
+
+    @staticmethod
+    def _has_multi_agent_evidence(evidence: str) -> bool:
+        lowered = evidence.lower()
+        return "多 agent" in lowered or "multi-agent" in lowered or "agent 协作" in lowered
 
     def _knowledge_candidate(
         self,
@@ -402,11 +494,153 @@ class InterviewPlanService:
 
 
 class DynamicAnswerEvaluationService:
-    STRUCTURE_MARKERS = ("首先", "然后", "最后", "第一", "第二", "背景", "方案", "结果", "复盘", "总结")
+    STRUCTURE_MARKERS = (
+        "首先",
+        "然后",
+        "最后",
+        "第一",
+        "第二",
+        "1)",
+        "2)",
+        "3)",
+        "：",
+        "；",
+        "背景",
+        "方案",
+        "流程",
+        "结果",
+        "复盘",
+        "总结",
+        "分三层",
+        "四层",
+    )
     METRIC_MARKERS = ("指标", "提升", "降低", "baseline", "准确率", "召回率", "qps", "延迟", "耗时", "%")
     OWNERSHIP_MARKERS = ("我负责", "我主导", "我实现", "我的职责", "我设计", "独立", "我推进")
     TRADEOFF_MARKERS = ("取舍", "权衡", "替代方案", "成本", "复杂度", "边界", "风险")
     RELIABILITY_MARKERS = ("异常", "重试", "降级", "监控", "告警", "兜底", "恢复")
+    CONCRETE_MARKERS = (
+        "先查",
+        "再查",
+        "回写",
+        "互斥锁",
+        "过期时间",
+        "布隆过滤器",
+        "二级缓存",
+        "本地缓存",
+        "caffeine",
+        "explain",
+        "联合索引",
+        "覆盖索引",
+        "慢 SQL",
+        "慢查询",
+        "执行计划",
+        "索引失效",
+        "OR 条件",
+        "UNION ALL",
+        "分库分表",
+        "哈希",
+        "user_id",
+        "回表",
+        "BM25",
+        "向量检索",
+        "Cross-Encoder",
+        "重排序",
+        "Query Rewrite",
+        "intent classifier",
+        "Top-20",
+        "Top-5",
+        "pgvector",
+        "useState",
+        "useContext",
+        "useReducer",
+        "useMemo",
+        "Redux",
+        "Zustand",
+        "React Query",
+        "服务端状态",
+        "全局状态",
+        "状态归一化",
+        "虚拟滚动",
+        "代码分割",
+        "懒加载",
+        "Redis Streams",
+        "stream",
+        "任务重试",
+        "超时处理",
+        "并行消费",
+        "XADD",
+        "XREADGROUP",
+        "Consumer Group",
+        "Idempotency-Key",
+        "唯一 key",
+        "处理过",
+        "直接返回",
+        "之前的结果",
+        "去重",
+        "message_id",
+        "Stdio",
+        "SSE",
+        "工具注册",
+        "工具描述",
+        "外部工具",
+        "用户意图",
+        "schema",
+        "input_schema",
+        "endpoint",
+        "token 预算",
+        "工具返回",
+        "声明式配置",
+        "adapter",
+        "少量参数",
+        "全量微调",
+        "指令微调",
+        "A100",
+        "rank=",
+        "alpha=",
+        "target_modules",
+        "偏好数据",
+        "对比数据",
+        "reward model",
+        "beta=",
+        "reference model",
+    )
+    GENERIC_WEAK_MARKERS = (
+        "效果还不错",
+        "很好用",
+        "很多地方",
+        "大幅提升性能",
+        "很多方案",
+        "都可以",
+        "就行",
+        "写好代码",
+        "现在很流行",
+        "很多公司",
+        "一般用",
+        "主要是把",
+        "团队熟悉",
+    )
+    OFF_TOPIC_MARKERS = (
+        "不需要引入 Redis",
+        "ThreadPoolExecutor",
+        "应该用多线程",
+        "不如直接写 Prompt",
+        "zero-shot",
+        "应该靠规则引擎",
+        "写一些正则表达式",
+        "前端只是展示层",
+        "应该全部放到后端",
+        "应该用 CDN",
+        "前端渲染",
+        "虚拟 DOM",
+        "服务端渲染",
+        "首屏速度",
+        "应该用 MongoDB",
+        "微服务架构",
+        "Docker Compose",
+        "Kubernetes",
+        "服务发现",
+        "负载均衡",
+    )
 
     def evaluate(
         self,
@@ -434,9 +668,10 @@ class DynamicAnswerEvaluationService:
         else:
             signals["gaps"].append("缺少清晰表达结构")
 
-        topic_terms = [topic.topic_title, topic.skill_key, topic.topic_key.replace("_", " ")]
-        if self._contains_any(text.lower(), [term.lower() for term in topic_terms if term]):
-            score += 10
+        topic_terms = self._topic_terms(topic)
+        topic_hits = [term for term in topic_terms if term.lower() in text.lower()]
+        if topic_hits:
+            score += min(len(set(topic_hits)) * 5, 15)
             signals["strengths"].append("能贴合当前 topic 作答")
         else:
             signals["gaps"].append("没有明显扣住当前主题关键词")
@@ -448,13 +683,44 @@ class DynamicAnswerEvaluationService:
         missing_labels = [label for label in markers if label not in marker_hits]
         signals["gaps"].extend([f"缺少{label}" for label in missing_labels[:3]])
 
+        concrete_hits = [term for term in self.CONCRETE_MARKERS if term.lower() in text.lower()]
+        if len(concrete_hits) >= 4:
+            score += 20
+            signals["strengths"].append("包含可追问的实现细节")
+        elif len(concrete_hits) >= 2:
+            score += 12
+            signals["strengths"].append("包含部分实现细节")
+
+        generic_hits = [term for term in self.GENERIC_WEAK_MARKERS if term.lower() in text.lower()]
+        generic_cap = False
+        if len(generic_hits) >= 2 and len(concrete_hits) < 3:
+            score -= 8
+            generic_cap = True
+            signals["risks"].append("回答偏泛，缺少可验证实现细节")
+        elif generic_hits and not marker_hits and len(concrete_hits) < 2:
+            score -= 4
+            generic_cap = True
+            signals["risks"].append("表达偏泛，面试官难以判断真实掌握程度")
+
+        off_topic_hits = [term for term in self.OFF_TOPIC_MARKERS if term.lower() in text.lower()]
+        if off_topic_hits and len(concrete_hits) < 3:
+            score -= 14
+            signals["risks"].append("回答倾向替换或否定题目方案，存在跑题风险")
+
         if topic.question_type == "PROJECT" and topic.evidence_snippet:
             evidence_terms = self._evidence_terms(topic.evidence_snippet)
-            if any(term.lower() in text.lower() for term in evidence_terms):
+            evidence_hits = [term for term in evidence_terms if term.lower() in text.lower()]
+            if len(evidence_hits) >= 2:
                 score += 8
                 signals["strengths"].append("能引用简历证据")
             else:
                 signals["risks"].append("回答和简历证据连接不够，真实性容易被追问")
+
+        if generic_cap:
+            score = min(score, 60)
+
+        if topic_hits and not off_topic_hits and score < 30:
+            score = 30
 
         if len(text) < 60:
             score = min(score, 55)
@@ -524,10 +790,10 @@ class DynamicAnswerEvaluationService:
                 "成本延迟权衡": cls.TRADEOFF_MARKERS + cls.METRIC_MARKERS,
             }
         return {
-            "概念定义": ("定义", "本质", "核心", "概念", "原理"),
-            "关键步骤": ("步骤", "流程", "链路", "过程", "机制"),
-            "适用场景": ("场景", "适合", "用于", "业务", "项目"),
-            "边界风险": ("边界", "风险", "问题", "缺点", "坑"),
+            "概念定义": ("定义", "本质", "核心", "概念", "原理", "管理", "协议", "训练目标"),
+            "关键步骤": ("步骤", "流程", "链路", "过程", "机制", "策略", "实现", "schema", "数据集", "参数"),
+            "适用场景": ("场景", "适合", "用于", "业务", "项目", "缓存", "工具", "模型", "服务端状态"),
+            "边界风险": ("边界", "风险", "问题", "缺点", "坑", "一致性", "超时", "预算", "调参", "不可控"),
         }
 
     @staticmethod
@@ -537,8 +803,73 @@ class DynamicAnswerEvaluationService:
 
     @staticmethod
     def _evidence_terms(evidence: str) -> list[str]:
-        chunks = [chunk.strip(" ，。；;:：/-") for chunk in evidence.replace("、", " ").split()]
-        return [chunk for chunk in chunks if len(chunk) >= 2][:12]
+        chunks = [chunk.strip(" ，。；;:：/-()（）") for chunk in re.split(r"[\s，。；;:：、/()（）]+", evidence)]
+        known_terms = (
+            "Redis",
+            "MySQL",
+            "慢 SQL",
+            "慢查询",
+            "执行计划",
+            "联合索引",
+            "分库分表",
+            "React",
+            "TypeScript",
+            "FastAPI",
+            "Cache-Aside",
+            "互斥锁",
+            "过期时间",
+            "布隆过滤器",
+            "热点",
+            "缓存",
+            "useState",
+            "useContext",
+            "Redux",
+            "Zustand",
+            "虚拟滚动",
+            "代码分割",
+            "Redis Streams",
+            "Consumer Group",
+            "幂等",
+            "LoRA",
+            "DPO",
+        )
+        broad_terms = {
+            "python",
+            "java",
+            "prompt",
+            "llm",
+            "后端",
+            "前端",
+            "工程师",
+            "项目",
+            "参与",
+            "开发",
+            "使用",
+            "实现",
+            "负责",
+        }
+        terms = [term for term in known_terms if term.lower() in evidence.lower()]
+        terms.extend(
+            chunk
+            for chunk in chunks
+            if len(chunk) >= 2
+            and chunk.lower() not in broad_terms
+            and not any(broad in chunk.lower() for broad in ("工程师", "开发工程", "参与"))
+        )
+        return list(dict.fromkeys(terms))[:20]
+
+    @staticmethod
+    def _topic_terms(topic: DynamicTopicDTO) -> list[str]:
+        terms: list[str] = []
+        for raw in (topic.topic_title, topic.skill_key, topic.topic_key):
+            if not raw:
+                continue
+            terms.append(raw)
+            terms.extend(part for part in re.split(r"[_\s/]+", raw) if len(part) >= 2)
+        topic_def = topic_registry_service.get_topic(topic.topic_key)
+        if topic_def:
+            terms.extend(topic_def.aliases)
+        return list(dict.fromkeys(terms))
 
     @staticmethod
     def _dedupe(values: list[str]) -> list[str]:
@@ -1109,6 +1440,7 @@ class DynamicInterviewService:
                 "generation_stages": self._generation_stage_summary(active_key="JD_PARSE"),
             },
         )
+        await db.commit()
 
         import asyncio as _asyncio
         _asyncio.create_task(
@@ -1136,13 +1468,16 @@ class DynamicInterviewService:
     ) -> None:
         from app.database import async_session_factory
 
+        current_operation = "JD_PARSE"
+        structured_jd = jd_parse_service.parse(None, request.target_role, request.skill_id)
+        session = None
         async with async_session_factory() as bg_db:
             try:
                 session = await dynamic_interview_persistence_service.find_session(bg_db, session_id, user_id)
                 if session is None:
+                    logger.warning("动态面试后台生成未找到会话: session_id=%s", session_id)
                     return
 
-                current_operation = "JD_PARSE"
                 structured_jd = await self._track_operation(
                     bg_db,
                     session,
@@ -1167,15 +1502,17 @@ class DynamicInterviewService:
             except Exception as exc:
                 message = f"面试计划生成失败，可以重试；已保存你的会话配置。错误类型：{exc.__class__.__name__}"
                 logger.warning("动态面试计划生成失败: session_id=%s, error=%s", session_id, exc, exc_info=True)
-                await dynamic_interview_persistence_service.mark_session_failed(
-                    bg_db,
-                    session,
-                    message=message,
-                    plan_summary={
-                        "generation_stages": self._generation_stage_summary(failed_key=current_operation),
-                    },
-                    structured_jd=structured_jd,
-                )
+                if session is not None:
+                    await dynamic_interview_persistence_service.mark_session_failed(
+                        bg_db,
+                        session,
+                        message=message,
+                        plan_summary={
+                            "generation_stages": self._generation_stage_summary(failed_key=current_operation),
+                        },
+                        structured_jd=structured_jd,
+                    )
+                    await bg_db.commit()
                 return
 
             plan_summary = {

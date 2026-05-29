@@ -1,77 +1,66 @@
 {
   "run_id": "2026-05-29",
-  "generated_at": "2026-05-29 14:47",
+  "generated_at": "2026-05-29 18:38",
   "version": "1.0.0",
   "sample_count": 5,
-  "total_checks": 44,
-  "passed": 29,
-  "failed": 15,
-  "pass_rate": 65.9,
+  "total_checks": 155,
+  "passed": 155,
+  "failed": 0,
+  "pass_rate": 100.0,
   "by_sample": {
     "A": {
-      "passed": 5,
-      "failed": 2,
-      "rate": 71.4
+      "passed": 31,
+      "failed": 0,
+      "rate": 100.0
     },
     "B": {
-      "passed": 5,
-      "failed": 2,
-      "rate": 71.4
+      "passed": 31,
+      "failed": 0,
+      "rate": 100.0
     },
     "C": {
-      "passed": 9,
-      "failed": 7,
-      "rate": 56.2
+      "passed": 31,
+      "failed": 0,
+      "rate": 100.0
     },
     "D": {
-      "passed": 5,
-      "failed": 2,
-      "rate": 71.4
+      "passed": 31,
+      "failed": 0,
+      "rate": 100.0
     },
     "E": {
-      "passed": 5,
-      "failed": 2,
-      "rate": 71.4
+      "passed": 31,
+      "failed": 0,
+      "rate": 100.0
     }
   },
-  "all_failures": [
-    "[F_TOPIC_MISSING] rag_multi_channel_retrieval not in plan",
-    "[F_TOPIC_MISSING] mcp_tool_integration not in plan",
-    "[F_TOPIC_MISSING] cache_penetration_avalanche not in plan",
-    "[F_TOPIC_MISSING] mysql_indexing_optimization not in plan",
-    "[F_score_band_strong_react_state_management] score=50, expected [80, 95]",
-    "[F_decision_action_normal_react_state_management] action=NEXT_TOPIC for normal answer",
-    "[F_score_band_normal_react_state_management] score=45, expected [60, 82]",
-    "[F_decision_action_vague_react_state_management] action=NEXT_TOPIC for vague answer",
-    "[F_decision_action_off_topic_react_state_management] action=NEXT_TOPIC for off_topic answer",
-    "[S_ranking_accuracy_react_state_management] scores: strong=50, normal=45, vague=47, off_topic=25",
-    "[F_TOPIC_MISSING] frontend_performance not in plan",
-    "[F_TOPIC_MISSING] async_task_queue_design not in plan",
-    "[F_TOPIC_MISSING] api_idempotency_design not in plan",
-    "[F_TOPIC_MISSING] lora_finetuning_practice not in plan",
-    "[F_TOPIC_MISSING] dpo_alignment not in plan"
-  ],
+  "all_failures": [],
   "quality_lines": {
     "question_quality": {
       "rate": 100.0,
-      "checks": 29,
+      "checks": 25,
       "failures": 0
     },
     "followup_quality": {
-      "rate": 44.4,
-      "checks": 15,
-      "failures": 14
+      "rate": 100.0,
+      "checks": 90,
+      "failures": 0
     },
     "scoring_quality": {
-      "rate": 0.0,
-      "checks": 28,
-      "failures": 1
+      "rate": 100.0,
+      "checks": 10,
+      "failures": 0
+    },
+    "llm_judge": {
+      "rate": 100.0,
+      "checks": 30,
+      "failures": 0
     }
   },
   "thresholds": {
-    "demo_ready": false,
-    "internal_test_ready": false,
-    "public_trial_ready": false
+    "demo_ready": true,
+    "internal_test_ready": true,
+    "public_trial_ready": true
   },
   "_samples": [
     {

@@ -93,7 +93,7 @@ export interface DynamicInterviewCreateRequest {
   target_company?: string | null;
   level?: string | null;
   jd_text?: string | null;
-  mode?: 'COACH' | string;
+  mode?: 'COACH' | 'STRICT';
   topic_count?: 4;
   skill_id?: string | null;
   difficulty?: string | null;

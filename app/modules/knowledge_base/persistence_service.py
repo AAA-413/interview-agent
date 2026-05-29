@@ -26,8 +26,13 @@ class KnowledgeBasePersistenceService(BasePersistenceService[KnowledgeBaseEntity
     model = KnowledgeBaseEntity
     not_found_error = ErrorCode.KNOWLEDGE_BASE_NOT_FOUND
 
-    async def find_by_file_hash(self, db: AsyncSession, file_hash: str) -> KnowledgeBaseEntity | None:
-        result = await db.execute(select(KnowledgeBaseEntity).where(KnowledgeBaseEntity.file_hash == file_hash))
+    async def find_by_file_hash(
+        self, db: AsyncSession, file_hash: str, user_id: int | None = None
+    ) -> KnowledgeBaseEntity | None:
+        query = select(KnowledgeBaseEntity).where(KnowledgeBaseEntity.file_hash == file_hash)
+        if user_id is not None:
+            query = query.where(KnowledgeBaseEntity.user_id == user_id)
+        result = await db.execute(query)
         return result.scalar_one_or_none()
 
     async def find_all(self, db: AsyncSession, user_id: int | None = None) -> list[KnowledgeBaseEntity]:
