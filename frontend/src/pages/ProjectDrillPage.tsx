@@ -75,7 +75,7 @@ export default function ProjectDrillPage() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!form.resume_id) {
-      setError('项目深挖需要先选择一份已解析简历');
+      setError('项目打磨需要先选择一份已解析简历');
       return;
     }
     if (!form.target_role.trim()) {
@@ -96,7 +96,7 @@ export default function ProjectDrillPage() {
       });
       setDrill(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '生成项目深挖失败');
+      setError(err instanceof Error ? err.message : '生成项目打磨失败');
     } finally {
       setSubmitting(false);
     }
@@ -125,7 +125,7 @@ export default function ProjectDrillPage() {
       });
       navigate('/interview', { state: { sessionId: session.session_id } });
     } catch (err) {
-      setError(err instanceof Error ? err.message : '创建项目深挖面试失败');
+      setError(err instanceof Error ? err.message : '创建项目专项答题失败');
     } finally {
       setCreatingSession(false);
     }
@@ -144,10 +144,10 @@ export default function ProjectDrillPage() {
           </button>
           <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-primary-100 bg-primary-50 px-3 py-1 text-sm font-medium text-primary-700">
             <MessageSquareText className="h-4 w-4" />
-            项目深挖
+            项目打磨
           </div>
-          <h1 className="text-3xl font-bold text-slate-950">项目追问训练</h1>
-          <p className="mt-2 text-sm text-slate-500">先把核心项目练到经得起连续追问，再进入完整模拟</p>
+          <h1 className="text-3xl font-bold text-slate-950">项目素材打磨</h1>
+          <p className="mt-2 text-sm text-slate-500">先把项目讲法、证据和风险补齐，再进入完整模拟面试</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button
@@ -163,7 +163,7 @@ export default function ProjectDrillPage() {
             className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800"
           >
             {creatingSession ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-            进入答题
+            专项答题
           </button>
         </div>
       </div>
@@ -262,7 +262,7 @@ export default function ProjectDrillPage() {
             className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-slate-300"
           >
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            生成追问
+            生成打磨方案
           </button>
         </form>
 
@@ -303,15 +303,73 @@ function DrillResult({ drill, onStart, creating }: { drill: ProjectDrillDTO; onS
             className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800 disabled:bg-slate-300"
           >
             {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-            进入会话答题
+            进入专项答题
           </button>
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex items-center gap-2">
+          <ClipboardList className="h-5 w-5 text-primary-600" />
+          <h2 className="text-base font-semibold text-slate-950">打磨质量判断</h2>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-[160px_1fr]">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm text-slate-500">素材可用度</p>
+            <p className="mt-2 text-4xl font-bold text-slate-950">{drill.quality.score}</p>
+            <p className="mt-2 text-sm font-medium text-slate-700">{drill.quality.verdict}</p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-4">
+              <div className="mb-2 text-sm font-semibold text-emerald-800">已具备</div>
+              <div className="space-y-2">
+                {drill.quality.checks.map(item => (
+                  <p key={item} className="text-sm leading-6 text-emerald-800">- {item}</p>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-lg border border-amber-100 bg-amber-50 p-4">
+              <div className="mb-2 text-sm font-semibold text-amber-800">先补强</div>
+              <div className="space-y-2">
+                {drill.quality.suggestions.map(item => (
+                  <p key={item} className="text-sm leading-6 text-amber-800">- {item}</p>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-3 flex items-center gap-2">
+          <FileText className="h-5 w-5 text-slate-700" />
+          <h2 className="text-base font-semibold text-slate-950">项目讲法草稿</h2>
+        </div>
+        <p className="rounded-lg bg-slate-50 p-4 text-sm leading-7 text-slate-700">{drill.project_pitch}</p>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <div>
+            <h3 className="mb-2 text-sm font-semibold text-slate-900">可证明的能力点</h3>
+            <div className="space-y-2">
+              {drill.proof_points.map(item => (
+                <p key={item} className="rounded-lg border border-slate-200 p-3 text-sm leading-6 text-slate-600">{item}</p>
+              ))}
+            </div>
+          </div>
+          <div>
+            <h3 className="mb-2 text-sm font-semibold text-slate-900">需要补齐的素材</h3>
+            <div className="space-y-2">
+              {drill.gap_fixes.map(item => (
+                <p key={item} className="rounded-lg border border-slate-200 p-3 text-sm leading-6 text-slate-600">{item}</p>
+              ))}
+            </div>
+          </div>
         </div>
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-3 flex items-center gap-2">
           <MessageSquareText className="h-5 w-5 text-primary-600" />
-          <h2 className="text-base font-semibold text-slate-950">暖场题</h2>
+          <h2 className="text-base font-semibold text-slate-950">2 分钟讲法入口</h2>
         </div>
         <p className="rounded-lg bg-slate-50 p-4 text-sm leading-6 text-slate-700">{drill.warmup_prompt}</p>
       </section>
@@ -319,7 +377,7 @@ function DrillResult({ drill, onStart, creating }: { drill: ProjectDrillDTO; onS
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-2">
           <ShieldAlert className="h-5 w-5 text-red-600" />
-          <h2 className="text-base font-semibold text-slate-950">连续追问</h2>
+          <h2 className="text-base font-semibold text-slate-950">追问风险清单</h2>
         </div>
         <div className="space-y-4">
           {drill.questions.map((question, index) => (
@@ -399,9 +457,9 @@ function EmptyDrill() {
           <MessageSquareText className="h-6 w-6 text-slate-600" />
         </div>
         <div>
-          <h2 className="text-xl font-semibold text-slate-950">等待生成项目追问</h2>
+          <h2 className="text-xl font-semibold text-slate-950">等待生成项目打磨方案</h2>
           <p className="mt-2 text-sm leading-6 text-slate-500">
-            选择已解析简历后，系统会优先挑出最适合作为主打材料的项目，并生成 6 道连续追问。
+            选择已解析简历后，系统会先整理项目讲法、能力证据和待补素材，再生成追问风险清单。
           </p>
         </div>
       </div>

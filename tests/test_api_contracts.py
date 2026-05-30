@@ -50,6 +50,7 @@ def test_dynamic_interview_routes_are_registered():
     assert "/api/interview/dynamic-sessions/{session_id}/turns/{turn_id}/answer" in paths
     assert "/api/interview/dynamic-sessions/{session_id}/report" in paths
     assert "/api/interview/dynamic-sessions/{session_id}/topics/{topic_id}/rag-insight" in paths
+    assert "/api/interview/dynamic-sessions/{session_id}/topics/{topic_id}/retry" in paths
 
 
 def test_protected_endpoint_requires_bearer_token():

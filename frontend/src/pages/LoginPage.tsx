@@ -1,5 +1,4 @@
 import { FormEvent, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
   Brain,
@@ -21,13 +20,12 @@ type AuthMode = 'login' | 'register';
 
 const proofPoints = [
   { label: '简历诊断', icon: FileText },
-  { label: '项目深挖', icon: Target },
+  { label: '项目打磨', icon: Target },
   { label: '模拟面试', icon: MessageSquareText },
   { label: '训练复盘', icon: Brain },
 ];
 
 export default function LoginPage() {
-  const navigate = useNavigate();
   const [mode, setMode] = useState<AuthMode>('login');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -56,7 +54,7 @@ export default function LoginPage() {
       const response = await authApi.login({ username: username.trim(), password });
       localStorage.setItem('access_token', response.access_token);
       localStorage.setItem('token_type', response.token_type);
-      navigate('/dashboard');
+      window.location.replace('/dashboard');
     } catch (err) {
       setError(err instanceof Error ? err.message : isRegister ? '注册失败，请稍后重试' : '登录失败，请检查账号和密码');
     } finally {

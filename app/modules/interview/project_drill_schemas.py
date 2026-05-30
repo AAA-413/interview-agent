@@ -26,6 +26,13 @@ class ProjectDrillQuestionDTO(BaseModel):
     red_flags: list[str] = Field(default_factory=list)
 
 
+class ProjectDrillQualityDTO(BaseModel):
+    score: int = Field(default=0, ge=0, le=100)
+    verdict: str
+    checks: list[str] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
+
+
 class ProjectDrillDTO(BaseModel):
     resume_id: int
     resume_filename: str
@@ -36,5 +43,9 @@ class ProjectDrillDTO(BaseModel):
     project_candidates: list[ProjectCandidateDTO] = Field(default_factory=list)
     risk_summary: str
     warmup_prompt: str
+    project_pitch: str
+    proof_points: list[str] = Field(default_factory=list)
+    gap_fixes: list[str] = Field(default_factory=list)
+    quality: ProjectDrillQualityDTO
     questions: list[ProjectDrillQuestionDTO] = Field(default_factory=list)
     practice_checklist: list[str] = Field(default_factory=list)

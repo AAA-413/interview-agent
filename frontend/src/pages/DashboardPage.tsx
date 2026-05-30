@@ -124,7 +124,7 @@ export default function DashboardPage() {
     if (stats.completedResumes.length === 0) {
       return {
         title: '先上传一份简历',
-        detail: '让系统建立候选人画像，后续诊断、项目深挖和模拟面试会更精准。',
+        detail: '让系统建立候选人画像，后续诊断、项目打磨和模拟面试会更精准。',
         label: '上传简历',
         path: '/upload',
         icon: Upload,
@@ -169,7 +169,7 @@ export default function DashboardPage() {
           </div>
           <h1 className="text-3xl font-bold text-slate-950">从简历到 Offer 的训练闭环</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-            面向求职者、高校就业中心和培训机构，把简历诊断、项目深挖、知识库和模拟面试组织成可交付的训练产品。
+            面向求职者、高校就业中心和培训机构，把简历诊断、项目打磨、知识库和模拟面试组织成可交付的训练产品。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -179,7 +179,7 @@ export default function DashboardPage() {
             className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-700 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-70"
           >
             {seedingDemo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            演示模式
+            查看演示报告
           </button>
           <button
             onClick={fetchDashboard}
@@ -216,8 +216,8 @@ export default function DashboardPage() {
         <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-5 flex items-start justify-between gap-4">
             <div>
-              <h2 className="text-lg font-semibold text-slate-950">商业化交付路径</h2>
-              <p className="mt-1 text-sm text-slate-500">把一次体验拆成清晰步骤，方便演示、成交和复购。</p>
+              <h2 className="text-lg font-semibold text-slate-950">新手训练路径</h2>
+              <p className="mt-1 text-sm text-slate-500">按这 5 步走完一轮，从简历画像到面试复盘会更顺。</p>
             </div>
             <div className="rounded-lg bg-slate-950 px-3 py-2 text-right text-white">
               <div className="text-2xl font-bold">{stats.readinessScore}</div>
@@ -228,8 +228,8 @@ export default function DashboardPage() {
           <div className="grid gap-3 md:grid-cols-5">
             <FlowStep active={data.resumes.length > 0} title="简历导入" detail="建立画像" />
             <FlowStep active={stats.completedResumes.length > 0} title="面试诊断" detail="定位差距" />
+            <FlowStep active={stats.completedResumes.length > 0} title="项目打磨" detail="补齐证据" />
             <FlowStep active={data.sessions.length > 0} title="模拟面试" detail="实战问答" />
-            <FlowStep active={stats.readyKnowledgeBases.length > 0} title="知识库" detail="补齐材料" />
             <FlowStep active={stats.completedSessions.length > 0} title="复盘报告" detail="形成闭环" />
           </div>
         </section>

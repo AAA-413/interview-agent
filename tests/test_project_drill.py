@@ -58,6 +58,11 @@ def test_project_drill_generates_practical_follow_up_questions():
 
     assert drill.resume_id == 11
     assert drill.selected_project.name == "智能面试系统"
+    assert drill.project_pitch
+    assert drill.proof_points
+    assert drill.gap_fixes
+    assert drill.quality.score >= 80
+    assert drill.quality.checks
     assert len(drill.questions) >= 6
     assert any(question.category == "技术取舍" for question in drill.questions)
     assert all(question.answer_framework for question in drill.questions)
@@ -105,7 +110,51 @@ def test_project_drill_handles_resume_without_projects():
 
     assert drill.selected_project.name == "待补充核心项目"
     assert "缺少可被追问的项目证据" in drill.risk_summary
+    assert drill.quality.score < 70
+    assert drill.quality.suggestions
     assert len(drill.questions) >= 6
+
+
+def test_project_drill_quality_flags_role_stack_mismatch_without_jd():
+    resume = ResumeDetailDTO(
+        id=13,
+        filename="demo.pdf",
+        file_size=1024,
+        content_type="application/pdf",
+        storage_url=None,
+        uploaded_at=datetime(2026, 5, 21, 10, 0, 0),
+        resume_text="OfferPilot 项目。",
+        analyses=[
+            AnalysisHistoryDTO(
+                id=5,
+                overall_score=78,
+                analyzed_at=datetime(2026, 5, 21, 11, 0, 0),
+                profile=ResumeProfile(
+                    projects=[
+                        ProjectInfo(
+                            name="OfferPilot AI 面试训练平台",
+                            role="产品与全栈开发",
+                            tech_stack=["FastAPI", "React", "PostgreSQL"],
+                            description="围绕求职训练场景，提供简历诊断、项目打磨、模拟面试和报告复盘。",
+                            highlights=["将简历画像与面试题生成联动"],
+                        )
+                    ],
+                    tech_stacks=[],
+                    experience_level="junior",
+                    has_projects=True,
+                    summary="有全栈项目经验",
+                ),
+            )
+        ],
+    )
+    request = ProjectDrillRequest(resume_id=13, target_role="Java 后端开发")
+
+    drill = project_drill_service.build_drill(request, resume)
+
+    assert drill.quality.score <= 78
+    assert any("技术栈不完全匹配" in item for item in drill.quality.suggestions)
+    assert "项目深挖" not in drill.project_pitch
+    assert "。。" not in drill.project_pitch
 
 
 def test_project_question_type_is_restored_in_saved_report_detail():

@@ -171,7 +171,7 @@ export default function InterviewDiagnosisPage() {
             className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800"
           >
             <Play className="h-4 w-4" />
-            项目深挖
+            项目打磨
           </button>
         </div>
       </div>

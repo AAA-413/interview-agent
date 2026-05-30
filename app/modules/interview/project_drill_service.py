@@ -3,12 +3,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.interview.project_drill_schemas import (
     ProjectCandidateDTO,
     ProjectDrillDTO,
+    ProjectDrillQualityDTO,
     ProjectDrillQuestionDTO,
     ProjectDrillRequest,
 )
 from app.modules.interview.schemas import InterviewQuestionDTO, KeyPoint
 from app.modules.resume.history_service import resume_history_service
 from app.modules.resume.schemas import ProjectInfo, ResumeDetailDTO, ResumeProfile
+
+
+def _clean_text(text: str) -> str:
+    return (
+        text.replace("项目深挖", "项目打磨")
+        .replace("。。", "。")
+        .replace("..", ".")
+    )
 
 
 class ProjectDrillService:
@@ -33,6 +42,9 @@ class ProjectDrillService:
 
         if not candidates:
             candidates = [selected_candidate]
+        questions = self._build_questions(selected_project, target_role, request.jd_text or "")
+        proof_points = self._proof_points(selected_project, target_role)
+        gap_fixes = self._gap_fixes(selected_project)
 
         return ProjectDrillDTO(
             resume_id=resume_detail.id,
@@ -44,7 +56,18 @@ class ProjectDrillService:
             project_candidates=candidates[:5],
             risk_summary=self._risk_summary(selected_project, target_role, bool(request.jd_text)),
             warmup_prompt=self._warmup_prompt(selected_project, target_role, target_company),
-            questions=self._build_questions(selected_project, target_role, request.jd_text or ""),
+            project_pitch=self._project_pitch(selected_project, target_role, target_company),
+            proof_points=proof_points,
+            gap_fixes=gap_fixes,
+            quality=self._quality(
+                selected_project,
+                proof_points,
+                gap_fixes,
+                questions,
+                bool(request.jd_text),
+                target_role,
+            ),
+            questions=questions,
             practice_checklist=self._practice_checklist(selected_project, target_role),
         )
 
@@ -84,7 +107,7 @@ class ProjectDrillService:
             name=project.name or "未命名项目",
             role=project.role or None,
             tech_stack=project.tech_stack,
-            reason=f"该项目可以用 {tech_text} 证明你的岗位匹配度，适合作为首轮深挖主项目。",
+            reason=f"该项目可以用 {tech_text} 证明你的岗位匹配度，适合作为首轮打磨主项目。",
         )
 
     @staticmethod
@@ -92,7 +115,7 @@ class ProjectDrillService:
         if project is None:
             return "当前最大风险不是答题，而是缺少可被追问的项目证据。先补一个能证明岗位能力的项目，再进入模拟面试。"
         if not has_jd:
-            return "当前可以做项目追问训练，但缺少 JD 对齐。建议补充目标 JD 后，把项目亮点改成岗位关键词证据。"
+            return "当前可以做项目打磨，但缺少 JD 对齐。建议补充目标 JD 后，把项目亮点改成岗位关键词证据。"
         return f"围绕“{target_role}”面试，最容易被追问的是个人贡献、技术取舍、结果指标和项目真实性。"
 
     @staticmethod
@@ -100,6 +123,138 @@ class ProjectDrillService:
         project_name = project.name if project else "你的核心项目"
         company_text = target_company or "目标公司"
         return f"请用 2 分钟介绍{project_name}，重点说明它为什么能证明你适合{company_text}的{target_role}。"
+
+    @staticmethod
+    def _project_pitch(project: ProjectInfo | None, target_role: str, target_company: str | None) -> str:
+        project_name = project.name if project else "你的核心项目"
+        company_text = f"{target_company} " if target_company else ""
+        if project is None:
+            return (
+                f"我会先补一个能证明{company_text}{target_role}匹配度的核心项目，"
+                "用问题背景、个人职责、关键方案、结果验证四段组织，避免只罗列技术名词。"
+            )
+        highlights = "；".join(project.highlights[:2]) if project.highlights else "核心方案落地"
+        tech_text = "、".join(project.tech_stack[:3]) if project.tech_stack else "核心技术栈"
+        return _clean_text(
+            f"{project_name}主要解决{project.description or '业务/工程效率问题'}。"
+            f"我在项目中负责{project.role or '关键模块'}，围绕{tech_text}完成{highlights}，"
+            f"面试时会把它包装成证明{company_text}{target_role}能力的项目证据。"
+        )
+
+    @staticmethod
+    def _proof_points(project: ProjectInfo | None, target_role: str) -> list[str]:
+        if project is None:
+            return [
+                f"补一个与{target_role}强相关的真实项目目标",
+                "写清你个人负责的模块边界",
+                "准备一个可验证结果，如指标、用户反馈或验收记录",
+            ]
+        points = [
+            f"岗位匹配：用{project.name}证明你具备{target_role}相关的工程落地能力",
+            f"个人贡献：围绕{project.role or '负责模块'}讲清你亲自完成的动作",
+        ]
+        if project.tech_stack:
+            points.append(f"技术证据：把{project.tech_stack[0]}讲成问题、方案、取舍，而不是只报技术名")
+        if project.highlights:
+            points.append(f"结果证据：展开“{project.highlights[0]}”背后的验证方式")
+        return points
+
+    @staticmethod
+    def _gap_fixes(project: ProjectInfo | None) -> list[str]:
+        fixes = []
+        if project is None:
+            return ["补项目名称、背景、职责、技术栈和结果验证，再进入模拟面试"]
+        if not project.role:
+            fixes.append("简历项目缺少个人角色，先补“我负责哪一段”")
+        if not project.tech_stack:
+            fixes.append("技术栈不明确，先补核心技术和使用原因")
+        if not project.highlights:
+            fixes.append("项目亮点不足，先补一个可量化或可验收的结果")
+        if not project.description:
+            fixes.append("项目背景不清，先用一句话说明解决了什么问题")
+        if not fixes:
+            fixes.append("材料基础可用，下一步重点补指标口径和异常边界")
+        return fixes
+
+    @staticmethod
+    def _quality(
+        project: ProjectInfo | None,
+        proof_points: list[str],
+        gap_fixes: list[str],
+        questions: list[ProjectDrillQuestionDTO],
+        has_jd: bool,
+        target_role: str,
+    ) -> ProjectDrillQualityDTO:
+        score = 35
+        checks = []
+        suggestions = []
+        if project is not None:
+            score += 15
+            checks.append("已识别到简历项目")
+        else:
+            suggestions.append("先补一个真实项目，否则后续问题只能作为模板")
+        if project and project.role:
+            score += 10
+            checks.append("个人角色可用于追问")
+        else:
+            suggestions.append("补清个人职责边界")
+        if project and project.tech_stack:
+            score += 10
+            checks.append("技术栈可用于生成技术取舍问题")
+        else:
+            suggestions.append("补核心技术栈和选型原因")
+        if project and project.highlights:
+            score += 10
+            checks.append("已有项目亮点可转成结果证据")
+        else:
+            suggestions.append("补一个结果指标、验收反馈或前后对比")
+        if has_jd:
+            score += 10
+            checks.append("已结合 JD 做岗位对齐")
+        else:
+            suggestions.append("补充目标 JD 后，项目证据会更贴近岗位")
+        if len(questions) >= 6 and proof_points and gap_fixes:
+            score += 5
+            checks.append("已覆盖项目概述、贡献、取舍、指标、异常和岗位对齐")
+        if ProjectDrillService._role_stack_aligned(project, target_role):
+            score += 10
+            checks.append("项目技术栈与目标岗位基本匹配")
+        elif project is not None:
+            suggestions.append("目标岗位和项目技术栈不完全匹配，补充可迁移能力或调整目标岗位")
+
+        score = min(score, 100)
+        if project is None:
+            score = min(score, 65)
+        if project is not None and not has_jd:
+            score = min(score, 85)
+        if project is not None and not ProjectDrillService._role_stack_aligned(project, target_role):
+            score = min(score, 78)
+
+        if score >= 85:
+            verdict = "质量较好，可以进入专项答题"
+        elif score >= 70:
+            verdict = "基本可用，建议先补齐薄弱素材"
+        else:
+            verdict = "材料偏薄，先打磨项目再模拟面试"
+        return ProjectDrillQualityDTO(score=score, verdict=verdict, checks=checks, suggestions=suggestions[:4])
+
+    @staticmethod
+    def _role_stack_aligned(project: ProjectInfo | None, target_role: str) -> bool:
+        if project is None or not project.tech_stack:
+            return False
+        role = target_role.lower()
+        stack = " ".join(project.tech_stack).lower()
+        if any(keyword in role for keyword in ["java", "spring"]):
+            return any(keyword in stack for keyword in ["java", "spring", "mybatis", "jvm"])
+        if any(keyword in role for keyword in ["python", "fastapi", "django", "flask"]):
+            return any(keyword in stack for keyword in ["python", "fastapi", "django", "flask"])
+        if any(keyword in role for keyword in ["前端", "react", "vue", "javascript", "typescript"]):
+            return any(keyword in stack for keyword in ["react", "vue", "javascript", "typescript", "next"])
+        if any(keyword in role for keyword in ["ai", "agent", "llm", "rag", "大模型", "智能体"]):
+            return any(keyword in stack for keyword in ["rag", "llm", "agent", "mcp", "openai", "fastapi", "python"])
+        if "后端" in role:
+            return any(keyword in stack for keyword in ["java", "spring", "python", "fastapi", "django", "go", "gin", "node"])
+        return True
 
     def _build_questions(
         self,

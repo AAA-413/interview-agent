@@ -68,7 +68,7 @@ class InterviewSessionService:
 
         if is_project_drill:
             if request.resume_id is None or resume_detail is None:
-                raise BusinessException(ErrorCode.RESUME_NOT_FOUND, "项目深挖需要选择一份已解析简历")
+                raise BusinessException(ErrorCode.RESUME_NOT_FOUND, "项目打磨需要选择一份已解析简历")
             drill_request = ProjectDrillRequest(
                 resume_id=request.resume_id,
                 target_role=request.target_role or request.skill_id or skill_id,

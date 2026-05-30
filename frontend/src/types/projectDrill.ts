@@ -23,6 +23,13 @@ export interface ProjectDrillQuestionDTO {
   red_flags: string[];
 }
 
+export interface ProjectDrillQualityDTO {
+  score: number;
+  verdict: string;
+  checks: string[];
+  suggestions: string[];
+}
+
 export interface ProjectDrillDTO {
   resume_id: number;
   resume_filename: string;
@@ -33,6 +40,10 @@ export interface ProjectDrillDTO {
   project_candidates: ProjectCandidateDTO[];
   risk_summary: string;
   warmup_prompt: string;
+  project_pitch: string;
+  proof_points: string[];
+  gap_fixes: string[];
+  quality: ProjectDrillQualityDTO;
   questions: ProjectDrillQuestionDTO[];
   practice_checklist: string[];
 }

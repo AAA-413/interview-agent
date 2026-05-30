@@ -1,0 +1,42 @@
+{
+  "run_id": "previous-example",
+  "generated_at": "2026-05-29 14:47",
+  "version": "1.0.0",
+  "sample_count": 5,
+  "total_checks": 44,
+  "passed": 29,
+  "failed": 15,
+  "pass_rate": 65.9,
+  "by_sample": {
+    "A": {"passed": 5, "failed": 2, "rate": 71.4},
+    "B": {"passed": 5, "failed": 2, "rate": 71.4},
+    "C": {"passed": 9, "failed": 7, "rate": 56.2},
+    "D": {"passed": 5, "failed": 2, "rate": 71.4},
+    "E": {"passed": 5, "failed": 2, "rate": 71.4}
+  },
+  "all_failures": [
+    "[F_TOPIC_MISSING] rag_multi_channel_retrieval not in plan",
+    "[F_TOPIC_MISSING] mcp_tool_integration not in plan",
+    "[F_TOPIC_MISSING] cache_penetration_avalanche not in plan",
+    "[F_TOPIC_MISSING] mysql_indexing_optimization not in plan",
+    "[F_score_band_strong_react_state_management] score=50, expected [80, 95]",
+    "[F_score_band_normal_react_state_management] score=45, expected [60, 82]",
+    "[S_ranking_accuracy_react_state_management] scores: strong=50, normal=45, vague=47, off_topic=25",
+    "[F_TOPIC_MISSING] frontend_performance not in plan",
+    "[F_TOPIC_MISSING] async_task_queue_design not in plan",
+    "[F_TOPIC_MISSING] api_idempotency_design not in plan",
+    "[F_TOPIC_MISSING] lora_finetuning_practice not in plan",
+    "[F_TOPIC_MISSING] dpo_alignment not in plan"
+  ],
+  "quality_lines": {
+    "question_quality": {"rate": 100.0, "checks": 25, "failures": 0},
+    "followup_quality": {"rate": 44.4, "checks": 32, "failures": 14},
+    "scoring_quality": {"rate": 0.0, "checks": 1, "failures": 1},
+    "llm_judge": {"rate": 0.0, "checks": 0, "failures": 0}
+  },
+  "thresholds": {
+    "demo_ready": false,
+    "internal_test_ready": false,
+    "public_trial_ready": false
+  }
+}

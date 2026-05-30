@@ -128,6 +128,20 @@ async def get_dynamic_topic_rag_insight(
     return Result.success(insight)
 
 
+@router.post(
+    "/dynamic-sessions/{session_id}/topics/{topic_id}/retry",
+    response_model=Result[DynamicInterviewCreateResponse],
+)
+async def create_dynamic_topic_retry_session(
+    session_id: str,
+    topic_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    session = await dynamic_interview_service.create_topic_retry_session(db, session_id, topic_id, user_id)
+    return Result.success(session)
+
+
 @router.get("/user-topic-profile", response_model=Result[dict])
 async def get_user_topic_profile(
     user_id: int = Depends(get_current_user_id),

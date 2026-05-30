@@ -72,6 +72,71 @@ def _session(
     return entity
 
 
+def _dynamic_session(entity_id: int, session_id: str, *, completed_at: datetime) -> InterviewSessionEntity:
+    report = {
+        "session_id": session_id,
+        "readiness_score": 24,
+        "type_scores": {"project": 22, "knowledge": 31, "system_design": 22},
+        "ability_scores": {
+            "authenticity": 37,
+            "technical_depth": 18,
+            "knowledge_accuracy": 41,
+            "system_thinking": 37,
+            "communication_structure": 26,
+        },
+        "topic_summaries": [
+            {
+                "topic_id": 65,
+                "topic_key": "mcp_tool_integration",
+                "topic_title": "MCP 工具集成",
+                "question_type": "PROJECT",
+                "evidence_snippet": "MCP 工具集成：基于 Stdio/SSE 对接 CSDN 发文。",
+                "main_question": "请讲清楚 MCP 工具集成这块你具体做了什么。",
+                "initial_score": 48,
+                "final_score": 22,
+                "best_score": 48,
+                "score_delta": -26,
+                "strengths": ["能贴合当前 topic 作答"],
+                "risks": ["真实性容易被追问"],
+                "gaps": ["缺少个人职责", "缺少结果指标"],
+                "next_training_action": "下一步优先训练：缺少个人职责",
+            },
+            {
+                "topic_id": 66,
+                "topic_key": "workflow_orchestration_design",
+                "topic_title": "工作流编排设计",
+                "question_type": "SYSTEM_DESIGN",
+                "main_question": "请设计一个 Agent 工作流编排方案。",
+                "initial_score": 43,
+                "final_score": 22,
+                "best_score": 43,
+                "score_delta": -21,
+                "strengths": ["提到降级"],
+                "risks": ["回答过短"],
+                "gaps": ["缺少架构细节"],
+                "next_training_action": "下一步优先训练：缺少架构细节",
+            },
+        ],
+    }
+    return InterviewSessionEntity(
+        id=entity_id,
+        user_id=1,
+        session_id=session_id,
+        skill_id="ai-agent",
+        difficulty="mid",
+        total_questions=0,
+        current_question_index=0,
+        status=SessionStatus.COMPLETED,
+        questions_json=None,
+        overall_score=24,
+        engine_type="DYNAMIC",
+        interview_mode="STRICT",
+        final_report_json=json.dumps(report, ensure_ascii=False),
+        completed_at=completed_at,
+        created_at=completed_at,
+    )
+
+
 def _at(hour: int, minute: int = 0) -> datetime:
     return datetime(2026, 5, 28, hour, minute, tzinfo=timezone.utc)
 
@@ -170,6 +235,27 @@ async def test_calibration_baseline_excludes_retry_sessions(monkeypatch):
     assert calibration.calibrated_score == 50
     assert calibration.questions[0].retry_attempt_count == 1
     assert calibration.questions[0].latest_retry_delta == 50
+
+
+@pytest.mark.asyncio
+async def test_calibration_includes_completed_dynamic_reports(monkeypatch):
+    service = TrainingService()
+    dynamic = _dynamic_session(10, "dynamic-strict", completed_at=_at(12))
+
+    async def fake_find_all(db, user_id=None):
+        return [dynamic]
+
+    monkeypatch.setattr("app.modules.training.service.interview_persistence_service.find_all", fake_find_all)
+
+    calibration = await service.get_score_calibration(db=None, user_id=1)
+
+    assert calibration.evaluated_sessions == 1
+    assert calibration.total_questions == 2
+    assert calibration.average_raw_score == 22
+    assert calibration.questions[0].session_id == "dynamic-strict"
+    assert calibration.questions[0].question_type == "dynamic_project"
+    assert any(item.name == "题型：项目题" for item in calibration.dimensions)
+    assert any(item.name == "动态能力：技术深度" for item in calibration.dimensions)
 
 
 @pytest.mark.asyncio

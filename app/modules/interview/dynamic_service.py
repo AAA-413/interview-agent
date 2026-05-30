@@ -451,10 +451,16 @@ class InterviewPlanService:
         label = candidate.topic.label
         if candidate.question_type == "PROJECT":
             evidence = candidate.evidence or "你的核心项目"
-            return f"你简历里有这段证据：{evidence}。请围绕「{label}」讲清楚项目目标、你负责的部分、关键技术取舍和结果验证。"
+            return (
+                f"我看到你简历里写到：{evidence}。我们先聊「{label}」这块。"
+                "你可以从当时要解决的问题讲起，然后说说你具体做了什么、为什么这么设计，以及最后怎么验证效果。"
+            )
         if candidate.question_type == "SYSTEM_DESIGN":
-            return f"假设让你为「{target_role}」设计或优化一个与「{label}」相关的方案，你会如何拆解架构、数据流、可靠性和成本/延迟权衡？"
-        return f"这个岗位会关注「{label}」。请解释它的核心原理、关键步骤、适用场景和常见风险。"
+            return (
+                f"如果在「{target_role}」这个岗位上，需要你设计或优化一个和「{label}」相关的方案，"
+                "你会怎么拆？可以重点讲架构、数据流、可靠性，以及成本和延迟之间的取舍。"
+            )
+        return f"这个岗位会经常问到「{label}」。你先按自己的理解讲讲它的原理、常见用法，以及实际落地时容易出问题的地方。"
 
     @staticmethod
     def _followup_goals(candidate: _TopicCandidate) -> list[str]:
@@ -767,7 +773,10 @@ class DynamicAnswerEvaluationService:
             structure = ["结论定义", "核心原理", "关键步骤", "使用场景", "边界风险"]
         return {
             "type": "STRUCTURE_HINT",
-            "message": f"先补齐：{'、'.join(gaps[:3])}。重答时按 {' -> '.join(structure)} 组织。",
+            "message": (
+                f"这一版可以再补一点：{'、'.join(gaps[:3])}。"
+                f"你重答时不用背答案，按 {' -> '.join(structure)} 这个顺序把经历讲清楚就行。"
+            ),
             "structure": structure,
             "focus_gaps": gaps[:3],
             "guardrail": "只给结构、方向和缺口，不提供完整可照抄答案。",
@@ -877,6 +886,21 @@ class DynamicAnswerEvaluationService:
 
     @staticmethod
     def _feedback(score: int, signals: dict[str, list[str]]) -> str:
+        def naturalize(item: str) -> str:
+            if item.startswith("缺少"):
+                return f"再补一下{item[2:]}"
+            if item == "没有明显扣住当前主题关键词":
+                return "再更明确地扣住当前主题"
+            if item == "回答和简历证据连接不够，真实性容易被追问":
+                return "把回答和简历里的具体经历连得更紧"
+            if item == "回答偏泛，缺少可验证实现细节":
+                return "少一点泛讲，多给可验证的实现细节"
+            if item == "表达偏泛，面试官难以判断真实掌握程度":
+                return "用更具体的例子证明你真的做过"
+            if item == "回答过短，难以证明掌握程度":
+                return "展开到足够让面试官判断深度"
+            return item
+
         if score >= 85:
             prefix = "回答已经比较扎实"
         elif score >= 70:
@@ -885,7 +909,7 @@ class DynamicAnswerEvaluationService:
             prefix = "回答覆盖了一部分内容，但面试中容易被继续追问"
         else:
             prefix = "当前回答偏空，需要先按结构补齐核心信息"
-        gap_text = "；".join(signals.get("gaps") or signals.get("risks") or ["继续补充关键点"])
+        gap_text = "；".join(naturalize(item) for item in (signals.get("gaps") or signals.get("risks") or ["继续补充关键点"]))
         return f"{prefix}。下一步重点：{gap_text}。"
 
     @staticmethod
@@ -983,24 +1007,47 @@ class StrictInterviewPolicy:
         followup_number: int,
     ) -> str:
         gaps = evaluation.signals.get("gaps") or evaluation.signals.get("risks") or []
-        gap_text = f"刚才暴露的缺口是「{gaps[0]}」。" if gaps else ""
+        gap = gaps[0] if gaps else ""
         if topic.question_type == "PROJECT":
-            if followup_number == 1:
-                return (
-                    f"{gap_text}请围绕「{topic.topic_title}」说具体：你个人负责的边界是什么，"
-                    "关键实现步骤有哪些，哪些代码、配置或流程是你亲自完成的？"
-                )
-            return (
-                f"{gap_text}继续追问：请给出指标口径、异常场景处理和技术取舍。"
-                "如果提到效果提升，请说明 baseline、对比方式和风险。"
-            )
+            return StrictInterviewPolicy._project_followup_question(topic, gap, followup_number)
         if topic.question_type == "SYSTEM_DESIGN":
             if followup_number == 1:
-                return f"{gap_text}请把方案继续压实：核心模块职责、数据流、容量或延迟瓶颈分别是什么？"
-            return f"{gap_text}继续追问：当依赖超时、数据不一致或成本超预算时，你会如何降级、监控和取舍？"
+                return "先不谈容量。你先口述最小链路：用户请求进来后，依次经过哪 3 到 5 个模块？每个模块一句话负责什么。"
+            return "现在只追一个瓶颈：这条链路里最慢或最容易失败的一步是哪一步？你会怎么限时、重试或降级？"
         if followup_number == 1:
-            return f"{gap_text}请把「{topic.topic_title}」的核心机制拆成步骤，并指出最容易答错的边界。"
-        return f"{gap_text}继续追问：请结合一个工程场景说明异常处理、适用限制和技术取舍。"
+            return f"我想确认你不是只记了概念。请用 3 步讲清楚「{topic.topic_title}」的核心机制，再补一个最容易踩错的边界。"
+        return "最后只举一个工程场景：它什么时候适用，什么时候不适用？"
+
+    @staticmethod
+    def _project_followup_question(topic: DynamicTopicDTO, gap: str, followup_number: int) -> str:
+        if followup_number == 1:
+            lead = "先不讲整个项目。"
+            if "结构" in gap:
+                lead = "你刚才讲到了一些点，但我还没听清楚最小链路。"
+            elif "技术取舍" in gap:
+                lead = "你提到了方案，我先不追大而全的取舍。"
+            elif "异常" in gap or "边界" in gap:
+                lead = "我先不展开所有异常。"
+            return f"{lead}{StrictInterviewPolicy._project_minimal_chain_prompt(topic.topic_title)}"
+
+        if "指标" in gap or "效果" in gap:
+            return "你刚才提到效果，先只讲一个指标：你们看的是延迟、成功率、召回率还是转化？上线前后怎么对比？"
+        if "异常" in gap or "边界" in gap:
+            return "只挑一个失败场景：超时、参数错误、依赖不可用或结果为空。它发生时系统怎么处理？"
+        if "技术取舍" in gap or "取舍" in gap:
+            return "只讲一个取舍：当时有哪两个方案？你们为什么选现在这个？"
+        return "先补一个验证方式：你怎么判断这段功能真的有效？"
+
+    @staticmethod
+    def _project_minimal_chain_prompt(topic_title: str) -> str:
+        title = topic_title.lower()
+        if "mcp" in title or "工具" in topic_title:
+            return "就选你实际接过的一个工具，从一次调用开始讲：请求进来后怎么识别工具、怎么组参数、怎么拿结果？"
+        if any(keyword in topic_title for keyword in ("缓存", "热点", "穿透", "击穿")):
+            return "就选一条商品查询或秒杀请求，讲它怎么查缓存、什么时候查 DB、怎么防穿透或热点击穿。"
+        if "rag" in title or "检索" in topic_title:
+            return "就选一次检索请求，讲 query 怎么处理、怎么召回、怎么排序、怎么把结果交给模型。"
+        return "就选一个最小闭环，从一次请求或任务进来讲到结果返回。你具体负责哪一步？"
 
 
 class DynamicInterviewReportService:
@@ -1457,6 +1504,112 @@ class DynamicInterviewService:
                 "generation_status": SessionStatus.PLANNING.value,
                 "generation_stages": self._generation_stage_summary(active_key="JD_PARSE"),
             },
+        )
+
+    async def create_topic_retry_session(
+        self,
+        db: AsyncSession,
+        source_session_id: str,
+        topic_id: int,
+        user_id: int,
+    ) -> DynamicInterviewCreateResponse:
+        source_session = await dynamic_interview_persistence_service.find_session_or_throw(
+            db, source_session_id, user_id
+        )
+        source_topic = await dynamic_interview_persistence_service.find_topic_or_throw(db, topic_id, user_id)
+        if source_topic.session_id != source_session.id:
+            raise BusinessException(ErrorCode.INTERVIEW_QUESTION_NOT_FOUND, "动态面试 topic 不属于当前会话")
+        if source_session.status == SessionStatus.PLANNING:
+            raise BusinessException(ErrorCode.BAD_REQUEST, "原面试计划仍在生成，暂时不能重练")
+        if source_session.status == SessionStatus.FAILED:
+            raise BusinessException(ErrorCode.BAD_REQUEST, "原面试计划生成失败，不能基于该 topic 重练")
+
+        structured_jd = (
+            dynamic_interview_persistence_service.structured_jd_from_session(source_session)
+            or jd_parse_service.parse(source_session.jd_text, source_session.target_role, source_session.skill_id)
+        )
+        source_plan = dynamic_interview_persistence_service.plan_summary_from_session(source_session)
+        retry_session_id = uuid.uuid4().hex[:16]
+        retry_plan_summary = {
+            "generation_status": SessionStatus.INTERVIEWING.value,
+            "retry_source_session_id": source_session.session_id,
+            "retry_source_topic_id": source_topic.id,
+            "retry_source_topic_title": source_topic.topic_title,
+            "topic_count": 1,
+            "topics": [
+                {
+                    "topic_key": source_topic.topic_key,
+                    "topic_title": source_topic.topic_title,
+                    "question_type": source_topic.question_type,
+                    "source_type": source_topic.source_type,
+                }
+            ],
+            "source_plan_summary": {
+                key: source_plan.get(key)
+                for key in ("target_role", "role_domain", "jd_quality_score")
+                if key in source_plan
+            },
+        }
+        retry_session = await dynamic_interview_persistence_service.create_session(
+            db,
+            session_id=retry_session_id,
+            user_id=user_id,
+            resume_id=source_session.resume_id,
+            skill_id=source_session.skill_id or settings.interview.default_skill_id,
+            difficulty=source_session.difficulty or settings.interview.default_difficulty,
+            llm_provider=source_session.llm_provider or "dashscope",
+            target_role=source_session.target_role,
+            target_company=source_session.target_company,
+            level=source_session.level,
+            jd_text=source_session.jd_text,
+            interview_mode=(source_session.interview_mode or InterviewMode.COACH.value).upper(),
+            structured_jd=structured_jd,
+            plan_summary=retry_plan_summary,
+        )
+        retry_session.total_questions = 1
+
+        retry_topic_dto = dynamic_interview_persistence_service.topic_to_dto(source_topic).model_copy(
+            update={
+                "id": None,
+                "topic_order": 1,
+                "status": TopicStatus.ACTIVE.value,
+                "turn_count": 0,
+                "best_score": None,
+                "final_score": None,
+            }
+        )
+        retry_topic = await dynamic_interview_persistence_service.create_topic(
+            db,
+            session_entity_id=retry_session.id,
+            user_id=user_id,
+            resume_id=source_session.resume_id,
+            topic=retry_topic_dto,
+            evidence_hash=source_topic.evidence_hash or self._evidence_hash(source_topic.evidence_snippet),
+        )
+        await dynamic_interview_persistence_service.set_current_topic(db, retry_session.id, retry_topic.id)
+        first_turn = await dynamic_interview_persistence_service.create_turn(
+            db,
+            session_entity_id=retry_session.id,
+            topic_id=retry_topic.id,
+            user_id=user_id,
+            turn_type=TurnType.MAIN.value,
+            turn_order=1,
+            question=retry_topic.main_question,
+        )
+
+        logger.info(
+            "创建动态 topic 重练会话: source=%s, topic=%s, retry=%s",
+            source_session_id,
+            topic_id,
+            retry_session_id,
+        )
+        return DynamicInterviewCreateResponse(
+            session_id=retry_session.session_id,
+            status=SessionStatus.INTERVIEWING.value,
+            structured_jd=structured_jd,
+            current_topic=dynamic_interview_persistence_service.topic_to_dto(retry_topic),
+            current_turn=dynamic_interview_persistence_service.turn_to_dto(first_turn),
+            plan_summary=retry_plan_summary,
         )
 
     async def _generate_plan_background(

@@ -167,7 +167,7 @@ export default function InterviewDetailPage() {
                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-slate-800"
               >
                 <RotateCcw className="h-4 w-4" />
-                重练项目深挖
+                重练项目打磨
               </button>
             </div>
             <div className="mt-5 grid gap-5 border-t border-slate-100 pt-5 lg:grid-cols-3">

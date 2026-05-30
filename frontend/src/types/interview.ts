@@ -294,12 +294,15 @@ export interface SessionListItemDTO {
   skill_id: string | null;
   difficulty: string | null;
   resume_id: number | null;
+  engine_type: string | null;
+  interview_mode: string | null;
   total_questions: number | null;
   current_question_index: number;
   status: string;
   evaluate_status: string | null;
   evaluate_error: string | null;
   overall_score: number | null;
+  report_ready: boolean;
   created_at: string | null;
   completed_at: string | null;
 }

@@ -296,12 +296,15 @@ class SessionListItemDTO(BaseModel):
     skill_id: str | None = None
     difficulty: str | None = None
     resume_id: int | None = None
+    engine_type: str | None = None
+    interview_mode: str | None = None
     total_questions: int | None = None
     current_question_index: int = 0
     status: str = "CREATED"
     evaluate_status: str | None = None
     evaluate_error: str | None = None
     overall_score: int | None = None
+    report_ready: bool = False
     created_at: datetime | None = None
     completed_at: datetime | None = None
 

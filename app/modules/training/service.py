@@ -42,6 +42,20 @@ PROJECT_DIMENSION_LABELS = {
     "expression": "表达结构",
 }
 
+DYNAMIC_ABILITY_LABELS = {
+    "authenticity": "动态能力：真实性证据",
+    "technical_depth": "动态能力：技术深度",
+    "knowledge_accuracy": "动态能力：知识准确性",
+    "system_thinking": "动态能力：系统思维",
+    "communication_structure": "动态能力：表达结构",
+}
+
+DYNAMIC_TYPE_LABELS = {
+    "PROJECT": "项目题",
+    "KNOWLEDGE": "知识题",
+    "SYSTEM_DESIGN": "系统设计",
+}
+
 PRIORITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
 
 
@@ -57,18 +71,24 @@ class RetrySummary:
 class TrainingService:
     async def get_score_calibration(self, db: AsyncSession, user_id: int) -> ScoreCalibrationDTO:
         sessions = await interview_persistence_service.find_all(db, user_id=user_id)
-        evaluated_sessions = [item for item in sessions if item.status == SessionStatus.EVALUATED]
-        primary_evaluated_sessions = [
+        static_evaluated_sessions = [item for item in sessions if item.status == SessionStatus.EVALUATED]
+        primary_static_sessions = [
             item
-            for item in evaluated_sessions
+            for item in static_evaluated_sessions
             if self._retry_source_key(interview_persistence_service.parse_questions_json(item.questions_json)) is None
         ]
-        baseline = self._average_score([item.overall_score for item in primary_evaluated_sessions])
-        retry_summaries = self._build_retry_summaries(evaluated_sessions)
+        dynamic_report_sessions = [
+            item
+            for item in sessions
+            if self._has_dynamic_report(item) and self._dynamic_retry_source_key(item) is None
+        ]
+        primary_report_sessions = primary_static_sessions + dynamic_report_sessions
+        baseline = self._average_score([item.overall_score for item in primary_report_sessions])
+        retry_summaries = self._build_retry_summaries(static_evaluated_sessions)
 
         question_items: list[CalibrationQuestionDTO] = []
         dimension_scores: dict[str, list[int]] = defaultdict(list)
-        for session in primary_evaluated_sessions:
+        for session in primary_static_sessions:
             questions = interview_persistence_service.parse_questions_json(session.questions_json)
             evaluations = interview_persistence_service.build_question_evaluations(session, questions)
             for evaluation in evaluations:
@@ -91,6 +111,20 @@ class TrainingService:
                         if isinstance(value, int | float) and value > 0:
                             dimension_scores[label].append(round(value))
 
+        for session in dynamic_report_sessions:
+            report = safe_json_loads(session.final_report_json, {})
+            for item in self._dynamic_topic_calibrations(session, report, baseline):
+                question_items.append(item)
+                if item.raw_score is not None:
+                    dimension_scores[f"题型：{self._dynamic_type_label(item.question_type)}"].append(item.raw_score)
+
+            ability_scores = report.get("ability_scores") if isinstance(report, dict) else None
+            if isinstance(ability_scores, dict):
+                for key, label in DYNAMIC_ABILITY_LABELS.items():
+                    value = ability_scores.get(key)
+                    if isinstance(value, int | float) and value > 0:
+                        dimension_scores[label].append(round(value))
+
         dimensions = self._build_dimensions(dimension_scores)
         question_items = sorted(
             question_items,
@@ -110,7 +144,7 @@ class TrainingService:
 
         return ScoreCalibrationDTO(
             total_sessions=len(sessions),
-            evaluated_sessions=len(primary_evaluated_sessions),
+            evaluated_sessions=len(primary_report_sessions),
             total_questions=len(question_items),
             average_raw_score=self._average_score(raw_scores),
             calibrated_score=calibrated_score,
@@ -119,7 +153,7 @@ class TrainingService:
             review_needed_count=review_needed_count,
             high_risk_count=high_risk_count,
             summary=self._calibration_summary(
-                len(primary_evaluated_sessions), len(question_items), calibrated_score, confidence
+                len(primary_report_sessions), len(question_items), calibrated_score, confidence
             ),
             questions=question_items,
             dimensions=dimensions,
@@ -218,8 +252,23 @@ class TrainingService:
 
         points: list[TrainingTrendPointDTO] = []
         for session in sessions:
+            if self._has_dynamic_report(session):
+                at = session.completed_at or session.created_at
+                points.append(
+                    TrainingTrendPointDTO(
+                        date=self._date_label(at),
+                        occurred_at=self._datetime_label(at),
+                        label=f"动态面试报告 {session.session_id[:6]}",
+                        metric_type="INTERVIEW_SCORE",
+                        score=session.overall_score,
+                        source_id=session.session_id,
+                    )
+                )
+                continue
+
             if session.status != SessionStatus.EVALUATED or session.overall_score is None:
                 continue
+
             questions = interview_persistence_service.parse_questions_json(session.questions_json)
             if self._retry_source_key(questions) is not None:
                 continue
@@ -459,6 +508,63 @@ class TrainingService:
             retry_signal=self._retry_signal(retry_summary.latest_retry_delta) if retry_summary else None,
         )
 
+    def _dynamic_topic_calibrations(
+        self,
+        session: InterviewSessionEntity,
+        report: dict[str, Any],
+        baseline: int,
+    ) -> list[CalibrationQuestionDTO]:
+        topic_summaries = report.get("topic_summaries") if isinstance(report, dict) else None
+        if not isinstance(topic_summaries, list):
+            return []
+
+        items: list[CalibrationQuestionDTO] = []
+        for index, summary in enumerate(topic_summaries):
+            if not isinstance(summary, dict):
+                continue
+
+            score = self._score_or_none(summary.get("final_score"))
+            reasons: list[str] = []
+            missing_count = 0
+            if score is None:
+                reasons.append("缺少有效分数")
+                missing_count += 1
+            if not self._has_any_summary_list(summary, ("strengths", "gaps", "risks")):
+                reasons.append("缺少动态复盘信号")
+                missing_count += 1
+
+            evidence_count = self._dynamic_evidence_count(summary)
+            confidence = self._clamp(70 + evidence_count * 4 - len(reasons) * 10, 45, 95)
+            if score is None:
+                confidence = min(confidence, 45)
+
+            question_type = str(summary.get("question_type") or "DYNAMIC")
+            question = str(summary.get("main_question") or summary.get("topic_title") or "动态面试 topic")
+            topic_id = summary.get("topic_id")
+            question_index = topic_id if isinstance(topic_id, int) else index
+            calibrated_score = self._calibrated_question_score(score, baseline, confidence)
+
+            items.append(
+                CalibrationQuestionDTO(
+                    session_id=session.session_id,
+                    question_index=question_index,
+                    question=question,
+                    category=str(summary.get("topic_title") or self._dynamic_type_label(question_type)),
+                    question_type=f"dynamic_{question_type.lower()}",
+                    raw_score=score,
+                    calibrated_score=calibrated_score,
+                    confidence=confidence,
+                    confidence_label=self._confidence_label(confidence),
+                    review_priority=self._review_priority(score, confidence),
+                    score_band=self._score_band(score),
+                    reasons=reasons,
+                    evidence_count=evidence_count,
+                    missing_count=missing_count,
+                    action=self._dynamic_question_action(score, summary),
+                )
+            )
+        return items
+
     def _build_dimensions(self, dimension_scores: dict[str, list[int]]) -> list[CalibrationDimensionDTO]:
         dimensions = []
         for name, scores in dimension_scores.items():
@@ -489,19 +595,24 @@ class TrainingService:
         for item in calibration.questions[:8]:
             if item.review_priority == "LOW" and (item.raw_score or 0) >= 75:
                 continue
+            is_dynamic = item.question_type.startswith("dynamic_")
             priority = self._task_priority(item)
             tasks.append(
                 TrainingTaskDTO(
-                    id=f"retry-{item.session_id}-{item.question_index}",
+                    id=f"{'dyn-topic' if is_dynamic else 'retry'}-{item.session_id}-{item.question_index}",
                     day=0,
                     title=f"重练：{self._short_text(item.question, 28)}",
-                    task_type="RETRY_LOW_SCORE",
+                    task_type="RETRY_TOPIC" if is_dynamic else "RETRY_LOW_SCORE",
                     priority=priority,
                     estimate_minutes=25,
                     reason=self._task_reason(item),
                     source_session_id=item.session_id,
                     question_index=item.question_index,
-                    action_path=f"/interviews/{item.session_id}",
+                    action_path=(
+                        f"/interview?sessionId={item.session_id}&mode=dynamic"
+                        if is_dynamic
+                        else f"/interviews/{item.session_id}"
+                    ),
                     checklist=self._task_checklist(item),
                     retry_attempt_count=item.retry_attempt_count,
                     latest_retry_delta=item.latest_retry_delta,
@@ -656,7 +767,7 @@ class TrainingService:
                         reason=str(item.get("reason") or item.get("action", "")),
                         source_session_id=session.session_id,
                         question_index=None,
-                        action_path=f"/interviews/{session.session_id}",
+                        action_path=f"/interview?sessionId={session.session_id}&mode=dynamic",
                         checklist=[
                             str(item.get("action", "完成练习")),
                             "对照报告中的参考答案自查",
@@ -763,7 +874,7 @@ class TrainingService:
         return [
             f"{len(resumes)} 份简历",
             f"{len(analyses)} 份简历分析",
-            f"{calibration.evaluated_sessions} 份已评估面试报告",
+            f"{calibration.evaluated_sessions} 份可训练面试报告",
             f"{calibration.total_questions} 道已评分题",
         ]
 
@@ -775,7 +886,7 @@ class TrainingService:
         confidence: int,
     ) -> str:
         if evaluated_sessions == 0 or total_questions == 0:
-            return "暂无已评估面试报告，完成一次模拟面试后可生成评分校准。"
+            return "暂无可用于评分校准的面试报告，完成一次开始面试或固定题模拟后可生成。"
         return f"已基于 {evaluated_sessions} 份报告、{total_questions} 道题生成校准视图，校准后均分 {calibrated_score}，可信度 {confidence}。"
 
     @staticmethod
@@ -818,11 +929,19 @@ class TrainingService:
 
     @staticmethod
     def _dimension_action(name: str, average_score: int, weak_count: int) -> str:
+        subject = TrainingService._dimension_subject(name)
         if average_score < 65:
-            return f"{name} 是当前短板，建议每天安排专项口述训练。"
+            return f"{subject}是当前低分项，建议每天安排专项口述训练。"
         if weak_count:
-            return f"{name} 有 {weak_count} 道题低于 70 分，建议用同题再练拉齐。"
-        return f"{name} 表现稳定，继续保持证据密度。"
+            return f"{subject}有 {weak_count} 道题低于 70 分，建议用同题再练拉齐。"
+        return f"{subject}表现稳定，继续保持证据密度。"
+
+    @staticmethod
+    def _dimension_subject(name: str) -> str:
+        if name.startswith("题型："):
+            label = name.removeprefix("题型：").strip()
+            return f"{label}类问题"
+        return name
 
     @staticmethod
     def _question_action(score: int | None, confidence: int) -> str:
@@ -837,6 +956,19 @@ class TrainingService:
         if score < 80:
             return "补充量化结果和取舍细节"
         return "沉淀成可复用回答模板"
+
+    @staticmethod
+    def _dynamic_question_action(score: int | None, summary: dict[str, Any]) -> str:
+        action = summary.get("next_training_action")
+        if isinstance(action, str) and action.strip():
+            return action.strip()
+        if score is None:
+            return "先查看动态面试报告，补齐 topic 评分"
+        if score < 60:
+            return "重练这个 topic，先补个人职责、指标和取舍"
+        if score < 75:
+            return "补一版结构化回答，再做一次限时复述"
+        return "整理成动态面试可复用回答模板"
 
     @staticmethod
     def _task_priority(item: CalibrationQuestionDTO) -> str:
@@ -944,6 +1076,26 @@ class TrainingService:
         return sum(1 for key in keys if TrainingService._has_value(evaluation.get(key)))
 
     @staticmethod
+    def _dynamic_evidence_count(summary: dict[str, Any]) -> int:
+        keys = (
+            "evidence_snippet",
+            "main_question",
+            "initial_score",
+            "final_score",
+            "best_score",
+            "score_delta",
+            "strengths",
+            "risks",
+            "gaps",
+            "next_training_action",
+        )
+        return sum(1 for key in keys if TrainingService._has_value(summary.get(key)))
+
+    @staticmethod
+    def _has_any_summary_list(summary: dict[str, Any], keys: tuple[str, ...]) -> bool:
+        return any(isinstance(summary.get(key), list) and len(summary.get(key)) > 0 for key in keys)
+
+    @staticmethod
     def _has_any_list(evaluation: dict[str, Any], keys: tuple[str, ...]) -> bool:
         return any(isinstance(evaluation.get(key), list) and len(evaluation.get(key)) > 0 for key in keys)
 
@@ -969,6 +1121,27 @@ class TrainingService:
     def _average_score(values: list[int | None]) -> int:
         scores = [value for value in values if isinstance(value, int | float) and value > 0]
         return round(mean(scores)) if scores else 0
+
+    @staticmethod
+    def _has_dynamic_report(session: InterviewSessionEntity) -> bool:
+        return (
+            session.engine_type == InterviewEngineType.DYNAMIC.value
+            and session.status == SessionStatus.COMPLETED
+            and bool(session.final_report_json)
+        )
+
+    @staticmethod
+    def _dynamic_retry_source_key(session: InterviewSessionEntity) -> str | None:
+        plan_summary = safe_json_loads(session.plan_summary_json, {})
+        if not isinstance(plan_summary, dict):
+            return None
+        source = plan_summary.get("retry_source_session_id")
+        return str(source) if source else None
+
+    @staticmethod
+    def _dynamic_type_label(question_type: str | None) -> str:
+        key = str(question_type or "").removeprefix("dynamic_").upper()
+        return DYNAMIC_TYPE_LABELS.get(key, key or "动态面试")
 
     @staticmethod
     def _clamp(value: int, minimum: int, maximum: int) -> int:

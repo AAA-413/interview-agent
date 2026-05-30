@@ -87,6 +87,14 @@ export const interviewApi = {
     );
   },
 
+  async createDynamicTopicRetrySession(sessionId: string, topicId: number): Promise<DynamicInterviewCreateResponse> {
+    return request.post<DynamicInterviewCreateResponse>(
+      `/api/interview/dynamic-sessions/${sessionId}/topics/${topicId}/retry`,
+      undefined,
+      { timeout: 180000 }
+    );
+  },
+
   async createRetrySession(sessionId: string, questionIndex: number): Promise<InterviewSessionDTO> {
     return request.post<InterviewSessionDTO>(`/api/interview/sessions/${sessionId}/retry`, {
       question_index: questionIndex,

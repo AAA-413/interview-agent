@@ -105,9 +105,12 @@ export default function InterviewPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const state = location.state as { sessionId?: string; sessionIdToResume?: string; mode?: 'static' | 'dynamic' } | null;
-  const sessionIdFromState = state?.sessionId || state?.sessionIdToResume;
+  const searchParams = new URLSearchParams(location.search);
+  const sessionIdFromQuery = searchParams.get('sessionId');
+  const modeFromQuery = searchParams.get('mode');
+  const sessionIdFromState = state?.sessionId || state?.sessionIdToResume || sessionIdFromQuery;
   const storedMode = sessionIdFromState ? sessionStorage.getItem(`interview_mode_${sessionIdFromState}`) : null;
-  const isDynamic = state?.mode === 'dynamic' || storedMode === 'dynamic';
+  const isDynamic = state?.mode === 'dynamic' || modeFromQuery === 'dynamic' || storedMode === 'dynamic';
 
   const [sessionId, setSessionId] = useState<string | null>(sessionIdFromState || null);
   const [session, setSession] = useState<InterviewSessionDTO | null>(null);
@@ -131,6 +134,7 @@ export default function InterviewPage() {
   const [dynamicHistory, setDynamicHistory] = useState<{ turn: DynamicTurnDTO; answer: string; score: number | null }[]>([]);
   const [ragInsightByTopic, setRagInsightByTopic] = useState<Record<number, DynamicTopicRagInsightDTO>>({});
   const [ragLoadingTopicId, setRagLoadingTopicId] = useState<number | null>(null);
+  const [retryingDynamicTopicId, setRetryingDynamicTopicId] = useState<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -439,6 +443,35 @@ export default function InterviewPage() {
     }
   };
 
+  const handleDynamicTopicRetry = async (topicId: number | null | undefined) => {
+    if (!sessionId || !topicId || retryingDynamicTopicId !== null) return;
+    setRetryingDynamicTopicId(topicId);
+    setError('');
+    try {
+      const retrySession = await interviewApi.createDynamicTopicRetrySession(sessionId, topicId);
+      sessionStorage.setItem(`interview_mode_${retrySession.session_id}`, 'dynamic');
+      setSessionId(retrySession.session_id);
+      setSession(null);
+      setCurrentQuestion(null);
+      setReport(null);
+      setDynamicSession(null);
+      setDynamicTopic(retrySession.current_topic);
+      setDynamicTurn(retrySession.current_turn);
+      setDynamicReport(null);
+      setDynamicHint(null);
+      setDynamicFeedback('');
+      setDynamicHistory([]);
+      setRagInsightByTopic({});
+      setAnswer('');
+      setCompleted(false);
+      navigate('/interview', { state: { sessionId: retrySession.session_id, mode: 'dynamic' } });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '创建重练失败');
+    } finally {
+      setRetryingDynamicTopicId(null);
+    }
+  };
+
   const handleSubmit = async () => {
     if (isDynamic) {
       await handleDynamicSubmit();
@@ -563,6 +596,7 @@ export default function InterviewPage() {
 
   if (isDynamic && dynamicSession?.status === 'PLANNING') {
     const stages = getDynamicPlanningStages(dynamicSession.plan_summary);
+    const dynamicModeLabel = dynamicSession.mode === 'STRICT' ? '严厉模式' : '教练模式';
     return (
       <div className="mx-auto max-w-3xl">
         <div className="mb-6 flex items-center gap-3">
@@ -570,7 +604,7 @@ export default function InterviewPage() {
             <ArrowLeft className="h-5 w-5" />
           </button>
           <div>
-            <h1 className="text-lg font-bold text-slate-900">教练模式</h1>
+            <h1 className="text-lg font-bold text-slate-900">{dynamicModeLabel}</h1>
             <p className="text-sm text-slate-400">面试计划生成中</p>
           </div>
         </div>
@@ -625,12 +659,13 @@ export default function InterviewPage() {
 
   if (isDynamic && completed && dynamicReport) {
     const topicIdByKey = new Map(dynamicReport.topic_summaries.map(summary => [summary.topic_key, summary.topic_id]));
+    const dynamicModeLabel = dynamicSession?.mode === 'STRICT' ? '严厉模式' : '教练模式';
 
     return (
       <div className="mx-auto max-w-5xl">
         <div className="mb-8 text-center">
           <Trophy className="mx-auto mb-4 h-16 w-16 text-primary-500" />
-          <h1 className="text-2xl font-bold text-slate-900">教练模式完成</h1>
+          <h1 className="text-2xl font-bold text-slate-900">{dynamicModeLabel}完成</h1>
           <p className="mt-2 text-slate-500">已按 topic 汇总表现，并生成明日 3 件事</p>
         </div>
 
@@ -730,6 +765,14 @@ export default function InterviewPage() {
                     <Library className="h-4 w-4" />
                     推荐资料
                   </button>
+                  <button
+                    onClick={() => void handleDynamicTopicRetry(summary.topic_id)}
+                    disabled={retryingDynamicTopicId === summary.topic_id}
+                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-200"
+                  >
+                    {retryingDynamicTopicId === summary.topic_id ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                    重练此题
+                  </button>
                 </div>
               )}
               {renderRagInsight(summary.topic_id)}
@@ -752,6 +795,8 @@ export default function InterviewPage() {
   if (isDynamic) {
     const topicProgress = dynamicSession?.topics || [];
     const answeredCount = topicProgress.filter(topic => topic.status === 'COMPLETED').length;
+    const dynamicModeLabel = dynamicSession?.mode === 'STRICT' ? '严厉模式' : '教练模式';
+    const showCoachFeedback = dynamicSession?.mode !== 'STRICT' && (dynamicHint || dynamicFeedback);
 
     return (
       <div className="mx-auto max-w-4xl">
@@ -760,7 +805,7 @@ export default function InterviewPage() {
             <ArrowLeft className="h-5 w-5" />
           </button>
           <div className="flex-1">
-            <h1 className="text-lg font-bold text-slate-900">教练模式</h1>
+            <h1 className="text-lg font-bold text-slate-900">{dynamicModeLabel}</h1>
             <p className="text-sm text-slate-400">Topic {dynamicTopic?.topic_order || '?'} / {topicProgress.length || 4}</p>
           </div>
         </div>
@@ -850,7 +895,7 @@ export default function InterviewPage() {
           </div>
         )}
 
-        {(dynamicHint || dynamicFeedback) && (
+        {showCoachFeedback && (
           <div className="mb-4 rounded-2xl border border-amber-100 bg-amber-50 p-4">
             <div className="mb-2 flex items-center gap-2 font-medium text-amber-800">
               <Lightbulb className="h-5 w-5" />

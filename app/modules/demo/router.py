@@ -122,7 +122,7 @@ async def _ensure_demo_analysis(db: AsyncSession, resume: ResumeEntity) -> Resum
                         "name": "OfferPilot AI 面试训练平台",
                         "role": "产品与全栈开发",
                         "tech_stack": ["FastAPI", "React", "PostgreSQL", "Redis", "RAG", "LLM"],
-                        "description": "围绕求职者训练场景，提供简历诊断、项目深挖、模拟面试和报告复盘。",
+                        "description": "围绕求职者训练场景，提供简历诊断、项目打磨、模拟面试和报告复盘。",
                         "highlights": [
                             "将简历画像与面试题生成联动",
                             "新增教练式反馈字段，输出 80/90 分示范答案",
@@ -369,14 +369,14 @@ def _demo_answers(session_entity_id: int) -> list[InterviewAnswerEntity]:
             "user_answer": "这是一个 AI 面试助手，我做了简历分析、面试、报告这些功能，前后端都有参与。",
             "score": 62,
             "feedback": "面试官判断：项目完整度可以，但个人贡献和结果指标不够清楚。当前风险点：容易被追问你到底做了哪些关键决策。80分改法：按目标、链路、贡献、难点、结果五段重答。下一步追问：你如何证明这个项目真正提升了训练效果？",
-            "reference_answer": "OfferPilot 面向求职者和培训机构，把简历诊断、项目深挖、模拟面试和报告复盘串成训练闭环。我负责后端会话、评估持久化、教练式反馈和前端报告页。",
+            "reference_answer": "OfferPilot 面向求职者和培训机构，把简历诊断、项目打磨、模拟面试和报告复盘串成训练闭环。我负责后端会话、评估持久化、教练式反馈和前端报告页。",
             "metadata": {
                 "question_type": "project",
                 "dimensions": {"authenticity": 72, "technical_depth": 65, "depth": 62, "expression": 70},
                 "interviewer_judgement": "项目方向清楚，但回答还像功能清单，缺少个人决策和业务结果。",
                 "answer_issues": ["没有说明目标用户的真实痛点", "个人贡献边界模糊", "缺少量化指标"],
                 "answer_framework": ["目标用户", "核心链路", "个人贡献", "技术取舍", "结果指标"],
-                "answer_80": "OfferPilot 面向求职者和培训机构，解决简历改完后不知道怎么练的问题。我负责会话生成、报告持久化、教练式反馈和前端报告页，把简历画像、项目深挖、模拟面试串成闭环。技术上用 FastAPI 承接 API，Redis 做异步评估队列，PostgreSQL 保存问答与报告，前端把低分题、80 分回答和同题再练放在同一页。",
+                "answer_80": "OfferPilot 面向求职者和培训机构，解决简历改完后不知道怎么练的问题。我负责会话生成、报告持久化、教练式反馈和前端报告页，把简历画像、项目打磨、模拟面试串成闭环。技术上用 FastAPI 承接 API，Redis 做异步评估队列，PostgreSQL 保存问答与报告，前端把低分题、80 分回答和同题再练放在同一页。",
                 "answer_90": "我会补充真实指标：例如演示链路 10 个核心接口冒烟通过、报告页低分题可一键进入同题再练、配置检查前置后本地演示失败从启动后暴露变成启动时暴露。同时说明我做过的取舍：先用规则化教练字段保证输出稳定，再逐步引入更细的班级/组织运营数据。",
                 "next_practice_question": "如果让你把 OfferPilot 卖给一个培训机构，你会用哪 3 个指标证明它值得续费？",
             },
@@ -424,5 +424,5 @@ def _demo_resume_text() -> str:
 项目：OfferPilot AI 面试训练平台
 职责：负责产品方案、后端 API、面试会话、报告复盘、前端训练工作台。
 技术栈：FastAPI、React、PostgreSQL、Redis、RAG、LLM、Docker。
-亮点：将简历诊断、项目深挖、模拟面试、教练式反馈和同题再练串成闭环。
+亮点：将简历诊断、项目打磨、模拟面试、教练式反馈和同题再练串成闭环。
 """.strip()

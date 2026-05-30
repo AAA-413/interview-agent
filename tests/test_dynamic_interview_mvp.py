@@ -14,16 +14,30 @@ from app.modules.interview.dynamic_service import (
     StrictInterviewPolicy,
 )
 from app.modules.interview.jd_parse_service import jd_parse_service
-from app.modules.interview.models import InterviewSessionEntity, InterviewTopicEntity, InterviewTurnEntity
+from app.modules.interview.models import (
+    InterviewSessionEntity,
+    InterviewTopicEntity,
+    InterviewTurnEntity,
+    SessionStatus,
+)
+from app.modules.interview.persistence_service import interview_persistence_service
 from app.modules.interview.schemas import (
     DynamicInterviewCreateRequest,
     DynamicInterviewCreateResponse,
     DynamicRagCitationDTO,
     DynamicTopicDTO,
     DynamicTurnDTO,
+    DynamicTurnEvaluationDTO,
     StructuredJD,
 )
 from app.modules.resume.schemas import AnalysisHistoryDTO, ProjectInfo, ResumeDetailDTO, ResumeProfile, TechStack
+
+
+class _FakeDb:
+    flushed = False
+
+    async def flush(self):
+        self.flushed = True
 
 
 def _resume_detail(project: ProjectInfo) -> ResumeDetailDTO:
@@ -145,7 +159,58 @@ def test_strict_mode_first_answer_returns_followup_without_hint_or_retry():
     assert decision.action == "FOLLOW_UP"
     assert decision.hint is None
     assert decision.next_question
-    assert "个人负责" in decision.next_question
+    assert "一次检索请求" in decision.next_question
+    assert "缺口" not in decision.next_question
+    assert "哪些模块或流程" not in decision.next_question
+
+
+def test_strict_project_followup_keeps_second_question_single_focus():
+    topic = DynamicTopicDTO(
+        topic_key="project_metric_validation",
+        topic_title="项目指标验证",
+        skill_key="project",
+        question_type="PROJECT",
+        source_type="resume",
+        evidence_snippet="推荐系统项目提升召回率。",
+        main_question="请讲清楚项目指标。",
+        topic_order=1,
+    )
+    evaluation = DynamicTurnEvaluationDTO(
+        ability_score=52,
+        feedback="提到了效果，但没有说明验证方式。",
+        signals={"gaps": ["缺少结果指标"]},
+    )
+
+    next_question = StrictInterviewPolicy._followup_question(topic, evaluation, followup_number=2)
+
+    assert "先只讲一个指标" in next_question
+    assert "指标口径、异常场景处理和技术取舍" not in next_question
+    assert "异常场景处理" not in next_question
+    assert "技术取舍" not in next_question
+
+
+def test_strict_system_design_followup_asks_for_minimal_chain_first():
+    topic = DynamicTopicDTO(
+        topic_key="workflow_orchestration_design",
+        topic_title="工作流编排设计",
+        skill_key="workflow",
+        question_type="SYSTEM_DESIGN",
+        source_type="jd",
+        evidence_snippet="目标岗位需要 Agent 编排。",
+        main_question="请设计 Agent 工作流。",
+        topic_order=1,
+    )
+    evaluation = DynamicTurnEvaluationDTO(
+        ability_score=58,
+        feedback="只描述了目标，没有展开链路。",
+        signals={"gaps": ["缺少架构细节"]},
+    )
+
+    next_question = StrictInterviewPolicy._followup_question(topic, evaluation, followup_number=1)
+
+    assert "最小链路" in next_question
+    assert "3 到 5 个模块" in next_question
+    assert "容量或延迟瓶颈" not in next_question
 
 
 def test_project_scoring_keeps_concrete_normal_above_generic_vague():
@@ -277,6 +342,42 @@ def test_dynamic_create_response_can_represent_planning_without_first_turn():
     assert response.status == "PLANNING"
     assert response.current_topic is None
     assert response.current_turn is None
+
+
+@pytest.mark.asyncio
+async def test_dynamic_report_completion_keeps_completed_status_but_marks_report_ready():
+    session = InterviewSessionEntity(
+        id=1,
+        user_id=1,
+        session_id="dynamic-completed",
+        skill_id="ai-agent",
+        difficulty="mid",
+        total_questions=4,
+        current_question_index=0,
+        status=SessionStatus.INTERVIEWING,
+        questions_json=None,
+        llm_provider="dashscope",
+        engine_type="DYNAMIC",
+        interview_mode="COACH",
+    )
+    db = _FakeDb()
+
+    await dynamic_interview_persistence_service.save_report(
+        db,
+        session,
+        {"readiness_score": 73, "summary": "已生成动态面试报告。"},
+        project_score=70,
+        knowledge_score=76,
+        system_design_score=68,
+    )
+    item = interview_persistence_service.to_session_list_item(session)
+
+    assert db.flushed is True
+    assert session.status == SessionStatus.COMPLETED
+    assert session.final_report_json
+    assert item.status == "COMPLETED"
+    assert item.report_ready is True
+    assert item.overall_score == 73
 
 
 def test_fallback_coach_hint_stays_structural_when_hint_generation_fails():

@@ -11,6 +11,7 @@ Outputs results.json and report.md to tests/quality_baselines/{date}/.
 
 Usage:
     PYTHONPATH=. .venv/bin/python tests/quality_baseline_eval.py
+    PYTHONPATH=. .venv/bin/python tests/quality_baseline_eval.py --compare-with tests/quality_baselines/previous_results.example.json
 """
 
 from __future__ import annotations
@@ -779,10 +780,121 @@ def write_report_md(report_data: dict, output_dir: str) -> None:
         f.write("\n".join(lines) + "\n")
 
 
+def generate_comparison(previous: dict, current: dict) -> dict:
+    """Compare two quality baseline result payloads."""
+    previous_failures = set(previous.get("all_failures", []))
+    current_failures = set(current.get("all_failures", []))
+    previous_lines = previous.get("quality_lines", {})
+    current_lines = current.get("quality_lines", {})
+    line_names = sorted(set(previous_lines) | set(current_lines))
+
+    return {
+        "previous_run_id": previous.get("run_id"),
+        "current_run_id": current.get("run_id"),
+        "previous_pass_rate": previous.get("pass_rate", 0),
+        "current_pass_rate": current.get("pass_rate", 0),
+        "pass_rate_delta": round(current.get("pass_rate", 0) - previous.get("pass_rate", 0), 1),
+        "previous_passed": previous.get("passed", 0),
+        "current_passed": current.get("passed", 0),
+        "previous_total_checks": previous.get("total_checks", 0),
+        "current_total_checks": current.get("total_checks", 0),
+        "new_failures": sorted(current_failures - previous_failures),
+        "fixed_failures": sorted(previous_failures - current_failures),
+        "unchanged_failures": sorted(previous_failures & current_failures),
+        "quality_line_deltas": {
+            name: {
+                "previous_rate": previous_lines.get(name, {}).get("rate", 0),
+                "current_rate": current_lines.get(name, {}).get("rate", 0),
+                "delta": round(
+                    current_lines.get(name, {}).get("rate", 0) - previous_lines.get(name, {}).get("rate", 0),
+                    1,
+                ),
+                "previous_failures": previous_lines.get(name, {}).get("failures", 0),
+                "current_failures": current_lines.get(name, {}).get("failures", 0),
+                "previous_checks": previous_lines.get(name, {}).get("checks", 0),
+                "current_checks": current_lines.get(name, {}).get("checks", 0),
+            }
+            for name in line_names
+        },
+    }
+
+
+def write_comparison_md(comparison: dict, output_dir: str) -> None:
+    """Write version comparison report."""
+    lines = [
+        "# 质量基准版本对比",
+        "",
+        f"上一版本：{comparison.get('previous_run_id') or 'unknown'}",
+        f"当前版本：{comparison.get('current_run_id') or 'unknown'}",
+        "",
+        "## 总体变化",
+        "",
+        (
+            f"综合通过率：**{comparison['previous_pass_rate']}% -> {comparison['current_pass_rate']}%** "
+            f"({comparison['pass_rate_delta']:+.1f}pp)"
+        ),
+        (
+            f"通过检查：{comparison['previous_passed']}/{comparison['previous_total_checks']} -> "
+            f"{comparison['current_passed']}/{comparison['current_total_checks']}"
+        ),
+        "",
+        "## 质量线变化",
+        "",
+        "| 质量线 | 上一版 | 当前版 | 变化 | 失败数变化 |",
+        "|--------|--------|--------|------|------------|",
+    ]
+    labels = {
+        "question_quality": "出题质量",
+        "followup_quality": "追问质量",
+        "scoring_quality": "评分质量",
+        "llm_judge": "LLM 评审",
+    }
+    for line_name, data in comparison["quality_line_deltas"].items():
+        if data["previous_checks"] == 0 and data["current_checks"] == 0:
+            continue
+        label = labels.get(line_name, line_name)
+        lines.append(
+            f"| {label} | {data['previous_rate']}% | {data['current_rate']}% | "
+            f"{data['delta']:+.1f}pp | {data['previous_failures']} -> {data['current_failures']} |"
+        )
+
+    lines.extend(["", "## 新增失败", ""])
+    if comparison["new_failures"]:
+        lines.extend(f"- {failure}" for failure in comparison["new_failures"][:30])
+        if len(comparison["new_failures"]) > 30:
+            lines.append(f"- ... 及另外 {len(comparison['new_failures']) - 30} 条")
+    else:
+        lines.append("- 无")
+
+    lines.extend(["", "## 已修复失败", ""])
+    if comparison["fixed_failures"]:
+        lines.extend(f"- {failure}" for failure in comparison["fixed_failures"][:30])
+        if len(comparison["fixed_failures"]) > 30:
+            lines.append(f"- ... 及另外 {len(comparison['fixed_failures']) - 30} 条")
+    else:
+        lines.append("- 无")
+
+    lines.extend(["", "## 仍未修复", ""])
+    if comparison["unchanged_failures"]:
+        lines.extend(f"- {failure}" for failure in comparison["unchanged_failures"][:30])
+        if len(comparison["unchanged_failures"]) > 30:
+            lines.append(f"- ... 及另外 {len(comparison['unchanged_failures']) - 30} 条")
+    else:
+        lines.append("- 无")
+
+    with open(os.path.join(output_dir, "comparison.md"), "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+
 async def async_main():
     parser = argparse.ArgumentParser(description="Run dynamic interview quality baseline checks.")
     parser.add_argument("--with-llm-judge", action="store_true", help="Call the configured real LLM as judge.")
     parser.add_argument("--llm-provider", default=None, help="LLM provider name registered in llm_registry.")
+    parser.add_argument(
+        "--compare-with",
+        default=None,
+        help="Previous results.json path. Writes comparison.md next to the current report.",
+    )
     parser.add_argument(
         "--llm-max-topics",
         type=int,
@@ -824,9 +936,16 @@ async def async_main():
         json.dump(report, f, ensure_ascii=False, indent=2)
 
     write_report_md(report, output_dir)
+    if args.compare_with:
+        with open(args.compare_with) as f:
+            previous_report = json.load(f)
+        comparison = generate_comparison(previous_report, report)
+        write_comparison_md(comparison, output_dir)
 
     print(f"\nReport: {output_dir}/report.md")
     print(f"Results: {output_dir}/results.json")
+    if args.compare_with:
+        print(f"Comparison: {output_dir}/comparison.md")
     print(f"Overall: {report['passed']}/{report['total_checks']} passed ({report['pass_rate']}%)")
 
     if report["pass_rate"] < 75:

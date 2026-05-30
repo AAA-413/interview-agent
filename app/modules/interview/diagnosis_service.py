@@ -187,7 +187,7 @@ class InterviewDiagnosisService:
                     title="项目样本不足",
                     severity="HIGH",
                     evidence="简历画像未识别出明确项目经历。",
-                    impact="校招和转岗面试通常会围绕项目深挖，没有项目证据会削弱录用信号。",
+                    impact="校招和转岗面试通常会围绕项目打磨后的证据追问，没有项目证据会削弱录用信号。",
                     action="补充 1 到 2 个能说明岗位能力的项目，哪怕是课程设计、实习任务或开源贡献。",
                 )
             )
@@ -493,7 +493,7 @@ class InterviewDiagnosisService:
             ),
             SevenDayPlanItemDTO(
                 day=2,
-                theme="项目深挖",
+                theme="项目打磨",
                 tasks=["写 2 分钟项目复盘稿", "补技术选型和替代方案", "准备 6 个项目追问答案"],
             ),
             SevenDayPlanItemDTO(
@@ -527,7 +527,7 @@ class InterviewDiagnosisService:
     def _build_next_actions(resume_id: int | None, has_jd: bool) -> list[PracticeTaskDTO]:
         actions = [
             PracticeTaskDTO(
-                title="项目深挖训练",
+                title="项目打磨训练",
                 deliverable="先把最高风险项目练到经得起连续追问，再进入完整模拟。",
                 minutes=45,
                 action_path=f"/project-drill?resumeId={resume_id}" if resume_id else "/upload",

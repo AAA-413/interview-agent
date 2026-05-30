@@ -35,11 +35,13 @@ export default function InterviewHistoryPage() {
     }
   };
 
-  const statusMap: Record<string, { label: string; color: string }> = {
-    CREATED: { label: '已创建', color: 'bg-yellow-100 text-yellow-700' },
-    IN_PROGRESS: { label: '进行中', color: 'bg-blue-100 text-blue-700' },
-    COMPLETED: { label: '已完成', color: 'bg-green-100 text-green-700' },
-    EVALUATED: { label: '已评估', color: 'bg-purple-100 text-purple-700' },
+  const openSession = (session: SessionListItemDTO) => {
+    if (session.engine_type === 'DYNAMIC') {
+      sessionStorage.setItem(`interview_mode_${session.session_id}`, 'dynamic');
+      navigate('/interview', { state: { sessionId: session.session_id, mode: 'dynamic' } });
+      return;
+    }
+    navigate(`/interviews/${session.session_id}`);
   };
 
   if (loading) {
@@ -82,12 +84,14 @@ export default function InterviewHistoryPage() {
       ) : (
         <div className="space-y-3">
           {sessions.map((session) => {
-            const status = statusMap[session.status] || statusMap.CREATED;
+            const status = statusView(session);
+            const dynamicTopicCount = session.total_questions && session.total_questions > 0 ? session.total_questions : 4;
+            const canContinue = ['IN_PROGRESS', 'INTERVIEWING', 'PLANNING'].includes(session.status);
             return (
               <div
                 key={session.session_id}
                 className="bg-white rounded-xl border border-slate-200 p-5 hover:shadow-md transition-all duration-200 cursor-pointer"
-                onClick={() => navigate(`/interviews/${session.session_id}`)}
+                onClick={() => openSession(session)}
               >
                 <div className="flex items-center gap-4">
                   <div className="w-12 h-12 bg-primary-50 rounded-xl flex items-center justify-center flex-shrink-0">
@@ -101,7 +105,11 @@ export default function InterviewHistoryPage() {
                       </span>
                     </div>
                     <div className="flex items-center gap-4 mt-1 text-sm text-slate-400">
-                      <span>{session.total_questions || 0} 道题</span>
+                      <span>
+                        {session.engine_type === 'DYNAMIC'
+                          ? `${session.interview_mode === 'STRICT' ? '严厉模式' : '教练模式'} · ${dynamicTopicCount} topic`
+                          : `${session.total_questions || 0} 道题`}
+                      </span>
                       {session.difficulty && <span>难度: {session.difficulty}</span>}
                       {session.created_at && <span>{new Date(session.created_at).toLocaleDateString()}</span>}
                       {session.overall_score !== null && (
@@ -110,15 +118,15 @@ export default function InterviewHistoryPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                    {session.status === 'IN_PROGRESS' && (
+                    {canContinue && (
                       <button
-                        onClick={() => navigate('/interview', { state: { sessionIdToResume: session.session_id } })}
+                        onClick={() => openSession(session)}
                         className="flex items-center gap-1 px-3 py-1.5 bg-primary-50 text-primary-600 rounded-lg text-sm hover:bg-primary-100"
                       >
-                        继续面试
+                        {session.status === 'PLANNING' ? '查看进度' : '继续面试'}
                       </button>
                     )}
-                    <button onClick={() => navigate(`/interviews/${session.session_id}`)} className="p-2 text-slate-400 hover:text-primary-500 rounded-lg hover:bg-slate-50" title="查看详情">
+                    <button onClick={() => openSession(session)} className="p-2 text-slate-400 hover:text-primary-500 rounded-lg hover:bg-slate-50" title="查看详情">
                       <Eye className="w-4 h-4" />
                     </button>
                     <button onClick={() => handleDelete(session.session_id)} className="p-2 text-slate-400 hover:text-red-500 rounded-lg hover:bg-slate-50" title="删除">
@@ -134,4 +142,48 @@ export default function InterviewHistoryPage() {
       )}
     </div>
   );
+}
+
+function statusView(session: SessionListItemDTO): { label: string; color: string } {
+  if (session.status === 'FAILED') {
+    return {
+      label: session.engine_type === 'DYNAMIC' ? '生成失败' : '失败',
+      color: 'bg-red-100 text-red-700',
+    };
+  }
+  if (session.evaluate_status === 'FAILED') {
+    return { label: '评估失败', color: 'bg-red-100 text-red-700' };
+  }
+
+  if (session.engine_type === 'DYNAMIC') {
+    if (session.status === 'PLANNING') {
+      return { label: '准备题目中', color: 'bg-amber-100 text-amber-700' };
+    }
+    if (session.status === 'INTERVIEWING') {
+      return { label: '进行中', color: 'bg-blue-100 text-blue-700' };
+    }
+    if (session.status === 'COMPLETED' && session.report_ready) {
+      return { label: '已生成报告', color: 'bg-purple-100 text-purple-700' };
+    }
+    if (session.status === 'COMPLETED') {
+      return { label: '报告生成中', color: 'bg-amber-100 text-amber-700' };
+    }
+  }
+
+  if (session.report_ready || session.status === 'EVALUATED') {
+    return { label: '已评估', color: 'bg-purple-100 text-purple-700' };
+  }
+  if (session.status === 'COMPLETED') {
+    if (session.evaluate_status === 'PENDING' || session.evaluate_status === 'PROCESSING') {
+      return { label: '评估中', color: 'bg-amber-100 text-amber-700' };
+    }
+    return { label: '待评估', color: 'bg-amber-100 text-amber-700' };
+  }
+  if (session.status === 'IN_PROGRESS') {
+    return { label: '进行中', color: 'bg-blue-100 text-blue-700' };
+  }
+  if (session.status === 'CREATED') {
+    return { label: '已创建', color: 'bg-yellow-100 text-yellow-700' };
+  }
+  return { label: session.status, color: 'bg-slate-100 text-slate-700' };
 }
