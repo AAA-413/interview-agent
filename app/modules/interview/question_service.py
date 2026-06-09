@@ -1,5 +1,8 @@
 import asyncio
+import hashlib
 import logging
+import re
+import secrets
 from pathlib import Path
 
 from langchain_openai import ChatOpenAI
@@ -53,6 +56,22 @@ GENERIC_FALLBACK_QUESTIONS = [
     ("你如何保证代码质量？介绍你实践过的有效手段。", "GENERAL", "综合能力"),
     ("描述一个你做过的技术优化案例，优化的动机、方案和效果。", "GENERAL", "综合能力"),
     ("你在团队协作中遇到过最大的分歧是什么？如何解决的？", "GENERAL", "综合能力"),
+]
+
+DIVERSITY_DIRECTIVES = [
+    "优先考察异常边界、失败影响、监控告警和兜底策略。",
+    "优先考察技术取舍、替代方案、约束条件和复盘改进。",
+    "优先考察结果验证、指标口径、baseline 和风险说明。",
+    "优先考察实现细节、关键路径、数据流和状态流转。",
+    "优先考察性能瓶颈、容量估算、延迟/吞吐和优化代价。",
+    "优先考察岗位匹配、个人贡献边界和可迁移能力。",
+]
+
+FALLBACK_CATEGORY_TEMPLATES = [
+    '请结合一个具体场景，说明你在"{label}"方向的技术理解、实践步骤和效果验证。',
+    '如果让你负责一个和"{label}"相关的模块，你会如何拆方案、识别风险并验证上线效果？',
+    '围绕"{label}"讲一个你认为最容易被面试官追问的点：原理、边界和工程取舍分别是什么？',
+    '请从问题背景、方案选择、异常处理和结果指标四个角度，讲讲你对"{label}"的掌握。',
 ]
 
 
@@ -111,11 +130,19 @@ class InterviewQuestionService:
         skill = self._resolve_skill(skill_id, custom_categories, jd_text)
         difficulty_desc = self._resolve_difficulty_description(difficulty)
         has_resume = bool(resume_text and resume_text.strip())
+        variation_seed = secrets.token_hex(4)
         historical_section = self._build_historical_section(historical_questions)
+        variation_section = self._build_variation_section(variation_seed, historical_questions, has_resume)
 
         if not has_resume:
             return await self._generate_direction_only(
-                chat_model, skill, difficulty_desc, question_count, historical_section
+                chat_model,
+                skill,
+                difficulty_desc,
+                question_count,
+                historical_section,
+                variation_section,
+                variation_seed,
             )
 
         resume_count = max(1, round(question_count * RESUME_QUESTION_RATIO))
@@ -131,33 +158,58 @@ class InterviewQuestionService:
 
         try:
             resume_questions, direction_questions = await asyncio.gather(
-                self._generate_resume_questions(resume_text, resume_count, skill, difficulty_desc, historical_section),
-                self._generate_direction_only(chat_model, skill, difficulty_desc, direction_count, historical_section),
+                self._generate_resume_questions(
+                    resume_text, resume_count, skill, difficulty_desc, historical_section, variation_section
+                ),
+                self._generate_direction_only(
+                    chat_model,
+                    skill,
+                    difficulty_desc,
+                    direction_count,
+                    historical_section,
+                    variation_section,
+                    variation_seed,
+                ),
                 return_exceptions=True,
             )
         except Exception as e:
             logger.error("并行出题失败: %s", e)
             return await self._generate_direction_only(
-                chat_model, skill, difficulty_desc, question_count, historical_section
+                chat_model,
+                skill,
+                difficulty_desc,
+                question_count,
+                historical_section,
+                variation_section,
+                variation_seed,
             )
 
         if isinstance(resume_questions, Exception):
             logger.error("简历题生成失败，降级为全方向题: %s", resume_questions)
             return await self._generate_direction_only(
-                chat_model, skill, difficulty_desc, question_count, historical_section
+                chat_model,
+                skill,
+                difficulty_desc,
+                question_count,
+                historical_section,
+                variation_section,
+                variation_seed,
             )
 
         if isinstance(direction_questions, Exception):
             logger.error("方向题生成失败: %s", direction_questions)
             if not resume_questions:
-                return self._generate_fallback_questions(skill, question_count)
-            return resume_questions
+                return self._generate_fallback_questions(skill, question_count, variation_seed)
+            return self._diversify_questions(
+                resume_questions, historical_questions, skill, question_count, variation_seed
+            )
 
         if not resume_questions and not direction_questions:
             logger.warning("简历题和方向题均为空，回退到默认问题")
-            return self._generate_fallback_questions(skill, question_count)
+            return self._generate_fallback_questions(skill, question_count, variation_seed)
 
         merged = self._merge_question_batches(resume_questions, direction_questions)
+        merged = self._diversify_questions(merged, historical_questions, skill, question_count, variation_seed)
         logger.info(
             "并行出题成功: 简历题=%d, 方向题=%d, 合计=%d", len(resume_questions), len(direction_questions), len(merged)
         )
@@ -170,6 +222,7 @@ class InterviewQuestionService:
         skill: SkillDTO,
         difficulty_desc: str,
         historical_section: str,
+        variation_section: str,
     ) -> list[InterviewQuestionDTO]:
         try:
             from app.common.ai.llm_provider import llm_registry
@@ -183,6 +236,7 @@ class InterviewQuestionService:
                 "difficultyDescription": difficulty_desc,
                 "resumeText": resume_text,
                 "historicalSection": historical_section,
+                "variationSection": variation_section,
                 "jdSection": self._build_jd_section(skill.source_jd),
             }
 
@@ -220,6 +274,8 @@ class InterviewQuestionService:
         difficulty_desc: str,
         question_count: int,
         historical_section: str,
+        variation_section: str,
+        variation_seed: str,
     ) -> list[InterviewQuestionDTO]:
         allocation = interview_skill_service.calculate_allocation(skill.categories, question_count)
         allocation_table = interview_skill_service.build_allocation_description(allocation, skill.categories)
@@ -235,6 +291,7 @@ class InterviewQuestionService:
                 "skillToolCommand": skill.id,
                 "allocationTable": allocation_table,
                 "historicalSection": historical_section,
+                "variationSection": variation_section,
                 "referenceSection": interview_skill_service.build_reference_section(skill, allocation),
                 "jdSection": self._build_jd_section(skill.source_jd),
             }
@@ -256,7 +313,7 @@ class InterviewQuestionService:
             main_count = sum(1 for q in questions if not q.is_follow_up)
             if main_count == 0:
                 logger.warning("方向题返回空题单，回退到默认问题")
-                return self._generate_fallback_questions(skill, question_count)
+                return self._generate_fallback_questions(skill, question_count, variation_seed)
             questions = self._cap_to_main_count(questions, question_count)
             logger.info("方向题生成完成: 请求=%d, 实际主问题=%d", question_count, main_count)
             return questions
@@ -264,7 +321,7 @@ class InterviewQuestionService:
             raise
         except Exception as e:
             logger.error("方向题生成失败，回退到默认问题: %s", e)
-            return self._generate_fallback_questions(skill, question_count)
+            return self._generate_fallback_questions(skill, question_count, variation_seed)
 
     def _resolve_skill(
         self, skill_id: str | None, custom_categories: list[CategoryDTO] | None, jd_text: str | None
@@ -370,15 +427,22 @@ class InterviewQuestionService:
             )
         return merged
 
-    def _generate_fallback_questions(self, skill: SkillDTO, count: int) -> list[InterviewQuestionDTO]:
+    def _generate_fallback_questions(
+        self, skill: SkillDTO, count: int, variation_seed: str | None = None
+    ) -> list[InterviewQuestionDTO]:
         categories = skill.categories if skill else []
         questions = []
         index = 0
+        seed = variation_seed or "fallback"
 
         if categories:
             for generated in range(count):
-                cat = categories[generated % len(categories)]
-                question = f'请谈谈你在"{cat.label}"方向的技术理解和实践经验。'
+                cat = categories[(generated + self._stable_index(seed, len(categories), "category")) % len(categories)]
+                template = FALLBACK_CATEGORY_TEMPLATES[
+                    (generated + self._stable_index(seed, len(FALLBACK_CATEGORY_TEMPLATES), cat.key))
+                    % len(FALLBACK_CATEGORY_TEMPLATES)
+                ]
+                question = template.format(label=cat.label)
                 questions.append(
                     InterviewQuestionDTO(
                         question_index=index,
@@ -392,8 +456,10 @@ class InterviewQuestionService:
                 index += 1
             return questions
 
+        offset = self._stable_index(seed, len(GENERIC_FALLBACK_QUESTIONS), "generic")
         for i in range(min(count, len(GENERIC_FALLBACK_QUESTIONS))):
-            q_text, q_type, q_cat = GENERIC_FALLBACK_QUESTIONS[i]
+            source_index = (i + offset) % len(GENERIC_FALLBACK_QUESTIONS)
+            q_text, q_type, q_cat = GENERIC_FALLBACK_QUESTIONS[source_index]
             questions.append(
                 InterviewQuestionDTO(
                     question_index=index,
@@ -406,6 +472,48 @@ class InterviewQuestionService:
             )
             index += 1
         return questions
+
+    def _diversify_questions(
+        self,
+        questions: list[InterviewQuestionDTO],
+        historical_questions: list[HistoricalQuestion],
+        skill: SkillDTO,
+        target_count: int,
+        variation_seed: str,
+    ) -> list[InterviewQuestionDTO]:
+        accepted: list[InterviewQuestionDTO] = []
+        historical_texts = [hq.question for hq in historical_questions if hq.question]
+
+        for question in questions:
+            if len(accepted) >= target_count:
+                break
+            if self._is_similar_to_any(question.question, historical_texts):
+                logger.info("过滤历史相似题: %s", question.question[:80])
+                continue
+            if self._is_similar_to_any(question.question, [item.question for item in accepted]):
+                logger.info("过滤本批重复题: %s", question.question[:80])
+                continue
+            accepted.append(question)
+
+        if len(accepted) < target_count:
+            fillers = self._generate_fallback_questions(skill, target_count * 2, variation_seed)
+            for filler in fillers:
+                if len(accepted) >= target_count:
+                    break
+                if self._is_similar_to_any(filler.question, historical_texts):
+                    continue
+                if self._is_similar_to_any(filler.question, [item.question for item in accepted]):
+                    continue
+                accepted.append(filler)
+
+        if len(accepted) < target_count:
+            for question in questions:
+                if len(accepted) >= target_count:
+                    break
+                if question.question not in {item.question for item in accepted}:
+                    accepted.append(question)
+
+        return self._reindex_questions(accepted[:target_count])
 
     def _build_historical_section(self, historical_questions: list[HistoricalQuestion]) -> str:
         if not historical_questions:
@@ -420,7 +528,84 @@ class InterviewQuestionService:
         lines = ["已考过的知识点（避免重复出题）："]
         for q_type, summaries in grouped.items():
             lines.append(f"- {q_type}: {', '.join(summaries)}")
+        recent_questions = [hq.question.strip() for hq in historical_questions if hq.question and hq.question.strip()]
+        if recent_questions:
+            lines.append("最近原题（禁止复用，也不要只替换少量措辞）：")
+            for question in recent_questions[:12]:
+                lines.append(f"- {question[:120]}")
         return "\n".join(lines)
+
+    def _build_variation_section(
+        self,
+        variation_seed: str,
+        historical_questions: list[HistoricalQuestion],
+        has_resume: bool,
+    ) -> str:
+        directive = DIVERSITY_DIRECTIVES[self._stable_index(variation_seed, len(DIVERSITY_DIRECTIVES), "directive")]
+        history_hint = (
+            "必须避开历史原题和相同 topic 的近似问法。"
+            if historical_questions
+            else "本轮无需避开历史题，但题目之间要覆盖不同切入点。"
+        )
+        resume_hint = (
+            "简历题要优先换项目证据、技术切入点或验证角度。" if has_resume else "通用题要优先换场景、约束和追问深度。"
+        )
+        return "\n".join(
+            [
+                f"本轮出题批次：{variation_seed}",
+                f"换题策略：{directive}",
+                history_hint,
+                resume_hint,
+                "如果必须考同一技术点，必须换成不同场景、不同约束或不同问题形态，避免与历史题语义相同。",
+            ]
+        )
+
+    @staticmethod
+    def _reindex_questions(questions: list[InterviewQuestionDTO]) -> list[InterviewQuestionDTO]:
+        return [
+            question.model_copy(update={"question_index": index, "parent_question_index": None})
+            for index, question in enumerate(questions)
+        ]
+
+    @staticmethod
+    def _stable_index(seed: str, modulo: int, namespace: str = "") -> int:
+        if modulo <= 0:
+            return 0
+        digest = hashlib.sha256(f"{namespace}:{seed}".encode("utf-8")).hexdigest()
+        return int(digest[:8], 16) % modulo
+
+    @classmethod
+    def _is_similar_to_any(cls, question: str, candidates: list[str]) -> bool:
+        return any(cls._is_similar_question(question, candidate) for candidate in candidates)
+
+    @classmethod
+    def _is_similar_question(cls, left: str, right: str) -> bool:
+        left_norm = cls._normalize_question_text(left)
+        right_norm = cls._normalize_question_text(right)
+        if not left_norm or not right_norm:
+            return False
+        if left_norm == right_norm:
+            return True
+        if min(len(left_norm), len(right_norm)) >= 18 and (left_norm in right_norm or right_norm in left_norm):
+            return True
+
+        left_grams = cls._char_grams(left_norm)
+        right_grams = cls._char_grams(right_norm)
+        if not left_grams or not right_grams:
+            return False
+        similarity = len(left_grams & right_grams) / len(left_grams | right_grams)
+        return similarity >= 0.72
+
+    @staticmethod
+    def _normalize_question_text(text: str) -> str:
+        normalized = re.sub(r"\s+", "", text.lower())
+        return re.sub(r"[，。！？、；：,.!?;:「」“”\"'（）()【】\\[\\]{}<>《》]", "", normalized)
+
+    @staticmethod
+    def _char_grams(text: str, size: int = 2) -> set[str]:
+        if len(text) <= size:
+            return {text}
+        return {text[i : i + size] for i in range(len(text) - size + 1)}
 
     @staticmethod
     def _build_jd_section(source_jd: str | None) -> str:

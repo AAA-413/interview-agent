@@ -71,8 +71,10 @@ class InterviewPlanService:
         mode: str = InterviewMode.COACH.value,
         recent_topic_keys: list[dict] | None = None,
         user_topic_profile: dict | None = None,
+        variation_seed: str | None = None,
     ) -> tuple[list[DynamicTopicDTO], dict]:
         target_role = request.target_role or structured_jd.role_title or "目标技术岗位"
+        seed = variation_seed or target_role
         profile = self._latest_profile(resume_detail)
         recent_keys = {item["topic_key"] for item in (recent_topic_keys or [])}
         low_score_keys = set(user_topic_profile.get("low_score_topics", []) if user_topic_profile else [])
@@ -86,7 +88,10 @@ class InterviewPlanService:
         self._apply_dedup(project_candidates, recent_keys, low_score_keys)
         self._apply_dedup([knowledge_candidate], recent_keys, low_score_keys)
 
-        selected = self._select_project_candidates(project_candidates, limit=2) + [knowledge_candidate, system_candidate]
+        selected = self._select_project_candidates(project_candidates, limit=2, variation_seed=seed) + [
+            knowledge_candidate,
+            system_candidate,
+        ]
         selected = self._ensure_four_topics(selected, target_role)
         topics = [
             self._candidate_to_topic(
@@ -94,6 +99,7 @@ class InterviewPlanService:
                 order=index + 1,
                 target_role=target_role,
                 active=index == 0,
+                variation_seed=seed,
             )
             for index, candidate in enumerate(selected[:4])
         ]
@@ -108,6 +114,7 @@ class InterviewPlanService:
             "dedup_applied": bool(recent_keys),
             "recent_topic_keys": sorted(recent_keys),
             "low_score_retry_topics": sorted(low_score_keys),
+            "variation_seed": seed,
             "topics": [
                 {
                     "topic_key": topic.topic_key,
@@ -170,7 +177,12 @@ class InterviewPlanService:
                     continue
                 if weighted_topic.skill_key in {"typescript", "fastapi"}:
                     continue
-                aliases = (weighted_topic.topic_key, weighted_topic.label, weighted_topic.skill_key, *weighted_topic.aliases)
+                aliases = (
+                    weighted_topic.topic_key,
+                    weighted_topic.label,
+                    weighted_topic.skill_key,
+                    *weighted_topic.aliases,
+                )
                 if not any(alias and alias.lower() in evidence_lower for alias in aliases):
                     continue
                 candidates.append(
@@ -251,17 +263,29 @@ class InterviewPlanService:
         return self._dedupe_candidates(candidates, "PROJECT")
 
     @staticmethod
-    def _select_project_candidates(candidates: list[_TopicCandidate], limit: int) -> list[_TopicCandidate]:
+    def _select_project_candidates(
+        candidates: list[_TopicCandidate],
+        limit: int,
+        variation_seed: str,
+    ) -> list[_TopicCandidate]:
+        ranked = sorted(
+            candidates,
+            key=lambda item: (
+                item.weight + InterviewPlanService._stable_jitter(variation_seed, item.topic.topic_key) * 0.08,
+                InterviewPlanService._project_topic_priority(item.topic.topic_key),
+            ),
+            reverse=True,
+        )
         selected: list[_TopicCandidate] = []
         used_skills: set[str] = set()
-        for candidate in candidates:
+        for candidate in ranked:
             if len(selected) >= limit:
                 break
             if candidate.topic.skill_key in used_skills:
                 continue
             selected.append(candidate)
             used_skills.add(candidate.topic.skill_key)
-        for candidate in candidates:
+        for candidate in ranked:
             if len(selected) >= limit:
                 break
             if candidate.topic.topic_key in {item.topic.topic_key for item in selected}:
@@ -286,6 +310,18 @@ class InterviewPlanService:
             "multi_agent_collaboration": 20,
         }
         return priority.get(topic_key, 50)
+
+    @staticmethod
+    def _stable_index(seed: str, modulo: int) -> int:
+        if modulo <= 0:
+            return 0
+        digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+        return int(digest[:8], 16) % modulo
+
+    @staticmethod
+    def _stable_jitter(seed: str, topic_key: str) -> float:
+        digest = hashlib.sha256(f"{seed}:{topic_key}".encode("utf-8")).hexdigest()
+        return int(digest[:8], 16) / 0xFFFFFFFF
 
     @staticmethod
     def _has_multi_agent_evidence(evidence: str) -> bool:
@@ -412,6 +448,7 @@ class InterviewPlanService:
         order: int,
         target_role: str,
         active: bool,
+        variation_seed: str,
     ) -> DynamicTopicDTO:
         return DynamicTopicDTO(
             topic_key=candidate.topic.topic_key,
@@ -420,7 +457,7 @@ class InterviewPlanService:
             question_type=candidate.question_type,
             source_type=candidate.source_type,
             evidence_snippet=candidate.evidence,
-            main_question=self._main_question(candidate, target_role),
+            main_question=self._main_question(candidate, target_role, variation_seed),
             topic_order=order,
             status=TopicStatus.ACTIVE.value if active else TopicStatus.PENDING.value,
             max_turns=3,
@@ -447,20 +484,50 @@ class InterviewPlanService:
         return "；".join(parts)[:500] if parts else "JD 未提供足够结构化证据。"
 
     @staticmethod
-    def _main_question(candidate: _TopicCandidate, target_role: str) -> str:
+    def _main_question(candidate: _TopicCandidate, target_role: str, variation_seed: str) -> str:
         label = candidate.topic.label
+        variant = InterviewPlanService._stable_index(
+            f"{variation_seed}:{candidate.topic.topic_key}:{candidate.question_type}",
+            3,
+        )
         if candidate.question_type == "PROJECT":
             evidence = candidate.evidence or "你的核心项目"
-            return (
-                f"我看到你简历里写到：{evidence}。我们先聊「{label}」这块。"
-                "你可以从当时要解决的问题讲起，然后说说你具体做了什么、为什么这么设计，以及最后怎么验证效果。"
-            )
+            variants = [
+                (
+                    f"我看到你简历里写到：{evidence}。我们先聊「{label}」这块。"
+                    "你可以从当时要解决的问题讲起，然后说说你具体做了什么、为什么这么设计，以及最后怎么验证效果。"
+                ),
+                (
+                    f"这次我换个角度追一下「{label}」。结合你简历中的经历：{evidence}，"
+                    "请重点说明你的个人职责边界、关键技术动作，以及当时有没有做过替代方案比较。"
+                ),
+                (
+                    f"假设面试官只围绕「{label}」深挖你的项目真实性。基于这段经历：{evidence}，"
+                    "你会怎么证明这是你亲自做过的？请带上实现细节、异常情况和结果验证。"
+                ),
+            ]
+            return variants[variant]
         if candidate.question_type == "SYSTEM_DESIGN":
-            return (
-                f"如果在「{target_role}」这个岗位上，需要你设计或优化一个和「{label}」相关的方案，"
-                "你会怎么拆？可以重点讲架构、数据流、可靠性，以及成本和延迟之间的取舍。"
-            )
-        return f"这个岗位会经常问到「{label}」。你先按自己的理解讲讲它的原理、常见用法，以及实际落地时容易出问题的地方。"
+            variants = [
+                (
+                    f"如果在「{target_role}」这个岗位上，需要你设计或优化一个和「{label}」相关的方案，"
+                    "你会怎么拆？可以重点讲架构、数据流、可靠性，以及成本和延迟之间的取舍。"
+                ),
+                (
+                    f"围绕「{label}」做一个系统设计题：先说明业务目标和约束，再拆核心模块、数据流和失败兜底。"
+                    "如果容量或延迟压力变大，你会优先改哪里？"
+                ),
+                (
+                    f"假设你要把「{label}」方案落到「{target_role}」场景里，请从 baseline、瓶颈、监控和扩展策略讲一版设计。"
+                ),
+            ]
+            return variants[variant]
+        variants = [
+            f"这个岗位会经常问到「{label}」。你先按自己的理解讲讲它的原理、常见用法，以及实际落地时容易出问题的地方。",
+            f"我们聊一下「{label}」：请用一个工程场景解释它解决什么问题、关键机制是什么、边界在哪里。",
+            f"如果面试官追问「{label}」，你会如何从定义、核心流程、典型风险和排查方式四步回答？",
+        ]
+        return variants[variant]
 
     @staticmethod
     def _followup_goals(candidate: _TopicCandidate) -> list[str]:
@@ -909,7 +976,9 @@ class DynamicAnswerEvaluationService:
             prefix = "回答覆盖了一部分内容，但面试中容易被继续追问"
         else:
             prefix = "当前回答偏空，需要先按结构补齐核心信息"
-        gap_text = "；".join(naturalize(item) for item in (signals.get("gaps") or signals.get("risks") or ["继续补充关键点"]))
+        gap_text = "；".join(
+            naturalize(item) for item in (signals.get("gaps") or signals.get("risks") or ["继续补充关键点"])
+        )
         return f"{prefix}。下一步重点：{gap_text}。"
 
     @staticmethod
@@ -1012,7 +1081,9 @@ class StrictInterviewPolicy:
             return StrictInterviewPolicy._project_followup_question(topic, gap, followup_number)
         if topic.question_type == "SYSTEM_DESIGN":
             if followup_number == 1:
-                return "先不谈容量。你先口述最小链路：用户请求进来后，依次经过哪 3 到 5 个模块？每个模块一句话负责什么。"
+                return (
+                    "先不谈容量。你先口述最小链路：用户请求进来后，依次经过哪 3 到 5 个模块？每个模块一句话负责什么。"
+                )
             return "现在只追一个瓶颈：这条链路里最慢或最容易失败的一步是哪一步？你会怎么限时、重试或降级？"
         if followup_number == 1:
             return f"我想确认你不是只记了概念。请用 3 步讲清楚「{topic.topic_title}」的核心机制，再补一个最容易踩错的边界。"
@@ -1490,9 +1561,8 @@ class DynamicInterviewService:
         await db.commit()
 
         import asyncio as _asyncio
-        _asyncio.create_task(
-            self._generate_plan_background(session.session_id, request, resume_detail, user_id)
-        )
+
+        _asyncio.create_task(self._generate_plan_background(session.session_id, request, resume_detail, user_id))
 
         return DynamicInterviewCreateResponse(
             session_id=session.session_id,
@@ -1524,10 +1594,9 @@ class DynamicInterviewService:
         if source_session.status == SessionStatus.FAILED:
             raise BusinessException(ErrorCode.BAD_REQUEST, "原面试计划生成失败，不能基于该 topic 重练")
 
-        structured_jd = (
-            dynamic_interview_persistence_service.structured_jd_from_session(source_session)
-            or jd_parse_service.parse(source_session.jd_text, source_session.target_role, source_session.skill_id)
-        )
+        structured_jd = dynamic_interview_persistence_service.structured_jd_from_session(
+            source_session
+        ) or jd_parse_service.parse(source_session.jd_text, source_session.target_role, source_session.skill_id)
         source_plan = dynamic_interview_persistence_service.plan_summary_from_session(source_session)
         retry_session_id = uuid.uuid4().hex[:16]
         retry_plan_summary = {
@@ -1650,6 +1719,7 @@ class DynamicInterviewService:
                         resume_detail,
                         recent_topic_keys=recent_topics,
                         user_topic_profile=user_profile,
+                        variation_seed=session_id,
                     ),
                 )
             except Exception as exc:

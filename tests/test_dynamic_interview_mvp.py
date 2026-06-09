@@ -92,6 +92,33 @@ def test_interview_plan_builds_four_coach_topics_and_keeps_jd_only_mcp_non_proje
     assert plan_summary["question_type_mix"] == {"PROJECT": 2, "KNOWLEDGE": 1, "SYSTEM_DESIGN": 1}
 
 
+def test_dynamic_main_question_varies_by_generation_seed():
+    jd = "AI Agent 开发实习生，负责知识库系统后端开发，要求熟悉 MCP 工具接入和接口稳定性。"
+    structured = jd_parse_service.parse(jd, target_role="AI Agent 开发实习生", skill_id="ai-agent")
+    project = ProjectInfo(
+        name="智能面试系统",
+        role="后端开发",
+        tech_stack=["FastAPI", "Redis"],
+        description="支持简历解析、模拟面试和报告生成。",
+        highlights=["完成异步任务流水线", "优化接口响应"],
+    )
+    request = DynamicInterviewCreateRequest(
+        resume_id=16,
+        target_role="AI Agent 开发实习生",
+        jd_text=jd,
+        skill_id="ai-agent",
+    )
+
+    topics_a, _ = InterviewPlanService().build_plan(
+        request, structured, _resume_detail(project), variation_seed="session-a"
+    )
+    topics_b, _ = InterviewPlanService().build_plan(
+        request, structured, _resume_detail(project), variation_seed="session-d"
+    )
+
+    assert [topic.main_question for topic in topics_a] != [topic.main_question for topic in topics_b]
+
+
 def test_coach_mode_first_answer_returns_retry_hint_without_full_answer():
     topic = DynamicTopicDTO(
         topic_key="rag_multi_channel_retrieval",
@@ -265,9 +292,7 @@ def test_project_scoring_keeps_concrete_normal_above_generic_vague():
                 skill_key="python",
                 question_type="PROJECT",
                 source_type="resume",
-                evidence_snippet=(
-                    "实现异步任务队列（Redis Streams + Consumer Group），支持任务重试、超时和幂等。"
-                ),
+                evidence_snippet=("实现异步任务队列（Redis Streams + Consumer Group），支持任务重试、超时和幂等。"),
                 main_question="请讲清楚 Redis Streams 异步任务队列的设计。",
                 topic_order=1,
             ),
