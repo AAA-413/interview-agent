@@ -23,6 +23,9 @@ from app.modules.knowledge_base.vector_service import knowledge_base_vector_serv
 
 logger = logging.getLogger(__name__)
 
+MIN_RAG_REFERENCE_SCORE = 0.45
+INSUFFICIENT_KB_ANSWER = "未在知识库中检索到足够相关的内容，当前无法给出可靠答案。"
+
 REWRITE_SYSTEM_PROMPT = (
     "你是检索查询改写助手。请将用户问题改写为更适合知识库检索的简洁查询，"
     "保留核心实体、名词和约束，不要扩展无关内容。只输出改写后的查询文本。"
@@ -86,7 +89,7 @@ class KnowledgeBaseRagService:
             candidates = await retrieval_engine.retrieve(context)
 
             # 重排序（如果启用）
-            references = await self.rerank_service.rerank(question, candidates, top_k)
+            references = self._filter_references(await self.rerank_service.rerank(question, candidates, top_k))
 
             answer = await self._generate_answer(question, rewritten_query, references)
             reference_payload = [reference.model_dump() for reference in references]
@@ -150,13 +153,13 @@ class KnowledgeBaseRagService:
                 rewritten_query=rewritten_query,
             )
             candidates = await retrieval_engine.retrieve(context)
-            references = await self.rerank_service.rerank(question, candidates, top_k)
+            references = self._filter_references(await self.rerank_service.rerank(question, candidates, top_k))
 
             yield self._sse_event("meta", {"session_id": resolved_session_id, "rewritten_query": rewritten_query})
             yield self._sse_event("references", {"items": [item.model_dump() for item in references]})
 
             if not references:
-                answer = "未在知识库中检索到足够相关的内容，当前无法给出可靠答案。"
+                answer = INSUFFICIENT_KB_ANSWER
                 yield self._sse_event("chunk", {"content": answer})
                 yield self._sse_event("done", {"answer": answer})
                 await knowledge_base_persistence_service.complete_chat(
@@ -236,7 +239,7 @@ class KnowledgeBaseRagService:
         references: list[RagReferenceDTO],
     ) -> str:
         if not references:
-            return "未在知识库中检索到足够相关的内容，当前无法给出可靠答案。"
+            return INSUFFICIENT_KB_ANSWER
 
         prompt = self._build_answer_prompt(question, rewritten_query, references)
         try:
@@ -254,6 +257,10 @@ class KnowledgeBaseRagService:
 
         summary_lines = [f"- {item.content or item.content_preview}" for item in references]
         return "根据知识库检索结果，相关内容包括：\n" + "\n".join(summary_lines)
+
+    @staticmethod
+    def _filter_references(references: list[RagReferenceDTO]) -> list[RagReferenceDTO]:
+        return [item for item in references if item.score >= MIN_RAG_REFERENCE_SCORE]
 
     @staticmethod
     def _build_answer_prompt(

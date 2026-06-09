@@ -462,6 +462,42 @@ async def test_rag_insight_uses_personal_kb_only_when_confidence_is_high():
     assert "RAG 笔记" in insight.recommended_materials[0]
 
 
+async def test_rag_insight_rejects_low_confidence_personal_kb_hit():
+    service = DynamicRagCoachService()
+    citation = DynamicRagCitationDTO(
+        knowledge_base_id=3,
+        chunk_id=10,
+        source_name="RAG 笔记",
+        title="泛泛片段",
+        content_preview="RAG 相关的一些泛泛描述。",
+        score=0.58,
+    )
+
+    async def fake_search(_db, _topic, _user_id):
+        return [citation]
+
+    service._search_personal_knowledge = fake_search
+    topic = InterviewTopicEntity(
+        id=12,
+        session_id=1,
+        user_id=1,
+        topic_key="rag_multi_channel_retrieval",
+        topic_title="RAG 多通道检索",
+        skill_key="rag",
+        question_type="KNOWLEDGE",
+        source_type="jd",
+        main_question="请解释 RAG 多通道检索。",
+        topic_order=1,
+    )
+
+    insight = await service.build_topic_insight(None, topic=topic, turns=[], user_id=1)
+
+    assert insight.source_status == "NO_KB_HIT"
+    assert insight.citations == []
+    assert "不强行引用知识库" in (insight.fallback_reason or "")
+    assert "未引用知识库资料" in insight.explanation
+
+
 def test_dynamic_report_summarizes_topics_and_tomorrow_three_tasks():
     session = InterviewSessionEntity(user_id=1, session_id="dyn-1", skill_id="ai-agent")
     project_topic = InterviewTopicEntity(

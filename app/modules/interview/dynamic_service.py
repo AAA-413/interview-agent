@@ -1263,7 +1263,7 @@ class DynamicInterviewReportService:
 
 
 class DynamicRagCoachService:
-    min_confidence = 0.28
+    min_confidence = 0.60
 
     async def build_topic_insight(
         self,
@@ -1278,7 +1278,7 @@ class DynamicRagCoachService:
         confidence = max((item.score for item in confident_citations), default=0.0)
         source_status = "PERSONAL_KB_HIT" if confident_citations else "NO_KB_HIT"
         fallback_reason = (
-            None if confident_citations else "个人知识库暂未找到足够相关资料，以下为未引用知识库资料的通用讲解。"
+            None if confident_citations else "个人知识库暂未找到足够相关资料，本次不强行引用知识库，以下为通用题解。"
         )
         answer_issue = self._answer_issue(turns, topic)
 

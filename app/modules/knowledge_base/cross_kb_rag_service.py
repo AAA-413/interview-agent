@@ -12,7 +12,12 @@ from app.common.ai.llm_provider import llm_registry
 from app.common.model import AsyncTaskStatus
 from app.modules.knowledge_base.models import KnowledgeBaseEntity, KnowledgeChunkEntity
 from app.modules.knowledge_base.persistence_service import knowledge_base_persistence_service
-from app.modules.knowledge_base.rag_service import ANSWER_SYSTEM_PROMPT, REWRITE_SYSTEM_PROMPT
+from app.modules.knowledge_base.rag_service import (
+    ANSWER_SYSTEM_PROMPT,
+    INSUFFICIENT_KB_ANSWER,
+    MIN_RAG_REFERENCE_SCORE,
+    REWRITE_SYSTEM_PROMPT,
+)
 from app.modules.knowledge_base.rerank_service import get_rerank_service
 from app.modules.knowledge_base.schemas import RagAnswerDTO, RagChatListItemDTO, RagReferenceDTO
 from app.modules.knowledge_base.vector_service import knowledge_base_vector_service
@@ -40,7 +45,7 @@ class CrossKBRagService:
         candidates.extend(graph_results)
         candidates = self._deduplicate(candidates)
 
-        references = await self.rerank_service.rerank(question, candidates, top_k)
+        references = self._filter_references(await self.rerank_service.rerank(question, candidates, top_k))
 
         answer = await self._generate_answer(question, rewritten_query, references)
 
@@ -99,14 +104,14 @@ class CrossKBRagService:
             )
             candidates.extend(graph_results)
             candidates = self._deduplicate(candidates)
-            references = await self.rerank_service.rerank(question, candidates, top_k)
+            references = self._filter_references(await self.rerank_service.rerank(question, candidates, top_k))
 
             # SSE: meta + references
             yield self._sse_event("meta", {"session_id": resolved_session_id, "rewritten_query": rewritten_query})
             yield self._sse_event("references", {"items": [r.model_dump() for r in references]})
 
             if not references:
-                answer = "未在知识库中检索到足够相关的内容，当前无法给出可靠答案。"
+                answer = INSUFFICIENT_KB_ANSWER
                 yield self._sse_event("chunk", {"content": answer})
                 yield self._sse_event("done", {"answer": answer})
                 await knowledge_base_persistence_service.complete_chat(
@@ -492,7 +497,7 @@ class CrossKBRagService:
 
     async def _generate_answer(self, question: str, rewritten_query: str, references: list[RagReferenceDTO]) -> str:
         if not references:
-            return "未在知识库中检索到足够相关的内容，当前无法给出可靠答案。"
+            return INSUFFICIENT_KB_ANSWER
 
         prompt = self._build_answer_prompt(question, rewritten_query, references)
         try:
@@ -515,6 +520,10 @@ class CrossKBRagService:
             if chunk.chunk_id not in seen or chunk.score > seen[chunk.chunk_id].score:
                 seen[chunk.chunk_id] = chunk
         return list(seen.values())
+
+    @staticmethod
+    def _filter_references(references: list[RagReferenceDTO]) -> list[RagReferenceDTO]:
+        return [item for item in references if item.score >= MIN_RAG_REFERENCE_SCORE]
 
     @staticmethod
     def _cosine_distance(vec1: list[float], vec2: list[float]) -> float:

@@ -31,6 +31,7 @@ import type {
 const PROCESSING_STATUSES = new Set(['PENDING', 'PROCESSING']);
 
 type VoiceState = 'idle' | 'recording' | 'transcribing';
+type DynamicReviewItem = { turn: DynamicTurnDTO; answer: string; score: number | null };
 
 const VOICE_ERROR_MESSAGES: Record<string, string> = {
   NotAllowedError: '麦克风权限被拒绝，请在浏览器地址栏允许后再试',
@@ -66,6 +67,26 @@ const dynamicTypeLabel: Record<string, string> = {
   SYSTEM_DESIGN: '系统设计',
 };
 
+const dynamicTurnTypeLabel: Record<string, string> = {
+  MAIN: '主问题',
+  FOLLOW_UP: '追问',
+  COACH_RETRY: '重答',
+};
+
+const dynamicAbilityLabel: Record<string, string> = {
+  authenticity: '真实性证据',
+  technical_depth: '技术深度',
+  knowledge_accuracy: '知识准确性',
+  system_thinking: '系统思维',
+  communication_structure: '表达结构',
+};
+
+const dynamicSignalGroups = [
+  { key: 'strengths', label: '亮点', className: 'bg-green-50 text-green-700' },
+  { key: 'gaps', label: '缺口', className: 'bg-amber-50 text-amber-700' },
+  { key: 'risks', label: '风险', className: 'bg-red-50 text-red-700' },
+];
+
 const defaultDynamicPlanningStages = [
   { key: 'RESUME_PROFILE', label: '正在分析简历项目', status: 'COMPLETED' },
   { key: 'JD_PARSE', label: '正在匹配 JD 重点', status: 'ACTIVE' },
@@ -99,6 +120,20 @@ const ragSourceLabel: Record<string, string> = {
   SYSTEM_KB_HIT: '系统资料',
   MIXED_HIT: '混合资料',
   NO_KB_HIT: '未引用资料',
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const dynamicTurnKey = (turn: DynamicTurnDTO) =>
+  turn.id ? `turn-${turn.id}` : `${turn.topic_id || 'topic'}-${turn.turn_order}-${turn.question}`;
+
+const getDynamicDimensionScores = (turn: DynamicTurnDTO) => {
+  const dimensionScores = isRecord(turn.evaluation) ? turn.evaluation.dimension_scores : null;
+  if (!isRecord(dimensionScores)) return [];
+  return Object.entries(dimensionScores)
+    .filter((entry): entry is [string, number] => typeof entry[1] === 'number')
+    .map(([key, value]) => ({ key, label: dynamicAbilityLabel[key] || key, value }));
 };
 
 export default function InterviewPage() {
@@ -509,9 +544,22 @@ export default function InterviewPage() {
     try {
       const trimmedAnswer = answer.trim();
       const response = await interviewApi.submitDynamicTurnAnswer(sessionId, dynamicTurn.id, { answer: trimmedAnswer });
+      const answeredTurn: DynamicTurnDTO = {
+        ...dynamicTurn,
+        answer: trimmedAnswer,
+        ability_score: response.evaluation.ability_score,
+        feedback: response.evaluation.feedback,
+        signals: response.evaluation.signals,
+        evaluation: {
+          ...dynamicTurn.evaluation,
+          dimension_scores: response.evaluation.dimension_scores,
+        },
+        decision: { ...response.decision },
+        coach_hint: response.decision.hint,
+      };
       setDynamicHistory(prev => [
         ...prev,
-        { turn: dynamicTurn, answer: trimmedAnswer, score: response.evaluation.ability_score },
+        { turn: answeredTurn, answer: trimmedAnswer, score: response.evaluation.ability_score },
       ]);
       setDynamicFeedback(response.evaluation.feedback);
       setDynamicHint(response.decision.hint);
@@ -660,13 +708,37 @@ export default function InterviewPage() {
   if (isDynamic && completed && dynamicReport) {
     const topicIdByKey = new Map(dynamicReport.topic_summaries.map(summary => [summary.topic_key, summary.topic_id]));
     const dynamicModeLabel = dynamicSession?.mode === 'STRICT' ? '严厉模式' : '教练模式';
+    const reviewItemsByKey = new Map<string, DynamicReviewItem>();
+    (dynamicSession?.turns || [])
+      .filter(turn => turn.answer)
+      .forEach(turn => {
+        reviewItemsByKey.set(dynamicTurnKey(turn), {
+          turn,
+          answer: turn.answer || '',
+          score: turn.ability_score,
+        });
+      });
+    dynamicHistory
+      .filter(item => item.answer)
+      .forEach(item => reviewItemsByKey.set(dynamicTurnKey(item.turn), item));
+    const reviewItemsByTopic = new Map<number, DynamicReviewItem[]>();
+    Array.from(reviewItemsByKey.values()).forEach(item => {
+      if (!item.turn.topic_id) return;
+      const items = reviewItemsByTopic.get(item.turn.topic_id) || [];
+      items.push(item);
+      reviewItemsByTopic.set(item.turn.topic_id, items);
+    });
+    reviewItemsByTopic.forEach(items => {
+      items.sort((a, b) => a.turn.turn_order - b.turn.turn_order);
+    });
+    const showHistoricalCoachHints = dynamicSession?.mode === 'COACH';
 
     return (
       <div className="mx-auto max-w-5xl">
         <div className="mb-8 text-center">
           <Trophy className="mx-auto mb-4 h-16 w-16 text-primary-500" />
           <h1 className="text-2xl font-bold text-slate-900">{dynamicModeLabel}完成</h1>
-          <p className="mt-2 text-slate-500">已按 topic 汇总表现，并生成明日 3 件事</p>
+          <p className="mt-2 text-slate-500">已按 topic 汇总表现，保留每轮题目、回答和点评</p>
         </div>
 
         <div className="mb-6 grid gap-4 md:grid-cols-4">
@@ -723,61 +795,152 @@ export default function InterviewPage() {
 
         <div className="mb-8 space-y-4">
           <h2 className="text-lg font-semibold text-slate-900">Topic 复盘</h2>
-          {dynamicReport.topic_summaries.map(summary => (
-            <div key={summary.topic_key} className="rounded-2xl border border-slate-200 bg-white p-5">
-              <div className="mb-3 flex flex-wrap items-center gap-2">
-                <h3 className="font-semibold text-slate-900">{summary.topic_title}</h3>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                  {dynamicTypeLabel[summary.question_type] || summary.question_type}
-                </span>
-                <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${scoreBadgeClass(summary.final_score)}`}>
-                  {summary.final_score ?? '-'} 分
-                </span>
-                {summary.score_delta !== null && (
-                  <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700">
-                    提升 {summary.score_delta > 0 ? '+' : ''}{summary.score_delta}
+          {dynamicReport.topic_summaries.map(summary => {
+            const reviewItems = summary.topic_id ? reviewItemsByTopic.get(summary.topic_id) || [] : [];
+            return (
+              <div key={summary.topic_key} className="rounded-2xl border border-slate-200 bg-white p-5">
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <h3 className="font-semibold text-slate-900">{summary.topic_title}</h3>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                    {dynamicTypeLabel[summary.question_type] || summary.question_type}
                   </span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${scoreBadgeClass(summary.final_score)}`}>
+                    {summary.final_score ?? '-'} 分
+                  </span>
+                  {summary.score_delta !== null && (
+                    <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700">
+                      提升 {summary.score_delta > 0 ? '+' : ''}{summary.score_delta}
+                    </span>
+                  )}
+                </div>
+                <p className="mb-3 text-sm text-slate-600">{summary.next_training_action}</p>
+                {summary.gaps.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {summary.gaps.map((gap, index) => (
+                      <span key={index} className="rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-700">{gap}</span>
+                    ))}
+                  </div>
                 )}
+
+                <div className="mt-5 border-t border-slate-100 pt-4">
+                  <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="text-sm font-semibold text-slate-900">逐题问答</h4>
+                    <span className="text-xs text-slate-400">{reviewItems.length || 1} 轮记录</span>
+                  </div>
+                  {reviewItems.length > 0 ? (
+                    <div className="divide-y divide-slate-100">
+                      {reviewItems.map(item => {
+                        const dimensionScores = getDynamicDimensionScores(item.turn);
+                        const coachHint = showHistoricalCoachHints ? item.turn.coach_hint : null;
+                        return (
+                          <div key={dynamicTurnKey(item.turn)} className="py-4 first:pt-2 last:pb-0">
+                            <div className="mb-2 flex flex-wrap items-center gap-2">
+                              <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                                {dynamicTurnTypeLabel[item.turn.turn_type] || item.turn.turn_type}
+                              </span>
+                              <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${scoreBadgeClass(item.score)}`}>
+                                {item.score ?? '-'} 分
+                              </span>
+                              {item.turn.decision_action && (
+                                <span className="rounded-md bg-blue-50 px-2 py-0.5 text-xs text-blue-700">
+                                  {item.turn.decision_action}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm font-medium leading-6 text-slate-900">{item.turn.question}</p>
+                            <div className="mt-3 border-l-2 border-slate-200 pl-3">
+                              <div className="mb-1 text-xs font-semibold text-slate-500">你的回答</div>
+                              <p className="whitespace-pre-wrap text-sm leading-6 text-slate-700">{item.answer}</p>
+                            </div>
+                            {item.turn.feedback && (
+                              <div className="mt-3 border-l-2 border-primary-200 pl-3">
+                                <div className="mb-1 text-xs font-semibold text-primary-700">点评</div>
+                                <p className="text-sm leading-6 text-slate-700">{item.turn.feedback}</p>
+                              </div>
+                            )}
+                            {dimensionScores.length > 0 && (
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {dimensionScores.map(dimension => (
+                                  <span key={dimension.key} className="rounded-md bg-slate-50 px-2 py-1 text-xs text-slate-700">
+                                    {dimension.label} {dimension.value}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            <div className="mt-3 space-y-2">
+                              {dynamicSignalGroups.map(group => {
+                                const values = item.turn.signals?.[group.key] || [];
+                                if (values.length === 0) return null;
+                                return (
+                                  <div key={group.key} className="flex flex-wrap items-center gap-2">
+                                    <span className="text-xs font-medium text-slate-400">{group.label}</span>
+                                    {values.slice(0, 4).map(value => (
+                                      <span key={value} className={`rounded-md px-2 py-1 text-xs ${group.className}`}>{value}</span>
+                                    ))}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            {coachHint && (
+                              <div className="mt-3 border-l-2 border-amber-200 pl-3">
+                                <div className="mb-1 text-xs font-semibold text-amber-700">当时的教练提示</div>
+                                {coachHint.message && <p className="text-sm leading-6 text-slate-700">{coachHint.message}</p>}
+                                {coachHint.structure && (
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    {coachHint.structure.map(item => (
+                                      <span key={item} className="rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-700">{item}</span>
+                                    ))}
+                                  </div>
+                                )}
+                                {coachHint.focus_gaps && coachHint.focus_gaps.length > 0 && (
+                                  <p className="mt-2 text-xs text-amber-700">重点补齐：{coachHint.focus_gaps.join('、')}</p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="mt-3 border-l-2 border-slate-200 pl-3">
+                      <div className="mb-1 text-xs font-semibold text-slate-500">主问题</div>
+                      <p className="text-sm leading-6 text-slate-700">{summary.main_question}</p>
+                    </div>
+                  )}
+                </div>
+
+                {summary.topic_id && (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      onClick={() => void loadRagInsight(summary.topic_id)}
+                      disabled={ragLoadingTopicId === summary.topic_id}
+                      className="inline-flex items-center gap-2 rounded-lg bg-primary-50 px-3 py-2 text-sm font-medium text-primary-700 hover:bg-primary-100 disabled:cursor-not-allowed disabled:text-primary-300"
+                    >
+                      {ragLoadingTopicId === summary.topic_id ? <Loader2 className="h-4 w-4 animate-spin" /> : <BookOpenCheck className="h-4 w-4" />}
+                      查看题解
+                    </button>
+                    <button
+                      onClick={() => void loadRagInsight(summary.topic_id)}
+                      disabled={ragLoadingTopicId === summary.topic_id}
+                      className="inline-flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:text-slate-400"
+                    >
+                      <Library className="h-4 w-4" />
+                      推荐资料
+                    </button>
+                    <button
+                      onClick={() => void handleDynamicTopicRetry(summary.topic_id)}
+                      disabled={retryingDynamicTopicId === summary.topic_id}
+                      className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-200"
+                    >
+                      {retryingDynamicTopicId === summary.topic_id ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                      重练此题
+                    </button>
+                  </div>
+                )}
+                {renderRagInsight(summary.topic_id)}
               </div>
-              <p className="mb-3 text-sm text-slate-600">{summary.next_training_action}</p>
-              {summary.gaps.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {summary.gaps.map((gap, index) => (
-                    <span key={index} className="rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-700">{gap}</span>
-                  ))}
-                </div>
-              )}
-              {summary.topic_id && (
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <button
-                    onClick={() => void loadRagInsight(summary.topic_id)}
-                    disabled={ragLoadingTopicId === summary.topic_id}
-                    className="inline-flex items-center gap-2 rounded-lg bg-primary-50 px-3 py-2 text-sm font-medium text-primary-700 hover:bg-primary-100 disabled:cursor-not-allowed disabled:text-primary-300"
-                  >
-                    {ragLoadingTopicId === summary.topic_id ? <Loader2 className="h-4 w-4 animate-spin" /> : <BookOpenCheck className="h-4 w-4" />}
-                    查看讲解
-                  </button>
-                  <button
-                    onClick={() => void loadRagInsight(summary.topic_id)}
-                    disabled={ragLoadingTopicId === summary.topic_id}
-                    className="inline-flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:text-slate-400"
-                  >
-                    <Library className="h-4 w-4" />
-                    推荐资料
-                  </button>
-                  <button
-                    onClick={() => void handleDynamicTopicRetry(summary.topic_id)}
-                    disabled={retryingDynamicTopicId === summary.topic_id}
-                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-200"
-                  >
-                    {retryingDynamicTopicId === summary.topic_id ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
-                    重练此题
-                  </button>
-                </div>
-              )}
-              {renderRagInsight(summary.topic_id)}
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         <div className="flex gap-3">

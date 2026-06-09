@@ -1,5 +1,6 @@
 import pytest
 
+from app.modules.knowledge_base.schemas import RagReferenceDTO
 from app.modules.knowledge_base.search_channel import SearchContext, VectorSearchChannel
 
 
@@ -84,3 +85,23 @@ async def test_vector_search_uses_rewritten_query_for_embedding_and_fallback():
 
     assert vector_service.queries == ["Python asyncio 协程 与 普通线程 区别"]
     assert rag_service.fallback_queries == ["Python asyncio 协程 与 普通线程 区别"]
+
+
+def test_rag_service_filters_low_confidence_references():
+    from app.modules.knowledge_base import rag_service as rag_module
+
+    weak = RagReferenceDTO(chunk_id=1, chunk_index=0, title="弱相关", content="泛泛内容", score=0.32)
+    strong = RagReferenceDTO(chunk_id=2, chunk_index=1, title="强相关", content="直接回答问题", score=0.72)
+
+    assert rag_module.KnowledgeBaseRagService._filter_references([weak, strong]) == [strong]
+
+
+@pytest.mark.asyncio
+async def test_rag_service_refuses_answer_without_confident_references():
+    from app.modules.knowledge_base import rag_service as rag_module
+
+    service = object.__new__(rag_module.KnowledgeBaseRagService)
+
+    answer = await service._generate_answer("这个问题答案是什么？", "问题答案", [])
+
+    assert "未在知识库中检索到足够相关的内容" in answer
