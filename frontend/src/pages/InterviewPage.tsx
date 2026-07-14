@@ -16,6 +16,12 @@ import {
   Library,
 } from 'lucide-react';
 import { interviewApi } from '../api/interview';
+import {
+  VOICE_ERROR_MESSAGES,
+  cleanTranscript,
+  getAudioFileExtension,
+  getPreferredAudioMimeType,
+} from '../utils/voice';
 import type {
   DynamicCoachHint,
   DynamicReportDTO,
@@ -32,34 +38,6 @@ const PROCESSING_STATUSES = new Set(['PENDING', 'PROCESSING']);
 
 type VoiceState = 'idle' | 'recording' | 'transcribing';
 type DynamicReviewItem = { turn: DynamicTurnDTO; answer: string; score: number | null };
-
-const VOICE_ERROR_MESSAGES: Record<string, string> = {
-  NotAllowedError: '麦克风权限被拒绝，请在浏览器地址栏允许后再试',
-  NotFoundError: '没有检测到可用麦克风',
-  NotReadableError: '麦克风正在被其他应用占用',
-  SecurityError: '当前页面不允许访问麦克风',
-};
-
-const getPreferredAudioMimeType = () => {
-  if (typeof MediaRecorder === 'undefined') return '';
-  const candidates = [
-    'audio/webm;codecs=opus',
-    'audio/webm',
-    'audio/ogg;codecs=opus',
-    'audio/mp4',
-  ];
-  return candidates.find(type => MediaRecorder.isTypeSupported(type)) || '';
-};
-
-const getAudioFileExtension = (mimeType: string) => {
-  if (mimeType.includes('ogg')) return 'ogg';
-  if (mimeType.includes('mp4')) return 'm4a';
-  if (mimeType.includes('mpeg')) return 'mp3';
-  if (mimeType.includes('wav')) return 'wav';
-  return 'webm';
-};
-
-const cleanTranscript = (text: string) => text.replace(/\s+/g, ' ').trim();
 
 const dynamicTypeLabel: Record<string, string> = {
   PROJECT: '项目',
