@@ -6,6 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 AI Interview Platform (智能 AI 面试官平台) — a full-stack application using LLMs for resume analysis and simulated technical interviews. Python 3.11+, FastAPI backend + React 18 frontend.
 
+## Git Workflow
+
+**新功能先切到 develop 分支，不要直接在 main 上改。** 详细规范见 [`git-workflow.md`](git-workflow.md)（分支策略、commit 格式、合并策略）。要点速记：
+- 永久分支：`main`（生产）、`develop`（集成）
+- 功能分支：`feat/*`、`fix/*`、`refactor/*`、`chore/*` — 都从 develop 切出
+- 热修例外：`hotfix/*` 从 main 切出，同时 merge 回 main + develop
+- Commit 格式：`<type>(<scope>): <subject>`，例如 `feat(interview): 新增动态面试复盘`
+- 功能分支合入 develop 用 `--no-ff` merge；功能分支同步 develop 用 rebase
+- 发版：`develop` → `release/<version>` → `main`（`--no-ff` + tag）→ 同步回 develop
+
 ## Commands
 
 ### Backend (local dev)
