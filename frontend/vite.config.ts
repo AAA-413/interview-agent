@@ -12,6 +12,8 @@ export default defineConfig({
       '/api': {
         target: apiProxyTarget,
         changeOrigin: true,
+        // WebSocket upgrade — 流式 STT (/api/interview/voice/stream) 走 ws
+        ws: true,
       },
     },
   },
