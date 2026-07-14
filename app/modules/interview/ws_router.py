@@ -73,18 +73,23 @@ async def voice_stream_ws(
 
     await websocket.accept()
 
-    # ---- 2. 尝试读首帧（可作为 start 控制消息）----
+    # ---- 2. 尝试读首帧 ----
+    # 可能是 start（采样率）、end（直接结束）、bytes（直接推 PCM）
     sample_rate: int | None = None
     first_bytes: bytes | None = None
+    end_immediately = False
     try:
         first = await asyncio.wait_for(websocket.receive(), timeout=2.0)
         if "text" in first and first["text"] is not None:
             try:
                 payload_json = json.loads(first["text"])
-                if payload_json.get("type") == "start":
+                ptype = payload_json.get("type")
+                if ptype == "start":
                     sr = payload_json.get("sampleRate")
                     if isinstance(sr, int) and sr > 0:
                         sample_rate = sr
+                elif ptype == "end":
+                    end_immediately = True
             except json.JSONDecodeError:
                 logger.warning("first frame not valid JSON, ignored")
         elif "bytes" in first and first["bytes"] is not None:
@@ -92,6 +97,27 @@ async def voice_stream_ws(
     except asyncio.TimeoutError:
         # 客户端没在 2s 内发首帧 — 正常，继续
         pass
+
+    # 空流：直接发 final 然后关闭
+    if end_immediately:
+        try:
+            await websocket.send_json(
+                {
+                    "type": "final",
+                    "text": "",
+                    "t0": 0.0,
+                    "t1": 0.0,
+                    "code": 0,
+                    "message": "",
+                }
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
+        except Exception:  # noqa: BLE001
+            pass
+        return
 
     # ---- 3. 构造 PCM 流迭代器 ----
     if first_bytes is not None:

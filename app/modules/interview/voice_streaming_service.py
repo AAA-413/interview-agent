@@ -228,24 +228,26 @@ class VoiceStreamingService:
             return
 
         # Final：流结束后对完整 buffer 跑一次推理
-        if buffer:
-            try:
+        # 即使 buffer 为空也发 final 事件（客户端用来确认流正常结束）
+        try:
+            text = ""
+            if buffer:
                 text = await asyncio.to_thread(
                     self._transcribe_sync, bytes(buffer), sample_rate
                 )
-                yield STTEvent(
-                    type=STTEventType.FINAL,
-                    text=text,
-                    t0=0.0,
-                    t1=time.monotonic() - started_at,
-                )
-            except Exception as e:  # noqa: BLE001
-                logger.exception("FunASR final failed")
-                yield STTEvent(
-                    type=STTEventType.ERROR,
-                    code=ErrorCode.STT_STREAM_ERROR.value,
-                    message=f"finalize failed: {e}",
-                )
+            yield STTEvent(
+                type=STTEventType.FINAL,
+                text=text,
+                t0=0.0,
+                t1=time.monotonic() - started_at,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("FunASR final failed")
+            yield STTEvent(
+                type=STTEventType.ERROR,
+                code=ErrorCode.STT_STREAM_ERROR.value,
+                message=f"finalize failed: {e}",
+            )
 
 
 _SENSEVOICE_TAG_RE = re.compile(r"<\|[^|]+\|>")
