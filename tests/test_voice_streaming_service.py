@@ -144,7 +144,7 @@ async def test_stream_transcribe_session_timeout(monkeypatch):
 
 
 async def test_stream_transcribe_empty_audio():
-    """没有音频数据：没有 partial 也没有 final。"""
+    """没有音频数据：没有 partial 但会发 final（空文本）作为流结束信号。"""
     service = VoiceStreamingService()
 
     chunks = _make_audio_chunker([])
@@ -154,7 +154,10 @@ async def test_stream_transcribe_empty_audio():
         events.append(ev)
 
     assert not any(e.type == STTEventType.PARTIAL for e in events)
-    assert not any(e.type == STTEventType.FINAL for e in events)
+    # 即使 buffer 为空也会发 final，文本是 ""
+    finals = [e for e in events if e.type == STTEventType.FINAL]
+    assert len(finals) == 1
+    assert finals[0].text == ""
 
 
 def test_clean_sensevoice_output_strips_tags():
