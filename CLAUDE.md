@@ -116,6 +116,21 @@ Interview directions defined in `skills/<id>/` with:
 - Embedding: Zhipu Embedding-3 (2048-dim, truncated to 1536 for pgvector), DashScope fallback, hash-vector ultimate fallback
 - Prompt templates: markdown files in `app/prompts/` — paired `*-system.md` / `*-user.md` for each use case
 
+## Voice / STT
+
+数字人面试场景的语音输入链路。两条模式：
+
+- **流式（主用）**：`POST /api/interview/voice/stream` 不存在；改用 `WS /api/interview/voice/stream?token=<jwt>`
+  - 后端：[`app/modules/interview/ws_router.py`](app/modules/interview/ws_router.py) + [`voice_streaming_service.py`](app/modules/interview/voice_streaming_service.py)（FunASR SenseVoice-Small）
+  - 前端：浏览器 `AudioWorklet` (`public/audio-worklets/pcm-capture.js`) 抓 PCM → 200ms 切片 → `WebSocket.send` Int16 LE 16kHz
+  - hook：[`useVoiceInput.ts`](frontend/src/hooks/useVoiceInput.ts) 统一管理 AudioContext / WS / 状态机
+  - 状态：`idle → streaming → idle`（或 `error`）
+- **整段（fallback）**：`POST /api/interview/voice/transcribe` 仍保留，用 faster-whisper small + CPU + int8 整段转写
+
+WS 鉴权：HTTP 的 `auth_middleware` 不覆盖 WebSocket，需在 handler 内手动 `decode_access_token(token)`，失败用 close code 1008。
+
+详见 [docs/research/stt-selection-report.json](docs/research/stt-selection-report.json) 的选型分析。
+
 ## Environment Variables
 
 All config via `.env` file (Pydantic Settings). Key groups:
