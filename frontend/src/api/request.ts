@@ -20,6 +20,17 @@ export function apiUrl(path: string): string {
   return `${apiBaseUrl}${normalizedPath}`;
 }
 
+/**
+ * 给 WebSocket 用：从 apiUrl 派生 ws:// URL
+ *
+ * 为什么单独写一个：Vite dev proxy 的 ws: true 对 binary 帧有 bug（EPIPE），
+ * dev 环境让 WS 直连后端 :8002。生产环境同源，ws:// 协议由浏览器自动派生。
+ */
+export function wsUrl(path: string): string {
+  const httpUrl = apiUrl(path);
+  return httpUrl.replace(/^http/, 'ws');
+}
+
 // 请求拦截器：添加 token
 instance.interceptors.request.use(
   (config) => {
