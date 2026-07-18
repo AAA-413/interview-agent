@@ -39,6 +39,8 @@ dependencies = [
     "dashscope>=1.14.0",
     "markdownify>=0.11.0",
     "faster-whisper>=1.1.0",
+    "funasr>=1.1.0",
+    "torch>=2.0.0",
 ]
 
 [project.optional-dependencies]
