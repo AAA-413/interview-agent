@@ -40,3 +40,9 @@ DEPLOY_SERVER.md
 # Stray files
 -w
 .gstack/
+
+# macOS
+.DS_Store
+
+# WorkBuddy project data (not to be committed)
+.workbuddy/
