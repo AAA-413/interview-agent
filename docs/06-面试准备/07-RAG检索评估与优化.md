@@ -83,7 +83,7 @@ chunk_id=triple.id  # ← 这里用了三元组的 ID，不是知识库 chunk �
 **修复**: 图谱搜索改为通过实体名在 `knowledge_chunks.content` 中 ILIKE 匹配，返回真实的文本片段：
 ```python
 # 旧代码：直接返回三元组
-chunk_id=triple.id  # 三元组ID，不是chunk ID
+chunk_id = triple.id  # 三元组ID，不是chunk ID
 
 # 新代码：通过实体名匹配到实际的chunk
 stmt = select(KnowledgeChunkEntity).where(

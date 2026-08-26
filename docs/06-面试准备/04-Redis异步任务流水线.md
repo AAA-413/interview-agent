@@ -60,13 +60,13 @@ class StreamWorker:
             # 阻塞读取新消息
             results = await self._redis.xreadgroup(
                 CONSUMER_GROUP,
-                self._consumer_name,      # 唯一消费者名: {name}-{uuid8}
+                self._consumer_name,  # 唯一消费者名: {name}-{uuid8}
                 {self._stream_key: ">"},  # 只读取新消息
                 count=self._read_count,
-                block=self._block_ms,     # 5秒阻塞
+                block=self._block_ms,  # 5秒阻塞
             )
             for msg_id, fields in results:
-                await self._handler(fields)                              # 处理消息
+                await self._handler(fields)  # 处理消息
                 await self._redis.xack(self._stream_key, CONSUMER_GROUP, msg_id)  # 确认
 ```
 

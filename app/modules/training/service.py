@@ -78,9 +78,7 @@ class TrainingService:
             if self._retry_source_key(interview_persistence_service.parse_questions_json(item.questions_json)) is None
         ]
         dynamic_report_sessions = [
-            item
-            for item in sessions
-            if self._has_dynamic_report(item) and self._dynamic_retry_source_key(item) is None
+            item for item in sessions if self._has_dynamic_report(item) and self._dynamic_retry_source_key(item) is None
         ]
         primary_report_sessions = primary_static_sessions + dynamic_report_sessions
         baseline = self._average_score([item.overall_score for item in primary_report_sessions])

@@ -115,14 +115,15 @@ rmdir app/modules/agent_orchestration/nodes
 ```python
 # app/modules/agent_orchestration/agent_factory.py
 
+
 class AgentFactory:
     """统一的 Agent 工厂"""
-    
+
     @staticmethod
     def create_planning_agent(llm_provider, knowledge_service=None):
         """创建规划 Agent"""
         return PlanningAgent(llm_provider, knowledge_service)
-    
+
     @staticmethod
     def create_execution_agent(agent_type, llm_provider, knowledge_service=None):
         """创建执行 Agent（委托给 ExecutionAgentFactory）"""
@@ -131,17 +132,17 @@ class AgentFactory:
             llm_provider=llm_provider,
             knowledge_service=knowledge_service,
         )
-    
+
     @staticmethod
     def create_quality_agent(llm_provider):
         """创建质检 Agent"""
         return QualityAgent(llm_provider)
-    
+
     @staticmethod
     def create_summary_agent(llm_provider):
         """创建总结 Agent"""
         return SummaryAgent(llm_provider)
-    
+
     @staticmethod
     def create_orchestrator(llm_provider, knowledge_service=None, max_retries=2):
         """创建编排器"""
@@ -159,56 +160,57 @@ class AgentFactory:
 ```python
 # app/modules/agent_orchestration/orchestrator.py
 
+
 class AgentOrchestrator:
     """核心编排器（增强版）"""
-    
+
     def __init__(
         self,
         llm_provider: LLMProvider,
         knowledge_service: Optional[Any] = None,
         max_retries: int = 2,
         cost_controller: Optional[CostController] = None,  # 新增
-        tool_registry: Optional[ToolRegistry] = None,      # 新增
+        tool_registry: Optional[ToolRegistry] = None,  # 新增
     ):
         self.llm_provider = llm_provider
         self.knowledge_service = knowledge_service
         self.max_retries = max_retries
-        
+
         # Phase 1 组件集成
         self.cost_controller = cost_controller or CostController(max_cost=100000)
         self.tool_registry = tool_registry or ToolRegistry()
-        
+
         # Phase 2 核心 Agent
         self.planning_agent = PlanningAgent(llm_provider, knowledge_service)
         self.quality_agent = QualityAgent(llm_provider)
         self.summary_agent = SummaryAgent(llm_provider)
-    
+
     async def execute(
         self,
         user_input: str,
         kb_ids: Optional[List[int]] = None,
     ) -> Dict[str, Any]:
         """执行任务（增强版）"""
-        
+
         # 1. 成本检查
         if not self.cost_controller.can_execute(estimated_cost=5000):
             raise ValueError("Token 预算不足")
-        
+
         # 2. 规划阶段
         plan = await self.planning_agent.plan(user_input, kb_ids)
-        
+
         # 3. 成本预估
         estimated_tokens = plan.get("total_estimated_tokens", 5000)
         if not self.cost_controller.can_execute(estimated_tokens):
             # 自动降级
             plan = await self._degrade_plan(plan)
-        
+
         # 4. 执行阶段
         execution_results = await self._execute_tasks(...)
-        
+
         # 5. 成本记录
         self.cost_controller.record_cost(actual_tokens)
-        
+
         # 6. 质检和总结
         ...
 ```

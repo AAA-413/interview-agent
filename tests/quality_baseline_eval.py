@@ -66,7 +66,9 @@ def load_dataset() -> dict:
 
 def sample_resume_detail(sample: dict) -> ResumeDetailDTO:
     resume_text = sample.get("resume_text", "")
-    skills = jd_parse_service.parse(sample.get("jd_text"), sample.get("target_role"), sample.get("skill_id")).required_skills
+    skills = jd_parse_service.parse(
+        sample.get("jd_text"), sample.get("target_role"), sample.get("skill_id")
+    ).required_skills
     project = ProjectInfo(
         name=sample.get("label", "代表性项目"),
         role=sample.get("target_role", "候选人"),
@@ -86,7 +88,9 @@ def sample_resume_detail(sample: dict) -> ResumeDetailDTO:
                 analyzed_at=datetime(2026, 5, 29, 9, 0, 0),
                 profile=ResumeProfile(
                     projects=[project],
-                    tech_stacks=[TechStack(name=skill, proficiency="熟悉", context=resume_text[:80]) for skill in skills],
+                    tech_stacks=[
+                        TechStack(name=skill, proficiency="熟悉", context=resume_text[:80]) for skill in skills
+                    ],
                     experience_level="quality_sample",
                     has_projects=True,
                     summary=resume_text[:160],
@@ -479,8 +483,7 @@ async def augment_with_llm_judge(
                 [
                     SystemMessage(
                         content=(
-                            "你是技术面试质量评审员，只评估面试系统质量。"
-                            "必须只输出 JSON，不要 markdown，不要额外解释。"
+                            "你是技术面试质量评审员，只评估面试系统质量。必须只输出 JSON，不要 markdown，不要额外解释。"
                         )
                     ),
                     HumanMessage(content=prompt),

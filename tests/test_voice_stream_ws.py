@@ -7,7 +7,7 @@
 - 客户端 disconnect 兜底
 - service 错误 → error 事件
 """
-import json
+
 import os
 import time
 
@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.modules.auth.security import create_access_token
-from app.modules.interview.voice_streaming_service import STTEventType, VoiceStreamingService
+from app.modules.interview.voice_streaming_service import VoiceStreamingService
 
 VALID_TOKEN = create_access_token({"sub": "1"})
 
@@ -67,9 +67,7 @@ def test_ws_rejects_invalid_token():
     """无效 token：关闭。"""
     client = TestClient(app)
     with pytest.raises(Exception):
-        with client.websocket_connect(
-            "/api/interview/voice/stream?token=invalid.jwt.token"
-        ) as ws:
+        with client.websocket_connect("/api/interview/voice/stream?token=invalid.jwt.token") as ws:
             ws.receive_json()
 
 

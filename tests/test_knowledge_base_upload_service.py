@@ -46,15 +46,15 @@ class FakeKnowledgeBasePersistenceService:
         self.saved = entity
         return entity
 
-    async def update_index_status(
-        self, db, kb_id: int, status: AsyncTaskStatus, error: str | None = None
-    ) -> None:
+    async def update_index_status(self, db, kb_id: int, status: AsyncTaskStatus, error: str | None = None) -> None:
         return None
 
 
 def _patch_upload_dependencies(monkeypatch, persistence: FakeKnowledgeBasePersistenceService) -> None:
     monkeypatch.setattr("app.modules.knowledge_base.upload_service.file_hash_service", FakeFileHashService())
-    monkeypatch.setattr("app.modules.knowledge_base.upload_service.file_validation_service", FakeFileValidationService())
+    monkeypatch.setattr(
+        "app.modules.knowledge_base.upload_service.file_validation_service", FakeFileValidationService()
+    )
     monkeypatch.setattr("app.modules.knowledge_base.upload_service.file_storage_service", FakeFileStorageService())
     monkeypatch.setattr("app.modules.knowledge_base.upload_service.document_parse_service", FakeDocumentParseService())
     monkeypatch.setattr("app.modules.knowledge_base.upload_service.knowledge_base_persistence_service", persistence)

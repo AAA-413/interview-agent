@@ -130,11 +130,13 @@ from app.modules.agent_orchestration import AgentToolRegistry
 # 1. 创建工具注册表
 registry = AgentToolRegistry()
 
+
 # 2. 定义工具函数
 async def custom_search(query: str, top_k: int = 5) -> list:
     """自定义搜索工具"""
     # 实现搜索逻辑
     return results
+
 
 # 3. 注册工具
 registry.register_tool(
@@ -269,31 +271,32 @@ from app.modules.agent_orchestration import (
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
+
 @router.post("/chat")
 async def agent_chat(
     request: ChatRequest,
-    llm_provider = Depends(get_llm_provider),
-    knowledge_service = Depends(get_knowledge_service),
+    llm_provider=Depends(get_llm_provider),
+    knowledge_service=Depends(get_knowledge_service),
 ):
     # 1. 创建上下文
     context = DynamicContext()
     context.current_task = request.message
     context.set_value("knowledge_coverage", 0.7)
-    
+
     # 2. 决策树评估
     decision_tree = DecisionTree()
     path = decision_tree.evaluate(
         task=context.current_task,
         knowledge_coverage=0.7,
     )
-    
+
     # 3. 创建并执行责任链
     factory = AgentFactory(llm_provider, knowledge_service)
     root_agent = factory.create_chain(path)
-    
+
     chain = AgentChain()
     result = await chain.execute(root_agent, context)
-    
+
     return {"answer": result, "path": path.value}
 ```
 

@@ -17,6 +17,7 @@ FunASR 输出格式：
 - SenseVoice 在 text 前会带 <|zh|><|NEUTRAL|><|Speech|><|withitn|> 标签
 - _clean_sensevoice_output 把这些标签移除
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -69,8 +70,6 @@ class STTEvent:
 class VoiceStreamingService:
     """FunASR SenseVoice-Small 流式 STT 服务（lazy singleton，线程安全）。"""
 
-    # 每次推理只取最近 5s 音频（控制单次推理量）
-    _ROLLING_WINDOW_SECONDS = 5
     # 每 1000ms 触发一次部分识别
     _INFER_INTERVAL_MS = 1000
     # 连续错误上限：超过则停止 stream 并报 error
@@ -158,8 +157,6 @@ class VoiceStreamingService:
         if sample_rate is None:
             sample_rate = settings.voice_interview.streaming_stt_sample_rate
 
-        bytes_per_second = sample_rate * 2  # Int16 = 2 bytes
-        rolling_window_bytes = self._ROLLING_WINDOW_SECONDS * bytes_per_second
         max_session_seconds = settings.voice_interview.streaming_stt_max_session_seconds
 
         buffer = bytearray()
@@ -190,9 +187,7 @@ class VoiceStreamingService:
                     last_infer_at = now
                     audio_chunk = bytes(buffer)
                     try:
-                        text = await asyncio.to_thread(
-                            self._transcribe_sync, audio_chunk, sample_rate
-                        )
+                        text = await asyncio.to_thread(self._transcribe_sync, audio_chunk, sample_rate)
                         consecutive_errors = 0
                         if text and text != last_text:
                             last_text = text
@@ -231,9 +226,7 @@ class VoiceStreamingService:
         try:
             text = ""
             if buffer:
-                text = await asyncio.to_thread(
-                    self._transcribe_sync, bytes(buffer), sample_rate
-                )
+                text = await asyncio.to_thread(self._transcribe_sync, bytes(buffer), sample_rate)
             yield STTEvent(
                 type=STTEventType.FINAL,
                 text=text,

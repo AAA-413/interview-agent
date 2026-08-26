@@ -13,11 +13,7 @@ from app.modules.resume.schemas import ProjectInfo, ResumeDetailDTO, ResumeProfi
 
 
 def _clean_text(text: str) -> str:
-    return (
-        text.replace("项目深挖", "项目打磨")
-        .replace("。。", "。")
-        .replace("..", ".")
-    )
+    return text.replace("项目深挖", "项目打磨").replace("。。", "。").replace("..", ".")
 
 
 class ProjectDrillService:
@@ -253,7 +249,9 @@ class ProjectDrillService:
         if any(keyword in role for keyword in ["ai", "agent", "llm", "rag", "大模型", "智能体"]):
             return any(keyword in stack for keyword in ["rag", "llm", "agent", "mcp", "openai", "fastapi", "python"])
         if "后端" in role:
-            return any(keyword in stack for keyword in ["java", "spring", "python", "fastapi", "django", "go", "gin", "node"])
+            return any(
+                keyword in stack for keyword in ["java", "spring", "python", "fastapi", "django", "go", "gin", "node"]
+            )
         return True
 
     def _build_questions(

@@ -257,18 +257,18 @@ class AgentContext:
 ```python
 class TaskGraph:
     """持久化的任务依赖图"""
-    
+
     def __init__(self):
         self.nodes: Dict[str, TaskNode] = {}
         self.edges: List[Tuple[str, str]] = []  # (from_task, to_task)
-    
+
     def add_task(self, task: TaskNode):
         self.nodes[task.id] = task
-    
+
     def add_dependency(self, from_task: str, to_task: str):
         """添加依赖关系"""
         self.edges.append((from_task, to_task))
-    
+
     def get_ready_tasks(self) -> List[TaskNode]:
         """获取所有依赖已满足的任务"""
         ready = []
@@ -276,19 +276,19 @@ class TaskGraph:
             if task.status == "pending" and self.dependencies_met(task_id):
                 ready.append(task)
         return ready
-    
+
     def topological_sort(self) -> List[List[TaskNode]]:
         """拓扑排序，返回可并行执行的任务层"""
         # Kahn 算法实现
         pass
-    
+
     async def save(self, db: AsyncSession):
         """持久化到数据库，支持断点续传"""
         await db.execute(
             insert(task_graphs).values(
                 graph_id=self.id,
                 nodes=json.dumps([n.dict() for n in self.nodes.values()]),
-                edges=json.dumps(self.edges)
+                edges=json.dumps(self.edges),
             )
         )
 ```
@@ -303,17 +303,17 @@ class TaskGraph:
 ```python
 class DecisionTree:
     """决策树：根据用户输入选择执行路径"""
-    
+
     def decide(self, user_input: str, context: dict) -> ExecutionPath:
         # 1. 意图识别
         intent = self.classify_intent(user_input)
-        
+
         # 2. 复杂度评估
         complexity = self.estimate_complexity(user_input, context)
-        
+
         # 3. 知识库匹配
         kb_coverage = self.check_knowledge_coverage(user_input)
-        
+
         # 4. 选择执行路径（简化为3种）
         if complexity == "simple" and kb_coverage > 0.8:
             return SimplePathSelector()  # 快速路径：直接检索+生成
@@ -322,48 +322,51 @@ class DecisionTree:
         else:
             return ComplexPathSelector()  # 复杂路径：完整四阶段+多次迭代
 
+
 class SimplePathSelector(ExecutionPath):
     """简单路径：跳过规划和质检，直接执行"""
-    
+
     async def execute(self, context: AgentContext) -> Result:
         # 1. 知识检索
         knowledge = await retrieve_knowledge(context.query)
-        
+
         # 2. 直接生成
         result = await llm_generate(context.query, knowledge)
-        
+
         return result
+
 
 class StandardPathSelector(ExecutionPath):
     """标准路径：规划 → 执行 → 质检"""
-    
+
     async def execute(self, context: AgentContext) -> Result:
         plan = await self.planning_agent.plan(context)
         result = await self.execution_agent.execute(plan)
         quality = await self.quality_agent.check(result)
-        
+
         if quality.passed:
             return result
         else:
             # 单次重试
             return await self.execution_agent.execute(plan, fixes=quality.issues)
 
+
 class ComplexPathSelector(ExecutionPath):
     """复杂路径：完整四阶段 + 最多3次重试"""
-    
+
     async def execute(self, context: AgentContext) -> Result:
         for retry in range(3):
             plan = await self.planning_agent.plan(context)
             result = await self.execution_agent.execute(plan)
             quality = await self.quality_agent.check(result)
-            
+
             if quality.passed:
                 summary = await self.summary_agent.summarize(result)
                 return summary
-            
+
             # 更新上下文，准备重试
             context.add_feedback(quality.issues)
-        
+
         # 降级策略
         return self.degrade(result)
 ```
@@ -433,7 +436,7 @@ class AgentOrchestrator:
 
         # 阶段 4：总结
         summary = await self.summary_agent.summarize(...)
-        return { "final_answer": ..., "sources": ..., "cost_report": ... }
+        return {"final_answer": ..., "sources": ..., "cost_report": ...}
 ```
 
 **三种执行策略**：
@@ -448,47 +451,45 @@ class AgentOrchestrator:
 ```python
 class AgentToolRegistry:
     """Agent 工具注册表：即插即用的工具系统"""
-    
+
     def __init__(self):
         self.tools: Dict[str, AgentTool] = {}
         self.handlers: Dict[str, Callable] = {}
-    
+
     def register(self, tool: AgentTool, handler: Callable):
         """注册工具和处理函数"""
         self.tools[tool.name] = tool
         self.handlers[tool.name] = handler
         logger.info(f"✅ 注册工具: {tool.name}")
-    
+
     def get_tool_schemas(self) -> List[Dict]:
         """获取所有工具的 schema（用于 LLM）"""
         return [tool.to_schema() for tool in self.tools.values()]
-    
+
     async def execute_tool(self, tool_name: str, **kwargs) -> Any:
         """执行工具"""
         if tool_name not in self.handlers:
             raise ValueError(f"未知工具: {tool_name}")
-        
+
         handler = self.handlers[tool_name]
         return await handler(**kwargs)
 
+
 class AgentTool:
     """Agent 工具定义"""
-    
+
     def __init__(self, name: str, description: str, parameters: Dict):
         self.name = name
         self.description = description
         self.parameters = parameters
-    
+
     def to_schema(self) -> Dict:
         """转换为 LLM 工具 schema"""
         return {
             "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": self.parameters
-            }
+            "function": {"name": self.name, "description": self.description, "parameters": self.parameters},
         }
+
 
 # 预定义工具
 BUILTIN_TOOLS = [
@@ -500,10 +501,10 @@ BUILTIN_TOOLS = [
             "properties": {
                 "query": {"type": "string", "description": "搜索查询"},
                 "kb_ids": {"type": "array", "items": {"type": "integer"}, "description": "知识库ID列表"},
-                "top_k": {"type": "integer", "description": "返回结果数量", "default": 5}
+                "top_k": {"type": "integer", "description": "返回结果数量", "default": 5},
             },
-            "required": ["query"]
-        }
+            "required": ["query"],
+        },
     ),
     AgentTool(
         name="task_create",
@@ -513,10 +514,10 @@ BUILTIN_TOOLS = [
             "properties": {
                 "subject": {"type": "string", "description": "任务标题"},
                 "description": {"type": "string", "description": "任务描述"},
-                "dependencies": {"type": "array", "items": {"type": "string"}, "description": "依赖的任务ID"}
+                "dependencies": {"type": "array", "items": {"type": "string"}, "description": "依赖的任务ID"},
             },
-            "required": ["subject", "description"]
-        }
+            "required": ["subject", "description"],
+        },
     ),
     AgentTool(
         name="task_update",
@@ -525,10 +526,14 @@ BUILTIN_TOOLS = [
             "type": "object",
             "properties": {
                 "task_id": {"type": "string", "description": "任务ID"},
-                "status": {"type": "string", "enum": ["pending", "in_progress", "completed"], "description": "任务状态"}
+                "status": {
+                    "type": "string",
+                    "enum": ["pending", "in_progress", "completed"],
+                    "description": "任务状态",
+                },
             },
-            "required": ["task_id", "status"]
-        }
+            "required": ["task_id", "status"],
+        },
     ),
     AgentTool(
         name="code_execute",
@@ -537,32 +542,37 @@ BUILTIN_TOOLS = [
             "type": "object",
             "properties": {
                 "code": {"type": "string", "description": "要执行的代码"},
-                "language": {"type": "string", "enum": ["python", "javascript", "bash"], "description": "编程语言"}
+                "language": {"type": "string", "enum": ["python", "javascript", "bash"], "description": "编程语言"},
             },
-            "required": ["code", "language"]
-        }
-    )
+            "required": ["code", "language"],
+        },
+    ),
 ]
 
 # 初始化工具注册表
 tool_registry = AgentToolRegistry()
+
 
 # 注册内置工具
 async def handle_knowledge_search(query: str, kb_ids: List[int] = None, top_k: int = 5):
     """知识检索处理函数"""
     return await knowledge_service.search(query, kb_ids, top_k)
 
+
 async def handle_task_create(subject: str, description: str, dependencies: List[str] = None):
     """任务创建处理函数"""
     return await task_service.create(subject, description, dependencies)
+
 
 async def handle_task_update(task_id: str, status: str):
     """任务更新处理函数"""
     return await task_service.update(task_id, status)
 
+
 async def handle_code_execute(code: str, language: str):
     """代码执行处理函数"""
     return await code_executor.execute(code, language)
+
 
 # 注册所有工具
 for tool in BUILTIN_TOOLS:
@@ -575,27 +585,24 @@ for tool in BUILTIN_TOOLS:
 ```python
 class ToolEnabledAgent(BaseAgent):
     """支持工具调用的 Agent"""
-    
+
     def __init__(self, tool_registry: AgentToolRegistry):
         self.tool_registry = tool_registry
-    
+
     async def apply(self, context: DynamicContext) -> str:
         # 1. 构建提示词（包含工具定义）
         prompt = self.build_prompt(context)
         tools = self.tool_registry.get_tool_schemas()
-        
+
         # 2. 调用 LLM（支持工具调用）
         response = await self.llm.generate(prompt, tools=tools)
-        
+
         # 3. 处理工具调用
         if response.tool_calls:
             for tool_call in response.tool_calls:
-                result = await self.tool_registry.execute_tool(
-                    tool_call.name,
-                    **tool_call.arguments
-                )
+                result = await self.tool_registry.execute_tool(tool_call.name, **tool_call.arguments)
                 context.add_tool_result(tool_call.id, result)
-        
+
         return response.content
 ```
 
@@ -604,67 +611,63 @@ class ToolEnabledAgent(BaseAgent):
 ```python
 class CostController:
     """成本控制器：管理 Token 预算和成本"""
-    
+
     def __init__(self, max_cost: float = 10.0):
         self.max_cost = max_cost  # 最大成本（美元）
         self.current_cost = 0.0
-        self.token_usage = {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "total_tokens": 0
-        }
-        
+        self.token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
         # Token 价格（每1000 tokens）
         self.pricing = {
             "qwen-plus": {"input": 0.0004, "output": 0.0012},
             "gpt-4": {"input": 0.03, "output": 0.06},
-            "claude-3": {"input": 0.015, "output": 0.075}
+            "claude-3": {"input": 0.015, "output": 0.075},
         }
-    
+
     def track_usage(self, model: str, input_tokens: int, output_tokens: int):
         """追踪 Token 使用"""
         self.token_usage["input_tokens"] += input_tokens
         self.token_usage["output_tokens"] += output_tokens
         self.token_usage["total_tokens"] += input_tokens + output_tokens
-        
+
         # 计算成本
         pricing = self.pricing.get(model, self.pricing["qwen-plus"])
-        cost = (input_tokens / 1000 * pricing["input"] + 
-                output_tokens / 1000 * pricing["output"])
+        cost = input_tokens / 1000 * pricing["input"] + output_tokens / 1000 * pricing["output"]
         self.current_cost += cost
-        
-        logger.info(f"💰 Token 使用: +{input_tokens}/{output_tokens}, 成本: ${cost:.4f}, 总计: ${self.current_cost:.4f}")
-    
+
+        logger.info(
+            f"💰 Token 使用: +{input_tokens}/{output_tokens}, 成本: ${cost:.4f}, 总计: ${self.current_cost:.4f}"
+        )
+
     def can_retry(self, estimated_tokens: int = 5000) -> bool:
         """判断是否可以重试"""
         estimated_cost = self.estimate_cost(estimated_tokens)
         remaining = self.max_cost - self.current_cost
-        
+
         if remaining < estimated_cost:
             logger.warning(f"⚠️ 成本不足，无法重试。剩余: ${remaining:.4f}, 需要: ${estimated_cost:.4f}")
             return False
-        
+
         return True
-    
+
     def should_degrade(self) -> bool:
         """判断是否应该降级"""
         usage_ratio = self.current_cost / self.max_cost
-        
+
         if usage_ratio > 0.8:
             logger.warning(f"⚠️ 成本使用超过 80%，建议降级")
             return True
-        
+
         return False
-    
+
     def estimate_cost(self, tokens: int, model: str = "qwen-plus") -> float:
         """估算成本"""
         pricing = self.pricing.get(model, self.pricing["qwen-plus"])
         # 假设 input:output = 1:2
         input_tokens = tokens // 3
         output_tokens = tokens * 2 // 3
-        return (input_tokens / 1000 * pricing["input"] + 
-                output_tokens / 1000 * pricing["output"])
-    
+        return input_tokens / 1000 * pricing["input"] + output_tokens / 1000 * pricing["output"]
+
     def get_report(self) -> Dict:
         """获取成本报告"""
         return {
@@ -672,36 +675,37 @@ class CostController:
             "max_cost": self.max_cost,
             "usage_ratio": self.current_cost / self.max_cost,
             "token_usage": self.token_usage,
-            "remaining_budget": self.max_cost - self.current_cost
+            "remaining_budget": self.max_cost - self.current_cost,
         }
+
 
 class CostAwareAgent(BaseAgent):
     """成本感知的 Agent"""
-    
+
     def __init__(self, cost_controller: CostController):
         self.cost_controller = cost_controller
-    
+
     async def apply(self, context: DynamicContext) -> str:
         # 检查成本预算
         if not self.cost_controller.can_retry():
             logger.error("❌ 成本预算不足，执行中止")
             return "成本预算不足，无法继续执行"
-        
+
         # 检查是否需要降级
         if self.cost_controller.should_degrade():
             logger.warning("⚠️ 切换到小模型以节省成本")
             self.llm.switch_model("qwen-turbo")  # 切换到更便宜的模型
-        
+
         # 执行任务
         response = await self.llm.generate(prompt)
-        
+
         # 追踪成本
         self.cost_controller.track_usage(
             model=self.llm.model_name,
             input_tokens=response.usage.input_tokens,
-            output_tokens=response.usage.output_tokens
+            output_tokens=response.usage.output_tokens,
         )
-        
+
         return response.content
 ```
 
@@ -748,25 +752,21 @@ class AgentFactory:
 ```python
 class KnowledgeEnhancedAgent(BaseAgent):
     """知识增强型 Agent：结合知识库的智能 Agent"""
-    
+
     async def process(self, context: ExecutionContext) -> Result:
         # 1. 检索相关知识
         knowledge = await self.retrieve_knowledge(
-            query=context.current_task.description,
-            kb_ids=context.knowledge_base_ids,
-            top_k=5
+            query=context.current_task.description, kb_ids=context.knowledge_base_ids, top_k=5
         )
-        
+
         # 2. 构建增强提示词
         enhanced_prompt = self.build_prompt(
-            task=context.current_task,
-            knowledge=knowledge,
-            examples=self.get_few_shot_examples(knowledge)
+            task=context.current_task, knowledge=knowledge, examples=self.get_few_shot_examples(knowledge)
         )
-        
+
         # 3. 调用 LLM
         result = await self.llm.generate(enhanced_prompt)
-        
+
         # 4. 后处理
         return self.post_process(result, context)
 ```
@@ -891,24 +891,24 @@ async def agent_chat(
 **请求模型**：
 ```python
 class AgentChatRequest(BaseModel):
-    message: str          # 用户消息 (1-10000字符)
-    kb_ids: list[int]     # 知识库ID列表（可选）
-    max_step: int = 10    # 最大执行步数
+    message: str  # 用户消息 (1-10000字符)
+    kb_ids: list[int]  # 知识库ID列表（可选）
+    max_step: int = 10  # 最大执行步数
     model: str = "qwen-plus"
-    budget_limit: float   # 预算限制（美元，可选）
+    budget_limit: float  # 预算限制（美元，可选）
 ```
 
 **响应模型**：
 ```python
 class AgentChatResponse(BaseModel):
-    session_id: str          # 会话ID
-    answer: str              # 最终回答
-    execution_path: str      # 执行路径 (simple/standard/complex)
-    total_steps: int         # 总步数
-    quality_score: float     # 质量分数
-    total_tokens: int        # 总Token数
-    total_cost: float        # 总成本（美元）
-    execution_time_ms: int   # 执行时间（毫秒）
+    session_id: str  # 会话ID
+    answer: str  # 最终回答
+    execution_path: str  # 执行路径 (simple/standard/complex)
+    total_steps: int  # 总步数
+    quality_score: float  # 质量分数
+    total_tokens: int  # 总Token数
+    total_cost: float  # 总成本（美元）
+    execution_time_ms: int  # 执行时间（毫秒）
 ```
 
 ### 5.2 智能知识库构建接口
@@ -942,7 +942,7 @@ async def orchestrate_streaming(request):
             "stage": event.stage,  # planning/execution/quality/summary
             "progress": event.progress,
             "message": event.message,
-            "partial_result": event.partial_result
+            "partial_result": event.partial_result,
         }
 ```
 
@@ -958,15 +958,13 @@ async def orchestrate_streaming(request):
 async def execute_parallel(sub_tasks: List[SubTask]):
     # 构建依赖图
     dag = build_dependency_graph(sub_tasks)
-    
+
     # 拓扑排序
     execution_order = topological_sort(dag)
-    
+
     # 分层并行执行
     for layer in execution_order:
-        results = await asyncio.gather(*[
-            execute_task(task) for task in layer
-        ])
+        results = await asyncio.gather(*[execute_task(task) for task in layer])
 ```
 
 #### 优化点 3：缓存机制
@@ -981,12 +979,12 @@ class AgentCache:
         if cached and self.is_valid(cached):
             return cached
         return None
-    
+
     async def cache_result(self, task_hash: str, result: Result):
         await self.redis.setex(
             f"agent:result:{task_hash}",
             ttl=3600,  # 1小时
-            value=result
+            value=result,
         )
 ```
 
@@ -996,11 +994,7 @@ class AgentCache:
 ```python
 class QualityStandard(BaseModel):
     min_quality_score: float = 0.7
-    required_checks: List[str] = [
-        "syntax_check",
-        "logic_check",
-        "completeness_check"
-    ]
+    required_checks: List[str] = ["syntax_check", "logic_check", "completeness_check"]
     custom_validators: List[Callable] = []
 ```
 
@@ -1009,17 +1003,10 @@ class QualityStandard(BaseModel):
 def adaptive_retry(quality_report: QualityReport) -> RetryStrategy:
     if quality_report.quality_score > 0.6:
         # 接近及格，微调即可
-        return RetryStrategy(
-            retry_tasks=quality_report.failed_tasks,
-            adjustment="minor"
-        )
+        return RetryStrategy(retry_tasks=quality_report.failed_tasks, adjustment="minor")
     else:
         # 差距较大，重新规划
-        return RetryStrategy(
-            retry_tasks="all",
-            adjustment="major",
-            replan=True
-        )
+        return RetryStrategy(retry_tasks="all", adjustment="major", replan=True)
 ```
 
 ### 6.3 知识库优化
@@ -1031,7 +1018,7 @@ KNOWLEDGE_CATEGORIES = {
     "best_practices": "最佳实践库",
     "troubleshooting": "问题诊断库",
     "api_docs": "API 文档库",
-    "domain_knowledge": "领域知识库"
+    "domain_knowledge": "领域知识库",
 }
 ```
 
@@ -1039,21 +1026,21 @@ KNOWLEDGE_CATEGORIES = {
 ```python
 async def evaluate_knowledge_quality(kb_id: int):
     """评估知识库对 Agent 的帮助程度"""
-    
+
     # 统计使用频率
     usage_count = await count_knowledge_usage(kb_id)
-    
+
     # 统计贡献度
     avg_contribution = await avg_contribution_score(kb_id)
-    
+
     # 统计成功率
     success_rate = await success_rate_with_knowledge(kb_id)
-    
+
     return {
         "usage_count": usage_count,
         "avg_contribution": avg_contribution,
         "success_rate": success_rate,
-        "quality_score": calculate_quality_score(...)
+        "quality_score": calculate_quality_score(...),
     }
 ```
 
@@ -1125,15 +1112,12 @@ class KnowledgeLearner:
         if execution.user_feedback >= 4:  # 高质量执行
             # 提取可复用的知识
             knowledge = self.extract_knowledge(execution)
-            
+
             # 保存到知识库
             await self.kb_service.add_knowledge(
                 category="learned_patterns",
                 content=knowledge,
-                metadata={
-                    "source": "execution",
-                    "quality_score": execution.quality_score
-                }
+                metadata={"source": "execution", "quality_score": execution.quality_score},
             )
 ```
 
@@ -1150,15 +1134,9 @@ def detect_circular_dependency(task_plan: TaskPlan) -> bool:
 ```python
 async def execute_with_timeout(task: SubTask, timeout: int):
     try:
-        return await asyncio.wait_for(
-            execute_task(task),
-            timeout=timeout
-        )
+        return await asyncio.wait_for(execute_task(task), timeout=timeout)
     except asyncio.TimeoutError:
-        return Result(
-            status="timeout",
-            partial_result=task.get_partial_result()
-        )
+        return Result(status="timeout", partial_result=task.get_partial_result())
 ```
 
 #### 边界 3：资源限制

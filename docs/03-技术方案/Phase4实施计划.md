@@ -18,9 +18,10 @@ Phase 4 将实现 4 个高级特性，提升系统的生产就绪度和用户体
 ```python
 # app/common/ai/llm_provider_protocol.py
 
+
 class LLMProvider(Protocol):
     """LLM Provider 协议"""
-    
+
     async def chat_stream(
         self,
         messages: List[Dict[str, str]],
@@ -29,7 +30,7 @@ class LLMProvider(Protocol):
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         流式调用 LLM
-        
+
         Yields:
             响应块，包含：
             - delta: 增量内容
@@ -43,8 +44,8 @@ class LLMProvider(Protocol):
 ```python
 # app/modules/agent_orchestration/orchestrator.py
 
+
 class AgentOrchestrator:
-    
     async def execute_stream(
         self,
         user_input: str,
@@ -52,7 +53,7 @@ class AgentOrchestrator:
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         流式执行 Agent 编排
-        
+
         Yields:
             执行事件：
             - type: "plan" | "execute" | "quality" | "summary" | "done"
@@ -62,22 +63,22 @@ class AgentOrchestrator:
         yield {"type": "plan", "data": {"status": "start"}}
         plan = await self.planning_agent.plan(user_input, kb_ids)
         yield {"type": "plan", "data": {"status": "done", "plan": plan}}
-        
+
         # 2. 执行阶段
         yield {"type": "execute", "data": {"status": "start"}}
         async for result in self._execute_tasks_stream(plan):
             yield {"type": "execute", "data": result}
-        
+
         # 3. 质检阶段
         yield {"type": "quality", "data": {"status": "start"}}
         quality_check = await self.quality_agent.check(...)
         yield {"type": "quality", "data": quality_check}
-        
+
         # 4. 总结阶段（流式）
         yield {"type": "summary", "data": {"status": "start"}}
         async for chunk in self._summarize_stream(...):
             yield {"type": "summary", "data": chunk}
-        
+
         # 5. 完成
         yield {"type": "done", "data": {"status": "success"}}
 ```
@@ -114,22 +115,23 @@ class AgentOrchestrator:
 from fastapi import WebSocket, WebSocketDisconnect
 import json
 
+
 class AgentWebSocketManager:
     """WebSocket 连接管理器"""
-    
+
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
-    
+
     async def connect(self, session_id: str, websocket: WebSocket):
         """接受连接"""
         await websocket.accept()
         self.active_connections[session_id] = websocket
-    
+
     def disconnect(self, session_id: str):
         """断开连接"""
         if session_id in self.active_connections:
             del self.active_connections[session_id]
-    
+
     async def send_message(self, session_id: str, message: dict):
         """发送消息"""
         if session_id in self.active_connections:
@@ -147,31 +149,28 @@ async def agent_websocket(
     """Agent 编排 WebSocket 端点"""
     manager = AgentWebSocketManager()
     await manager.connect(session_id, websocket)
-    
+
     try:
         while True:
             # 接收客户端消息
             data = await websocket.receive_json()
-            
+
             if data["type"] == "execute":
                 # 执行 Agent 编排（流式）
                 orchestrator = AgentOrchestrator(...)
-                
+
                 async for event in orchestrator.execute_stream(
                     user_input=data["message"],
                     kb_ids=data.get("kb_ids"),
                 ):
                     # 推送执行事件
                     await manager.send_message(session_id, event)
-            
+
             elif data["type"] == "cancel":
                 # 取消执行
-                await manager.send_message(session_id, {
-                    "type": "cancelled",
-                    "data": {"message": "任务已取消"}
-                })
+                await manager.send_message(session_id, {"type": "cancelled", "data": {"message": "任务已取消"}})
                 break
-    
+
     except WebSocketDisconnect:
         manager.disconnect(session_id)
 ```
@@ -261,30 +260,34 @@ import json
 from typing import Any, Dict, Optional
 from redis import asyncio as aioredis
 
+
 class AgentCache:
     """Agent 缓存管理器"""
-    
+
     def __init__(self, redis_url: str = "redis://localhost:6379"):
         self.redis = aioredis.from_url(redis_url)
-    
+
     def _generate_key(self, prefix: str, data: Dict[str, Any]) -> str:
         """生成缓存键"""
         content = json.dumps(data, sort_keys=True)
         hash_value = hashlib.md5(content.encode()).hexdigest()
         return f"{prefix}:{hash_value}"
-    
+
     async def get_plan(self, user_input: str, kb_ids: list) -> Optional[Dict]:
         """获取规划缓存"""
-        key = self._generate_key("plan", {
-            "user_input": user_input,
-            "kb_ids": kb_ids,
-        })
-        
+        key = self._generate_key(
+            "plan",
+            {
+                "user_input": user_input,
+                "kb_ids": kb_ids,
+            },
+        )
+
         cached = await self.redis.get(key)
         if cached:
             return json.loads(cached)
         return None
-    
+
     async def set_plan(
         self,
         user_input: str,
@@ -293,33 +296,39 @@ class AgentCache:
         ttl: int = 3600,
     ):
         """设置规划缓存"""
-        key = self._generate_key("plan", {
-            "user_input": user_input,
-            "kb_ids": kb_ids,
-        })
-        
+        key = self._generate_key(
+            "plan",
+            {
+                "user_input": user_input,
+                "kb_ids": kb_ids,
+            },
+        )
+
         await self.redis.setex(
             key,
             ttl,
             json.dumps(plan),
         )
-    
+
     async def get_execution_result(
         self,
         task_id: str,
         task_input: Dict,
     ) -> Optional[Dict]:
         """获取执行结果缓存"""
-        key = self._generate_key("execution", {
-            "task_id": task_id,
-            "input": task_input,
-        })
-        
+        key = self._generate_key(
+            "execution",
+            {
+                "task_id": task_id,
+                "input": task_input,
+            },
+        )
+
         cached = await self.redis.get(key)
         if cached:
             return json.loads(cached)
         return None
-    
+
     async def set_execution_result(
         self,
         task_id: str,
@@ -328,11 +337,14 @@ class AgentCache:
         ttl: int = 7200,
     ):
         """设置执行结果缓存"""
-        key = self._generate_key("execution", {
-            "task_id": task_id,
-            "input": task_input,
-        })
-        
+        key = self._generate_key(
+            "execution",
+            {
+                "task_id": task_id,
+                "input": task_input,
+            },
+        )
+
         await self.redis.setex(
             key,
             ttl,
@@ -413,45 +425,27 @@ import time
 
 # 定义指标
 agent_execution_total = Counter(
-    'agent_execution_total',
-    'Total number of agent executions',
-    ['status', 'execution_path']
+    "agent_execution_total", "Total number of agent executions", ["status", "execution_path"]
 )
 
-agent_execution_duration = Histogram(
-    'agent_execution_duration_seconds',
-    'Agent execution duration',
-    ['execution_path']
-)
+agent_execution_duration = Histogram("agent_execution_duration_seconds", "Agent execution duration", ["execution_path"])
 
-agent_cost_total = Counter(
-    'agent_cost_total_usd',
-    'Total cost in USD',
-    ['model']
-)
+agent_cost_total = Counter("agent_cost_total_usd", "Total cost in USD", ["model"])
 
 agent_token_usage = Counter(
-    'agent_token_usage_total',
-    'Total token usage',
-    ['model', 'type']  # type: prompt/completion
+    "agent_token_usage_total",
+    "Total token usage",
+    ["model", "type"],  # type: prompt/completion
 )
 
-agent_quality_score = Gauge(
-    'agent_quality_score',
-    'Quality check score',
-    ['dimension']
-)
+agent_quality_score = Gauge("agent_quality_score", "Quality check score", ["dimension"])
 
-agent_retry_total = Counter(
-    'agent_retry_total',
-    'Total number of retries',
-    ['reason']
-)
+agent_retry_total = Counter("agent_retry_total", "Total number of retries", ["reason"])
 
 
 class AgentMonitor:
     """Agent 监控器"""
-    
+
     def record_execution(
         self,
         status: str,
@@ -463,11 +457,11 @@ class AgentMonitor:
             status=status,
             execution_path=execution_path,
         ).inc()
-        
+
         agent_execution_duration.labels(
             execution_path=execution_path,
         ).observe(duration)
-    
+
     def record_cost(
         self,
         model: str,
@@ -477,24 +471,24 @@ class AgentMonitor:
     ):
         """记录成本"""
         agent_cost_total.labels(model=model).inc(cost)
-        
+
         agent_token_usage.labels(
             model=model,
             type="prompt",
         ).inc(prompt_tokens)
-        
+
         agent_token_usage.labels(
             model=model,
             type="completion",
         ).inc(completion_tokens)
-    
+
     def record_quality(self, dimensions: Dict[str, float]):
         """记录质量分数"""
         for dimension, score in dimensions.items():
             agent_quality_score.labels(
                 dimension=dimension,
             ).set(score)
-    
+
     def record_retry(self, reason: str):
         """记录重试"""
         agent_retry_total.labels(reason=reason).inc()

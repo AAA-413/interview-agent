@@ -257,7 +257,7 @@ BASE_STRATEGIES = [
 修改 `scripts/rag_eval_runner.py` 中的常量：
 
 ```python
-TOP_K_VARIANTS = [2, 4, 6, 8, 10]       # 修改为你需要的值
+TOP_K_VARIANTS = [2, 4, 6, 8, 10]  # 修改为你需要的值
 GRAPH_WEIGHT_VARIANTS = [0.3, 0.5, 0.7]  # 修改为你需要的值
 ```
 
