@@ -14,7 +14,7 @@
  * 不做自动重连 — 上层 hook 决定降级到 batch 模式还是提示用户
  */
 
-import { apiUrl } from './request';
+import { apiUrl, wsUrl } from './request';
 import type { STTEvent, STTStartMessage, STTEndMessage, VoiceStreamListeners } from '../types/voiceStream';
 
 const WS_PATH = '/api/interview/voice/stream';
@@ -38,7 +38,8 @@ export class VoiceStreamClient {
   connect(token: string, config: VoiceStreamConfig): Promise<void> {
     return new Promise((resolve, reject) => {
       const path = config.path ?? WS_PATH;
-      const url = `${apiUrl(path)}?token=${encodeURIComponent(token)}`;
+      // 用 wsUrl 而非 apiUrl：避免 Vite dev proxy 丢 binary 帧
+      const url = `${wsUrl(path)}?token=${encodeURIComponent(token)}`;
       const ws = new WebSocket(url);
       // 注意：浏览器 WebSocket API 不支持设置 header，token 只能走 query
       this.ws = ws;

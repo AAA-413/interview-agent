@@ -183,13 +183,12 @@ class VoiceStreamingService:
                 now = time.monotonic()
 
                 # 周期性 partial 推理
+                # 注意：每次都转写完整 buffer，不能用"最后 5s 滚动窗口"——
+                # 那样会丢掉前面的内容（用户测试发现长语音只识别最后一句）
+                # SenseVoice CPU 17x 实时，单次推理 ~60ms/秒音频，O(n²) 可控
                 if len(buffer) > 0 and (now - last_infer_at) * 1000 >= self._INFER_INTERVAL_MS:
                     last_infer_at = now
-                    audio_chunk = (
-                        bytes(buffer[-rolling_window_bytes:])
-                        if len(buffer) > rolling_window_bytes
-                        else bytes(buffer)
-                    )
+                    audio_chunk = bytes(buffer)
                     try:
                         text = await asyncio.to_thread(
                             self._transcribe_sync, audio_chunk, sample_rate
