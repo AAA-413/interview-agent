@@ -7,8 +7,6 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock3,
-  Mic,
-  MicOff,
   Lightbulb,
   RotateCcw,
   Trophy,
@@ -16,6 +14,10 @@ import {
   Library,
 } from 'lucide-react';
 import { interviewApi } from '../api/interview';
+import { VoiceMicButton } from '../components/VoiceMicButton';
+import { VoiceStatusLine } from '../components/VoiceStatusLine';
+import { useVoiceInput } from '../hooks/useVoiceInput';
+import { cleanTranscript } from '../utils/voice';
 import type {
   DynamicCoachHint,
   DynamicReportDTO,
@@ -32,34 +34,6 @@ const PROCESSING_STATUSES = new Set(['PENDING', 'PROCESSING']);
 
 type VoiceState = 'idle' | 'recording' | 'transcribing';
 type DynamicReviewItem = { turn: DynamicTurnDTO; answer: string; score: number | null };
-
-const VOICE_ERROR_MESSAGES: Record<string, string> = {
-  NotAllowedError: '麦克风权限被拒绝，请在浏览器地址栏允许后再试',
-  NotFoundError: '没有检测到可用麦克风',
-  NotReadableError: '麦克风正在被其他应用占用',
-  SecurityError: '当前页面不允许访问麦克风',
-};
-
-const getPreferredAudioMimeType = () => {
-  if (typeof MediaRecorder === 'undefined') return '';
-  const candidates = [
-    'audio/webm;codecs=opus',
-    'audio/webm',
-    'audio/ogg;codecs=opus',
-    'audio/mp4',
-  ];
-  return candidates.find(type => MediaRecorder.isTypeSupported(type)) || '';
-};
-
-const getAudioFileExtension = (mimeType: string) => {
-  if (mimeType.includes('ogg')) return 'ogg';
-  if (mimeType.includes('mp4')) return 'm4a';
-  if (mimeType.includes('mpeg')) return 'mp3';
-  if (mimeType.includes('wav')) return 'wav';
-  return 'webm';
-};
-
-const cleanTranscript = (text: string) => text.replace(/\s+/g, ' ').trim();
 
 const dynamicTypeLabel: Record<string, string> = {
   PROJECT: '项目',
@@ -160,9 +134,6 @@ export default function InterviewPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [voiceState, setVoiceState] = useState<VoiceState>('idle');
-  const [voiceError, setVoiceError] = useState('');
-  const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [completed, setCompleted] = useState(false);
   const [report, setReport] = useState<InterviewReportDTO | null>(null);
   const [questionHistory, setQuestionHistory] = useState<{ question: InterviewQuestionDTO; answer: string }[]>([]);
@@ -171,11 +142,13 @@ export default function InterviewPage() {
   const [ragLoadingTopicId, setRagLoadingTopicId] = useState<number | null>(null);
   const [retryingDynamicTopicId, setRetryingDynamicTopicId] = useState<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const recordingTimerRef = useRef<number | null>(null);
-  const shouldTranscribeRef = useRef(false);
+
+  // 流式 STT hook（mode: 'stream'，失败时 UI 层可考虑切回 'batch'）
+  const voice = useVoiceInput({
+    mode: 'stream',
+    onCommit: (text) => appendTranscript(text),
+    getToken: () => localStorage.getItem('access_token'),
+  });
 
   useEffect(() => {
     if (!sessionId) {
@@ -215,12 +188,7 @@ export default function InterviewPage() {
 
   useEffect(() => {
     return () => {
-      shouldTranscribeRef.current = false;
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
-      }
-      releaseVoiceStream();
-      clearRecordingTimer();
+      // voice hook 自己管理麦克风 / AudioContext / WS 清理
     };
   }, []);
 
@@ -344,124 +312,20 @@ export default function InterviewPage() {
   };
 
   const clearRecordingTimer = () => {
-    if (recordingTimerRef.current !== null) {
-      window.clearInterval(recordingTimerRef.current);
-      recordingTimerRef.current = null;
-    }
+    // 保留占位（旧 hook 残留清理），由 voice hook 自身管理
   };
 
   const releaseVoiceStream = () => {
-    mediaStreamRef.current?.getTracks().forEach(track => track.stop());
-    mediaStreamRef.current = null;
-  };
-
-  const transcribeAudioBlob = async (blob: Blob) => {
-    if (blob.size < 1024) {
-      setVoiceError('录音时间太短，可以再说一次');
-      setVoiceState('idle');
-      return;
-    }
-
-    setVoiceState('transcribing');
-    setVoiceError('');
-    try {
-      const mimeType = blob.type || 'audio/webm';
-      const extension = getAudioFileExtension(mimeType);
-      const audioFile = new File([blob], `interview-answer-${Date.now()}.${extension}`, { type: mimeType });
-      const result = await interviewApi.transcribeVoice(audioFile);
-      const transcript = cleanTranscript(result.text);
-      if (!transcript) {
-        setVoiceError('这段录音没有识别出文字，可以靠近麦克风再试一次');
-        return;
-      }
-      appendTranscript(transcript);
-    } catch (err) {
-      setVoiceError(err instanceof Error ? err.message : '语音转文字失败，请重新录音或手动输入');
-    } finally {
-      setVoiceState('idle');
-      setRecordingSeconds(0);
-    }
-  };
-
-  const stopVoiceRecording = () => {
-    const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state === 'inactive') return;
-    recorder.stop();
-  };
-
-  const startVoiceRecording = async () => {
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-      setVoiceError('当前浏览器不支持录音，请换 Chrome/Edge 或手动输入');
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      const mimeType = getPreferredAudioMimeType();
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-
-      audioChunksRef.current = [];
-      shouldTranscribeRef.current = true;
-      mediaStreamRef.current = stream;
-      mediaRecorderRef.current = recorder;
-
-      recorder.ondataavailable = event => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      recorder.onerror = () => {
-        setVoiceError('录音失败，请重新授权麦克风或手动输入');
-        setVoiceState('idle');
-        clearRecordingTimer();
-        releaseVoiceStream();
-      };
-
-      recorder.onstop = () => {
-        clearRecordingTimer();
-        releaseVoiceStream();
-        const shouldTranscribe = shouldTranscribeRef.current;
-        shouldTranscribeRef.current = false;
-        mediaRecorderRef.current = null;
-
-        if (!shouldTranscribe) return;
-        const audioType = recorder.mimeType || mimeType || 'audio/webm';
-        const blob = new Blob(audioChunksRef.current, { type: audioType });
-        audioChunksRef.current = [];
-        void transcribeAudioBlob(blob);
-      };
-
-      setVoiceError('');
-      setRecordingSeconds(0);
-      setVoiceState('recording');
-      recordingTimerRef.current = window.setInterval(() => {
-        setRecordingSeconds(value => value + 1);
-      }, 1000);
-      recorder.start(1000);
-    } catch (err) {
-      const name = err instanceof DOMException ? err.name : '';
-      setVoiceError(VOICE_ERROR_MESSAGES[name] || '无法打开麦克风，请检查权限后再试');
-      setVoiceState('idle');
-      clearRecordingTimer();
-      releaseVoiceStream();
-    }
+    // 保留占位（旧 hook 残留清理），由 voice hook 自身管理
   };
 
   const toggleVoiceInput = () => {
-    if (voiceState === 'recording') {
-      stopVoiceRecording();
-      return;
+    if (voice.voiceState === 'idle' || voice.voiceState === 'error') {
+      void voice.start();
+    } else if (voice.voiceState === 'recording' || voice.voiceState === 'streaming') {
+      void voice.stop();
     }
-    if (voiceState === 'idle') {
-      void startVoiceRecording();
-    }
+    // transcribing 状态：禁止切换
   };
 
   const loadRagInsight = async (topicId: number | null | undefined) => {
@@ -513,7 +377,7 @@ export default function InterviewPage() {
       return;
     }
 
-    if (!sessionId || !answer.trim() || submitting || !currentQuestion || voiceState !== 'idle') return;
+    if (!sessionId || !answer.trim() || submitting || !currentQuestion || voice.voiceState !== 'idle') return;
     setSubmitting(true);
     setError('');
     try {
@@ -538,7 +402,7 @@ export default function InterviewPage() {
   };
 
   const handleDynamicSubmit = async () => {
-    if (!sessionId || !answer.trim() || submitting || !dynamicTurn?.id || voiceState !== 'idle') return;
+    if (!sessionId || !answer.trim() || submitting || !dynamicTurn?.id || voice.voiceState !== 'idle') return;
     setSubmitting(true);
     setError('');
     try {
@@ -1100,32 +964,25 @@ export default function InterviewPage() {
           <div className="flex flex-col gap-3 border-t border-slate-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
+                <VoiceMicButton
+                  voiceState={voice.voiceState}
                   onClick={toggleVoiceInput}
-                  disabled={submitting || voiceState === 'transcribing'}
-                  className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
-                    voiceState === 'recording'
-                      ? 'bg-red-50 text-red-600 hover:bg-red-100'
-                      : voiceState === 'transcribing' || submitting
-                        ? 'cursor-not-allowed bg-slate-50 text-slate-300'
-                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
-                  title="录音后上传到本地语音模型转文字"
-                >
-                  {voiceState === 'recording' ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-                  {voiceState === 'recording' ? '停止录音' : voiceState === 'transcribing' ? '转写中...' : '语音输入'}
-                </button>
+                  disabled={submitting}
+                />
                 <span className="text-xs text-slate-400">Ctrl + Enter 提交</span>
-                {voiceState === 'recording' && <span className="text-xs font-medium text-primary-600">录音中 {recordingSeconds}s</span>}
+                <VoiceStatusLine
+                  voiceState={voice.voiceState}
+                  recordingSeconds={voice.recordingSeconds}
+                  partialText={voice.partialText}
+                  voiceError={voice.voiceError}
+                />
               </div>
-              {voiceError && <p className="mt-2 text-xs text-orange-600">{voiceError}</p>}
             </div>
             <button
               onClick={handleSubmit}
-              disabled={!answer.trim() || submitting || voiceState !== 'idle' || !dynamicTurn}
+              disabled={!answer.trim() || submitting || voice.voiceState !== 'idle' || !dynamicTurn}
               className={`flex items-center gap-2 rounded-xl px-6 py-2.5 text-sm font-medium transition-all ${
-                !answer.trim() || submitting || voiceState !== 'idle' || !dynamicTurn
+                !answer.trim() || submitting || voice.voiceState !== 'idle' || !dynamicTurn
                   ? 'cursor-not-allowed bg-slate-100 text-slate-400'
                   : 'bg-gradient-to-r from-primary-600 to-primary-500 text-white shadow-lg shadow-primary-500/25 hover:from-primary-700 hover:to-primary-600'
               }`}
@@ -1417,38 +1274,25 @@ export default function InterviewPage() {
         <div className="flex flex-col gap-3 pt-3 border-t border-slate-100 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
+              <VoiceMicButton
+                voiceState={voice.voiceState}
                 onClick={toggleVoiceInput}
-                disabled={submitting || voiceState === 'transcribing'}
-                className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${
-                  voiceState === 'recording'
-                    ? 'bg-red-50 text-red-600 hover:bg-red-100'
-                    : voiceState === 'transcribing' || submitting
-                      ? 'bg-slate-50 text-slate-300 cursor-not-allowed'
-                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-                title="录音后上传到本地语音模型转文字"
-              >
-                {voiceState === 'recording' ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                {voiceState === 'recording' ? '停止录音' : voiceState === 'transcribing' ? '转写中...' : '语音输入'}
-              </button>
+                disabled={submitting}
+              />
               <span className="text-xs text-slate-400">Ctrl + Enter 提交</span>
-              {voiceState === 'recording' && (
-                <span className="text-xs font-medium text-primary-600">录音中 {recordingSeconds}s</span>
-              )}
-              {voiceState === 'transcribing' && <span className="text-xs font-medium text-primary-600">正在转文字...</span>}
+              <VoiceStatusLine
+                voiceState={voice.voiceState}
+                recordingSeconds={voice.recordingSeconds}
+                partialText={voice.partialText}
+                voiceError={voice.voiceError}
+              />
             </div>
-            {voiceState === 'idle' && !voiceError && (
-              <p className="mt-2 text-xs text-slate-400">点击录音，说完后停止，会自动转成文字并填入回答框。</p>
-            )}
-            {voiceError && <p className="mt-2 text-xs text-orange-600">{voiceError}</p>}
           </div>
           <button
             onClick={handleSubmit}
-            disabled={!answer.trim() || submitting || voiceState !== 'idle'}
+            disabled={!answer.trim() || submitting || voice.voiceState !== 'idle'}
             className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-medium text-sm transition-all ${
-              !answer.trim() || submitting || voiceState !== 'idle'
+              !answer.trim() || submitting || voice.voiceState !== 'idle'
                 ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
                 : 'bg-gradient-to-r from-primary-600 to-primary-500 text-white shadow-lg shadow-primary-500/25 hover:from-primary-700 hover:to-primary-600'
             }`}

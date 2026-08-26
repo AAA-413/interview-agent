@@ -13,6 +13,7 @@ class ErrorCode(IntEnum):
     LLM_TIMEOUT = 1002
     LLM_RATE_LIMIT = 1003
     EMBEDDING_FAILED = 1004
+    STT_STREAM_ERROR = 1005  # 流式 STT (WebSocket) 处理异常
 
     # 简历相关错误 (2xxx)
     RESUME_NOT_FOUND = 2001

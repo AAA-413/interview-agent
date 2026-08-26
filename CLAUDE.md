@@ -6,6 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 AI Interview Platform (智能 AI 面试官平台) — a full-stack application using LLMs for resume analysis and simulated technical interviews. Python 3.11+, FastAPI backend + React 18 frontend.
 
+## Git Workflow
+
+**新功能先切到 develop 分支，不要直接在 main 上改。** 详细规范见 [`git-workflow.md`](git-workflow.md)（分支策略、commit 格式、合并策略）。要点速记：
+- 永久分支：`main`（生产）、`develop`（集成）
+- 功能分支：`feat/*`、`fix/*`、`refactor/*`、`chore/*` — 都从 develop 切出
+- 热修例外：`hotfix/*` 从 main 切出，同时 merge 回 main + develop
+- Commit 格式：`<type>(<scope>): <subject>`，例如 `feat(interview): 新增动态面试复盘`
+- 功能分支合入 develop 用 `--no-ff` merge；功能分支同步 develop 用 rebase
+- 发版：`develop` → `release/<version>` → `main`（`--no-ff` + tag）→ 同步回 develop
+
 ## Commands
 
 ### Backend (local dev)
@@ -105,6 +115,21 @@ Interview directions defined in `skills/<id>/` with:
 - Primary: DeepSeek (`deepseek-chat`) via OpenAI-compatible API
 - Embedding: Zhipu Embedding-3 (2048-dim, truncated to 1536 for pgvector), DashScope fallback, hash-vector ultimate fallback
 - Prompt templates: markdown files in `app/prompts/` — paired `*-system.md` / `*-user.md` for each use case
+
+## Voice / STT
+
+数字人面试场景的语音输入链路。两条模式：
+
+- **流式（主用）**：`POST /api/interview/voice/stream` 不存在；改用 `WS /api/interview/voice/stream?token=<jwt>`
+  - 后端：[`app/modules/interview/ws_router.py`](app/modules/interview/ws_router.py) + [`voice_streaming_service.py`](app/modules/interview/voice_streaming_service.py)（FunASR SenseVoice-Small）
+  - 前端：浏览器 `AudioWorklet` (`public/audio-worklets/pcm-capture.js`) 抓 PCM → 200ms 切片 → `WebSocket.send` Int16 LE 16kHz
+  - hook：[`useVoiceInput.ts`](frontend/src/hooks/useVoiceInput.ts) 统一管理 AudioContext / WS / 状态机
+  - 状态：`idle → streaming → idle`（或 `error`）
+- **整段（fallback）**：`POST /api/interview/voice/transcribe` 仍保留，用 faster-whisper small + CPU + int8 整段转写
+
+WS 鉴权：HTTP 的 `auth_middleware` 不覆盖 WebSocket，需在 handler 内手动 `decode_access_token(token)`，失败用 close code 1008。
+
+详见 [docs/research/stt-selection-report.json](docs/research/stt-selection-report.json) 的选型分析。
 
 ## Environment Variables
 

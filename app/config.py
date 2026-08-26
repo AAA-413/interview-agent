@@ -128,6 +128,17 @@ class VoiceInterviewSettings(BaseSettings):
     max_wait_for_continuation_ms: int = 7000
     ai_question_max_chars: int = 120
 
+    # ---- 流式 STT (FunASR) ----
+    # 主用模型: SenseVoice-Small（中文 CER 7.81%，CPU 17x 实时，多语种/情感标签）
+    funasr_model: str = "iic/SenseVoiceSmall"
+    funasr_device: str = "cpu"  # cpu / cuda
+    funasr_quantize: bool = True  # int8 量化（CPU 模式推荐）
+    funasr_hf_endpoint: str = "https://hf-mirror.com"
+    # WebSocket 流式分块
+    streaming_stt_chunk_ms: int = 200  # 每帧时长 (ms)
+    streaming_stt_sample_rate: int = 16000  # PCM 采样率 (Hz)
+    streaming_stt_max_session_seconds: int = 600  # 单次会话硬上限 (s)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
