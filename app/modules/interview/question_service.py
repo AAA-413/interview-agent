@@ -12,6 +12,7 @@ from app.common.ai.structured_output import structured_output_invoker
 from app.common.error_code import ErrorCode
 from app.common.exception import BusinessException
 from app.common.prompt_utils import load_prompt, render_template
+from app.common.single_flight import build_single_flight_key, single_flight
 from app.config import settings
 from app.modules.interview.schemas import (
     CategoryDTO,
@@ -28,6 +29,22 @@ _PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
 DEFAULT_QUESTION_TYPE = "GENERAL"
 MAX_FOLLOW_UP_COUNT = 2
 RESUME_QUESTION_RATIO = 0.6
+
+# 放弃性回答：直接短路不追问（追问也无法获得有效信息），省一次 LLM 调用
+_GIVEUP_MARKERS = (
+    "不知道",
+    "不会",
+    "不清楚",
+    "没学过",
+    "没接触过",
+    "忘记了",
+    "跳过",
+    "不懂",
+    "pass",
+    "skip",
+    "n/a",
+)
+_GIVEUP_ANSWER_MAX_LENGTH = 20
 
 GENERIC_MODE_SYSTEM_APPEND = """
 
@@ -625,12 +642,48 @@ class InterviewQuestionService:
         if follow_up_count >= MAX_FOLLOW_UP_COUNT:
             return None
 
+        # 代码级规则短路：放弃性回答直接不追问，避免无意义的 LLM 调用
+        if self._is_giveup_answer(user_answer):
+            logger.info("放弃性回答，短路跳过追问: %s", (user_answer or "").strip()[:30])
+            return None
+
         try:
             from app.common.ai.llm_provider import llm_registry
 
             model = llm_registry.get_chat_model(None)
 
-            user_prompt = f"""## 原问题
+            # 内容指纹：同一题 + 同一答案 + 相同追问次数 → 相同 key，跨实例合并
+            single_flight_key = build_single_flight_key(
+                "followup", question, user_answer, question_type, follow_up_count
+            )
+            raw = await single_flight(
+                single_flight_key,
+                lambda: self._invoke_follow_up_model(model, question, user_answer, question_type, follow_up_count),
+            )
+            if not raw:
+                return None
+            dto = _FollowUpDecisionDTO.model_validate_json(raw)
+
+            if dto.should_follow_up and dto.follow_up_question:
+                logger.info("生成追问: 原问题=%s, 原因=%s", question[:30], dto.reason)
+                return dto
+            else:
+                logger.info("不追问: 原因=%s", dto.reason)
+                return None
+        except Exception as e:
+            logger.error("追问生成失败: %s", e)
+            return None
+
+    async def _invoke_follow_up_model(
+        self,
+        model: ChatOpenAI,
+        question: str,
+        user_answer: str,
+        question_type: str,
+        follow_up_count: int,
+    ) -> str:
+        """调用追问决策 LLM，返回序列化后的 JSON 字符串（供 single-flight 合并复用）。"""
+        user_prompt = f"""## 原问题
 {question}
 
 ## 候选人回答
@@ -642,25 +695,26 @@ class InterviewQuestionService:
 ## 问题类型
 {question_type}"""
 
-            dto = await structured_output_invoker.invoke(
-                chat_model=model,
-                system_prompt=self._follow_up_decision_prompt,
-                user_prompt=user_prompt,
-                output_model=_FollowUpDecisionDTO,
-                error_code=ErrorCode.INTERVIEW_QUESTION_GENERATION_FAILED,
-                error_prefix="追问决策失败：",
-                log_context="追问决策",
-            )
+        dto = await structured_output_invoker.invoke(
+            chat_model=model,
+            system_prompt=self._follow_up_decision_prompt,
+            user_prompt=user_prompt,
+            output_model=_FollowUpDecisionDTO,
+            error_code=ErrorCode.INTERVIEW_QUESTION_GENERATION_FAILED,
+            error_prefix="追问决策失败：",
+            log_context="追问决策",
+        )
+        return dto.model_dump_json()
 
-            if dto.should_follow_up and dto.follow_up_question:
-                logger.info("生成追问: 原问题=%s, 原因=%s", question[:30], dto.reason)
-                return dto
-            else:
-                logger.info("不追问: 原因=%s", dto.reason)
-                return None
-        except Exception as e:
-            logger.error("追问生成失败: %s", e)
-            return None
+    @staticmethod
+    def _is_giveup_answer(answer: str | None) -> bool:
+        if not answer or not answer.strip():
+            return True
+        text = answer.strip()
+        if len(text) > _GIVEUP_ANSWER_MAX_LENGTH:
+            return False
+        lowered = text.lower()
+        return any(marker in lowered for marker in _GIVEUP_MARKERS)
 
 
 interview_question_service = InterviewQuestionService()
