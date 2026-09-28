@@ -16,7 +16,6 @@ import json
 
 import pytest
 
-from app.common.single_flight import build_single_flight_key
 from app.modules.interview import evaluation as evaluation_module
 from app.modules.interview.dynamic_service import DynamicAnswerEvaluationService
 from app.modules.interview.evaluation.hybrid_evaluator import (
@@ -535,8 +534,9 @@ async def test_evaluator_uses_given_provider_and_provider_in_key(monkeypatch):
     assert invoker.calls[0]["chat_model"] == "model-for-custom-provider"
     key = single_flight.keys[0]
     assert key.startswith("answer-evaluate|"), "evaluator 必须复用 SingleFlight"
-    # key 是内容哈希：provider 必须参与指纹（见 test_single_flight_key_differs_by_provider）
-    assert key != build_single_flight_key("answer-evaluate", EVALUATOR_VERSION, "session-1")
+    # key 的其它参与项分别由后面的专项测试覆盖：
+    # provider 见 test_single_flight_key_differs_by_provider，
+    # evaluator 版本见 test_single_flight_key_includes_evaluator_version
 
 
 async def test_single_flight_key_differs_by_provider(monkeypatch):
@@ -555,6 +555,33 @@ async def test_single_flight_key_differs_by_provider(monkeypatch):
     await service.evaluate(_snapshot(), STRONG_PROJECT_ANSWER, llm_provider="provider-b")
 
     assert single_flight.keys[0] != single_flight.keys[1], "不同 provider 不得共享评分结果"
+
+
+async def test_single_flight_key_includes_evaluator_version(monkeypatch):
+    """EVALUATOR_VERSION 必须参与 key。
+
+    否则改了 evaluator 语义却不 bump 版本时，滚动部署期间新代码会命中旧 evaluator
+    写入 Redis 的缓存结果（result TTL 默认 600s）。
+    """
+    llm = _assessments(
+        {"authenticity": 70, "technical_depth": 70, "communication_structure": 70},
+        {
+            "authenticity": ["这个异步任务队列是我负责设计和落地的"],
+            "technical_depth": ["每个任务带唯一 message_id 做幂等"],
+            "communication_structure": ["消费端用 Consumer Group + XREADGROUP 多实例并行消费"],
+        },
+    )
+    service, _, single_flight = _service(monkeypatch, llm)
+    monkeypatch.setattr("app.common.ai.llm_provider.llm_registry", _StubRegistry())
+
+    await service.evaluate(_snapshot(), STRONG_PROJECT_ANSWER, llm_provider="provider-a")
+    monkeypatch.setattr(evaluation_module.hybrid_evaluator, "EVALUATOR_VERSION", "hybrid-evaluator-bumped")
+    await service.evaluate(_snapshot(), STRONG_PROJECT_ANSWER, llm_provider="provider-a")
+
+    assert single_flight.keys[0] != single_flight.keys[1], "evaluator 版本变化必须换 key"
+
+    # 当前版本号已 bump 到 v2（本轮语义变更：unique evidence / 无证据正向维度 / rubric 映射）
+    assert EVALUATOR_VERSION == "hybrid-evaluator-v2"
 
 
 # ---------------- F. Failure / fallback ----------------

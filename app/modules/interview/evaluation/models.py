@@ -16,7 +16,12 @@ from pydantic import BaseModel, Field
 from app.modules.interview.schemas import DynamicTopicDTO, DynamicTurnDTO
 
 # evaluator 版本：参与 SingleFlight key，改语义/权重/阈值时必须 bump
-EVALUATOR_VERSION = "hybrid-evaluator-v1"
+#
+# v2（PR2 review round 4）改变了实际评分语义：unique evidence span 校准、
+# 高分证据门槛、UNGROUNDED_POSITIVE_DIMENSION 拒绝、previous score 移出 prompt、
+# rubric dimension mapping。SingleFlight 会把结果写入 Redis（result TTL 默认 600s），
+# 版本号不变时滚动部署期间新代码会读到旧 evaluator 写入的缓存结果。
+EVALUATOR_VERSION = "hybrid-evaluator-v2"
 
 # ---------------- active dimensions & weights ----------------
 
