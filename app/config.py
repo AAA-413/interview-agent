@@ -86,6 +86,10 @@ class InterviewSettings(BaseSettings):
     question_realizer_enabled: bool = True
     # 单次 QuestionRealizer 的超时上限（秒），超时即回退模板，避免卡住答题链路
     question_realizer_timeout_seconds: float = 25.0
+    # Hybrid Answer Evaluator（LLM 语义评分）：关闭时直接走 heuristic fallback，不是错误
+    answer_evaluator_enabled: bool = True
+    # 单次 answer evaluation 的超时上限（秒），超时即回退 heuristic
+    answer_evaluator_timeout_seconds: float = 12.0
 
 
 class ResumeSettings(BaseSettings):
