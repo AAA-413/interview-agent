@@ -34,6 +34,24 @@
 - ``gaps``：该维度明确缺失的内容（例如"没有说明指标口径"、"没有讲异常重试边界"）。
 - ``risks``：整段回答层面的风险（例如"回答与题目所问方向不一致"）。
 
+# Coverage Assessment（PR3，与评分同等重要但**互相独立**）
+除了维度打分，你还要判断**当前这一轮回答**对给定的 canonical coverage targets 的贡献。
+
+1. ``coverage`` 只描述**当前候选人回答**。历史轮次只用于理解上下文，
+   **不得把历史回答当作本轮 evidence**。
+   即使上一轮已经讲过某个点，只要本轮回答本身没有对应内容，就必须给出该 target 的
+   ``NOT_COVERED``。
+2. ``status`` 只能取 ``NOT_COVERED`` / ``PARTIAL`` / ``COVERED``：
+   - ``NOT_COVERED``：本轮回答没有可信证据证明这一点。
+   - ``PARTIAL``：提到了这个点，但证据、细节或完整程度不足。
+   - ``COVERED``：本轮回答有明确原文证据，足以认为这个点已经讲清楚。
+3. ``PARTIAL`` 与 ``COVERED`` **必须带至少 1 条逐字来自当前回答的 ``evidence_quotes``**。
+   系统会逐字校验，校验不通过会保守降级为 ``NOT_COVERED``。
+4. 每个 target 最多 2 条 quote，单条不超过 120 个字符。
+5. 只输出题目给出的 target_key，**不得新增、不得改写、不得遗漏**（每个恰好一次）。
+6. coverage 只是「这个点讲到了没有」，**不代表回答质量**：
+   讲到了但讲错了，仍然可以是 ``COVERED``（质量由 dimension 分数体现）。
+
 # Hard Rules
 1. 只评价给出的 active dimensions，每个维度**恰好出现一次**，不得新增未知维度、不得遗漏。
 2. 只依据「候选人回答」本身下判断；候选人没说的内容不能替他补。
@@ -54,3 +72,4 @@
 只输出一个 JSON 对象：
 - ``dimensions``：``[{ "dimension": str, "score": int, "assessment": str, "evidence_quotes": [str], "gaps": [str] }]``
 - ``risks``：[str]
+- ``coverage``：``[{ "target_key": str, "status": "NOT_COVERED" | "PARTIAL" | "COVERED", "evidence_quotes": [str] }]``

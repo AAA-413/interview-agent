@@ -37,12 +37,17 @@ from app.modules.interview.question_realizer import (
 )
 from app.modules.interview.question_service import InterviewQuestionService, interview_question_service
 from app.modules.interview.schemas import (
+    COVERAGE_STATUS_COVERED,
+    COVERAGE_STATUS_PARTIAL,
     ConversationTurn,
     DynamicDecisionDTO,
     DynamicTopicDTO,
     DynamicTurnDTO,
     DynamicTurnEvaluationDTO,
+    TopicCoverageStateDTO,
 )
+from app.modules.interview.topic_state.models import build_coverage_state, initial_coverage_points
+from app.modules.interview.topic_state.tracker import topic_coverage_tracker
 
 REDIS_STREAMS_ANSWER = (
     "我们后来用 Redis Streams 做异步任务队列，Producer 用 XADD 写，"
@@ -132,6 +137,14 @@ def _turn(turn_order: int, question: str, answer: str, turn_type: str = TurnType
         signals={"strengths": ["能说明整体链路"], "gaps": ["缺少结果指标"]},
         evaluation={"signals": {"strengths": ["能说明整体链路"]}},
     )
+
+
+def _coverage(question_type: str = "PROJECT", **statuses: str) -> TopicCoverageStateDTO:
+    """构造指定 target 状态的 coverage（未指定的保持 NOT_COVERED）。"""
+    points = initial_coverage_points(question_type)
+    for key, status in statuses.items():
+        points[key] = points[key].model_copy(update={"status": status})
+    return build_coverage_state(points, question_type)
 
 
 def _evaluation() -> DynamicTurnEvaluationDTO:
@@ -300,7 +313,9 @@ async def test_follow_up_falls_back_to_template_on_timeout(monkeypatch):
 
     result = await _realize_with_fake(monkeypatch, _timeout)
 
-    assert result == StrictInterviewPolicy._followup_question(_topic(), _evaluation(), followup_number=1)
+    assert result == StrictInterviewPolicy._followup_question(
+        _topic(), _evaluation(), followup_number=1, follow_up_intent="VERIFY_IMPLEMENTATION"
+    )
 
 
 async def test_follow_up_falls_back_to_template_on_exception(monkeypatch):
@@ -309,7 +324,9 @@ async def test_follow_up_falls_back_to_template_on_exception(monkeypatch):
 
     result = await _realize_with_fake(monkeypatch, _boom)
 
-    assert result == StrictInterviewPolicy._followup_question(_topic(), _evaluation(), followup_number=1)
+    assert result == StrictInterviewPolicy._followup_question(
+        _topic(), _evaluation(), followup_number=1, follow_up_intent="VERIFY_IMPLEMENTATION"
+    )
 
 
 async def test_follow_up_falls_back_to_template_on_invalid_structured_output(monkeypatch):
@@ -319,7 +336,9 @@ async def test_follow_up_falls_back_to_template_on_invalid_structured_output(mon
     result = await _realize_with_fake(monkeypatch, _invalid)
 
     assert result
-    assert result == StrictInterviewPolicy._followup_question(_topic(), _evaluation(), followup_number=1)
+    assert result == StrictInterviewPolicy._followup_question(
+        _topic(), _evaluation(), followup_number=1, follow_up_intent="VERIFY_IMPLEMENTATION"
+    )
 
 
 async def test_follow_up_uses_realized_question_when_available(monkeypatch):
@@ -355,24 +374,65 @@ def test_strict_policy_stops_following_up_after_max():
     assert decision.follow_up_intent is None
 
 
-def test_strict_policy_emits_intent_instead_of_question():
+def test_strict_policy_emits_intent_and_coverage_target_instead_of_question():
+    """PR3：coverage 未完整时，Policy 的 intent 来自 canonical target（而非自由文本 gap）。"""
+    coverage = _coverage(
+        PROJECT_GOAL=COVERAGE_STATUS_COVERED,
+        PROJECT_OWNERSHIP=COVERAGE_STATUS_COVERED,
+        PROJECT_RESULT_VALIDATION=COVERAGE_STATUS_PARTIAL,
+        PROJECT_TRADEOFF_OR_FAILURE=COVERAGE_STATUS_COVERED,
+    )
+    topic = _topic()
+    answered = [_turn(1, "主问题", "第一轮回答内容足够长，用于通过评估的长度校验。")]
+    topic_state = topic_coverage_tracker.build_state(topic=topic, answered_turns=answered, coverage=coverage)
+
+    decision = StrictInterviewPolicy().decide(
+        topic=topic,
+        turn=DynamicTurnDTO(turn_type=TurnType.MAIN.value, turn_order=1, question="主问题"),
+        evaluation=_evaluation(),
+        answered_turns_after_current=answered,
+        has_next_topic=True,
+        topic_state=topic_state,
+    )
+
+    assert decision.action == "FOLLOW_UP"
+    assert decision.next_question is None, "Policy 不产出措辞"
+    # PROJECT_RESULT_VALIDATION → VERIFY_METRIC（canonical intent mapping）
+    assert decision.follow_up_intent == "VERIFY_METRIC"
+    assert decision.target_coverage_key == "PROJECT_RESULT_VALIDATION"
+    assert decision.target_gap == "能给出结果或验证方式"
+
+
+def test_strict_policy_falls_back_to_gap_intent_when_coverage_complete():
+    """coverage 完整但质量不达标 → 没有 target，退回缺口驱动的 intent。"""
+    coverage = _coverage(
+        PROJECT_GOAL=COVERAGE_STATUS_COVERED,
+        PROJECT_OWNERSHIP=COVERAGE_STATUS_COVERED,
+        PROJECT_RESULT_VALIDATION=COVERAGE_STATUS_COVERED,
+        PROJECT_TRADEOFF_OR_FAILURE=COVERAGE_STATUS_COVERED,
+    )
     evaluation = DynamicTurnEvaluationDTO(
         ability_score=52,
         feedback="提到了效果，但没有说明验证方式。",
         signals={"gaps": ["缺少结果指标"]},
     )
+    topic = _topic()
+    answered = [_turn(1, "主问题", "第一轮回答内容足够长，用于通过评估的长度校验。")]
+    topic_state = topic_coverage_tracker.build_state(topic=topic, answered_turns=answered, coverage=coverage)
+
     decision = StrictInterviewPolicy().decide(
-        topic=_topic(),
+        topic=topic,
         turn=DynamicTurnDTO(turn_type=TurnType.MAIN.value, turn_order=1, question="主问题"),
         evaluation=evaluation,
-        answered_turns_after_current=[],
+        answered_turns_after_current=answered,
         has_next_topic=True,
+        topic_state=topic_state,
     )
 
     assert decision.action == "FOLLOW_UP"
+    assert decision.target_coverage_key is None
     assert decision.follow_up_intent == "VERIFY_METRIC"
     assert "结果指标" in decision.target_gap
-    assert decision.next_question is None
 
 
 # ---------------- Case 5：NEXT_TOPIC 转场 ----------------
@@ -744,7 +804,9 @@ async def test_follow_up_fallback_never_raises_and_uses_template(monkeypatch):
         turn_id=1,
     )
     assert result
-    assert result == StrictInterviewPolicy._followup_question(_topic(), _evaluation(), followup_number=1)
+    assert result == StrictInterviewPolicy._followup_question(
+        _topic(), _evaluation(), followup_number=1, follow_up_intent="VERIFY_IMPLEMENTATION"
+    )
 
 
 def test_next_turn_question_roundtrip_keeps_full_utterance():

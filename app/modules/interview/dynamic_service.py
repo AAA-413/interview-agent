@@ -64,8 +64,12 @@ from app.modules.interview.schemas import (
     DynamicTurnEvaluationDTO,
     SubmitDynamicTurnAnswerRequest,
     TomorrowTaskDTO,
+    TopicCoverageStateDTO,
+    TopicStateDTO,
 )
 from app.modules.interview.topic_registry import TopicDef, topic_registry_service
+from app.modules.interview.topic_state.models import canonical_exit_criteria, target_intent
+from app.modules.interview.topic_state.tracker import topic_coverage_tracker
 from app.modules.knowledge_base.models import KnowledgeBaseEntity, KnowledgeChunkEntity
 from app.modules.knowledge_base.persistence_service import knowledge_base_persistence_service
 from app.modules.resume.history_service import resume_history_service
@@ -560,11 +564,11 @@ class InterviewPlanService:
 
     @staticmethod
     def _exit_criteria(candidate: _TopicCandidate) -> list[str]:
-        if candidate.question_type == "PROJECT":
-            return ["能说清项目目标", "能说明个人贡献", "能给出结果或验证方式", "能补充一个取舍或异常处理"]
-        if candidate.question_type == "SYSTEM_DESIGN":
-            return ["能拆分核心模块", "能说明数据流", "能覆盖可靠性", "能说明至少一个取舍"]
-        return ["能给出准确定义", "能说明机制", "能给出场景", "能指出边界或风险"]
+        """exit criteria 由 canonical coverage targets 生成，不再单独维护字符串。
+
+        这样 Planner、TopicCoverageTracker、Adaptive Policy 三者永远是同一套语义。
+        """
+        return canonical_exit_criteria(candidate.question_type)
 
     @staticmethod
     def _rubric(question_type: str) -> dict[str, str]:
@@ -1081,8 +1085,44 @@ class DynamicAnswerEvaluationService:
         return {key: max(0, min(value, 100)) for key, value in dimensions.items()}
 
 
+def _coverage_labels(coverage: TopicCoverageStateDTO, keys: list[str]) -> list[str]:
+    """按 canonical 顺序把 target key 映射成 label（对外的可读视图）。"""
+    labels: list[str] = []
+    for key in keys:
+        point = coverage.points.get(key)
+        label = (point.label if point else "") or key
+        if label not in labels:
+            labels.append(label)
+    return labels
+
+
+def _exit_decision(has_next_topic: bool, reason: str) -> DynamicDecisionDTO:
+    """离开当前 topic 的统一出口：有下一个 topic 就切，否则结束面试。
+
+    ``max_turns``、early exit、coverage complete 三条规则共用这一个出口，
+    避免「什么时候切 / 什么时候结束」出现多套判断。
+    """
+    if has_next_topic:
+        return DynamicDecisionDTO(action=DecisionAction.NEXT_TOPIC.value, reason=reason, hint=None)
+    return DynamicDecisionDTO(action=DecisionAction.END.value, reason="所有计划 topic 已完成，生成面试报告。")
+
+
 class CoachInterviewPolicy:
+    """教练模式策略：coverage + score + turn budget + improvement 共同决定。
+
+    仍然是**确定性**决策：LLM 只提供「这一轮覆盖了什么」，是否继续重答完全由
+    这里的代码规则决定。
+    """
+
+    #: 兼容属性：真正的生命周期上限是 ``topic.max_turns``（见 PR3 §28）
     max_retries_per_topic = 2
+
+    #: MAIN 轮：coverage 完整且分数达标 → 直接进入下一个 topic
+    main_next_score = 85
+    #: COACH_RETRY 轮：coverage 完整且（分数达标 或 提升明显）→ 进入下一个 topic
+    retry_next_score = 75
+    #: COACH_RETRY 轮：相对首轮提升达到该值也算过关
+    retry_min_improvement = 10
 
     def decide(
         self,
@@ -1093,47 +1133,81 @@ class CoachInterviewPolicy:
         answered_turns_after_current: list[DynamicTurnDTO],
         has_next_topic: bool,
         coach_hint: dict | None,
+        topic_state: TopicStateDTO | None = None,
     ) -> DynamicDecisionDTO:
-        retry_count = sum(1 for item in answered_turns_after_current if item.turn_type == TurnType.COACH_RETRY.value)
-        initial_score = next(
-            (item.ability_score for item in answered_turns_after_current if item.turn_type == TurnType.MAIN.value),
-            evaluation.ability_score,
-        )
+        state = self._resolve_state(topic, answered_turns_after_current, topic_state)
+        coverage = state.coverage
+        score = evaluation.ability_score
 
-        should_retry = False
+        # Hard stop：turn 预算用尽，无论 coverage / score / improvement
+        if state.remaining_turns <= 0:
+            return _exit_decision(has_next_topic, "教练模式当前 topic 已达到最大轮次上限，进入下一个 topic。")
+
         if turn.turn_type == TurnType.MAIN.value:
-            should_retry = evaluation.ability_score < 85
-        elif turn.turn_type == TurnType.COACH_RETRY.value:
-            improvement = evaluation.ability_score - (initial_score or 0)
-            should_retry = evaluation.ability_score < 75 and improvement < 10
-
-        if should_retry and retry_count < self.max_retries_per_topic:
+            if coverage.complete and score >= self.main_next_score:
+                return _exit_decision(has_next_topic, "教练模式该 topic 关键点已覆盖且回答质量达标，进入下一个 topic。")
             return DynamicDecisionDTO(
                 action=DecisionAction.COACH_RETRY.value,
                 reason="教练模式下当前回答仍有可训练缺口，进入同题重答。",
                 hint=coach_hint,
                 next_question=topic.main_question,
+                target_coverage_key=coverage.next_target_key,
             )
 
-        if has_next_topic:
+        if turn.turn_type == TurnType.COACH_RETRY.value:
+            improvement = state.score_improvement if state.score_improvement is not None else 0
+            if coverage.complete and (score >= self.retry_next_score or improvement >= self.retry_min_improvement):
+                return _exit_decision(has_next_topic, "教练模式重答后已达到过关标准，进入下一个 topic。")
             return DynamicDecisionDTO(
-                action=DecisionAction.NEXT_TOPIC.value,
-                reason="当前 topic 已完成本轮训练，进入下一个 topic。",
+                action=DecisionAction.COACH_RETRY.value,
+                reason="教练模式下重答仍有可训练缺口，继续同题重答。",
+                hint=coach_hint,
+                next_question=topic.main_question,
+                target_coverage_key=coverage.next_target_key,
             )
-        return DynamicDecisionDTO(action=DecisionAction.END.value, reason="所有计划 topic 已完成，生成 topic 级报告。")
+
+        return _exit_decision(has_next_topic, "当前轮次类型无需继续重答，进入下一个 topic。")
+
+    @staticmethod
+    def _resolve_state(
+        topic: DynamicTopicDTO,
+        answered_turns_after_current: list[DynamicTurnDTO],
+        topic_state: TopicStateDTO | None,
+    ) -> TopicStateDTO:
+        """优先使用 orchestrator 传进来的 TopicState；否则用初始 coverage 现场重建。
+
+        后者是给「还没有 coverage 数据」的旧调用方/旧测试用的向后兼容路径，
+        决策逻辑本身只有一条。
+        """
+        if topic_state is not None:
+            return topic_state
+        return topic_coverage_tracker.build_state(
+            topic=topic,
+            answered_turns=answered_turns_after_current,
+            coverage=topic_coverage_tracker.initial_state(topic.question_type),
+        )
 
 
 class StrictInterviewPolicy:
-    """严厉模式策略层。
+    """严厉模式策略层（PR3：coverage-aware）。
 
-    只负责确定性决策：是否追问、追问几次、是否切 topic、是否结束，
-    以及「这一轮要验证什么」（``follow_up_intent`` + ``target_gap``）。
+    只负责确定性决策：
+
+    - 是否追问 / 是否切 topic / 是否结束
+    - 这一轮要验证什么（``follow_up_intent`` + ``target_coverage_key`` + ``target_gap``）
 
     **不负责**最终追问措辞：``next_question`` 留空，由 ``QuestionRealizer`` 生成；
-    Realizer 失败时由调用方回退到本类的 ``_followup_question()`` 模板。
+    Realizer 失败时由调用方回退到本类的 ``_followup_question()`` 模板
+    （模板会按 Policy 给出的 intent 生成，保证「追指标就继续追指标」）。
+
+    决策完全由代码规则驱动，LLM 的 coverage 输出只作为输入，不参与「要不要继续」。
     """
 
+    #: 兼容属性：真正的生命周期上限是 ``topic.max_turns``（见 PR3 §28）
     max_followups_per_topic = 2
+
+    #: Early exit：coverage 完整且回答质量达标 → 直接进入下一个 topic（0 次追问）
+    early_exit_score = 70
 
     # gap 关键词 → 追问意图（有限集合，顺序即优先级）
     _INTENT_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
@@ -1153,35 +1227,54 @@ class StrictInterviewPolicy:
         answered_turns_after_current: list[DynamicTurnDTO],
         has_next_topic: bool,
         coach_hint: dict | None = None,
+        topic_state: TopicStateDTO | None = None,
     ) -> DynamicDecisionDTO:
         del coach_hint
-        followup_count = sum(1 for item in answered_turns_after_current if item.turn_type == TurnType.FOLLOW_UP.value)
-        if (
-            turn.turn_type in {TurnType.MAIN.value, TurnType.FOLLOW_UP.value}
-            and followup_count < self.max_followups_per_topic
-        ):
-            intent, target_gap = self._follow_up_intent(
-                topic,
-                evaluation,
-                followup_count + 1,
-                used_intents=self._used_follow_up_intents(answered_turns_after_current),
-            )
-            return DynamicDecisionDTO(
-                action=DecisionAction.FOLLOW_UP.value,
-                reason="严厉模式下继续验证回答真实性、细节和抗压稳定性。",
-                hint=None,
-                next_question=None,
-                follow_up_intent=intent,
-                target_gap=target_gap,
+        state = CoachInterviewPolicy._resolve_state(topic, answered_turns_after_current, topic_state)
+        coverage = state.coverage
+        score = evaluation.ability_score
+
+        # ---- Hard stop：turn 预算用尽，无论 coverage / score -------------------
+        if state.remaining_turns <= 0:
+            return _exit_decision(has_next_topic, "严厉模式当前 topic 已达到最大轮次上限，进入下一个 topic。")
+
+        # ---- Early exit：关键点全部覆盖 + 回答质量达标 → 0 次追问 -------------
+        if coverage.complete and score >= self.early_exit_score:
+            return _exit_decision(
+                has_next_topic,
+                "严厉模式该 topic 的关键点已全部覆盖且回答质量达标，提前进入下一个 topic。",
             )
 
-        if has_next_topic:
-            return DynamicDecisionDTO(
-                action=DecisionAction.NEXT_TOPIC.value,
-                reason="严厉模式当前 topic 已完成两轮追问，进入下一个 topic。",
-                hint=None,
-            )
-        return DynamicDecisionDTO(action=DecisionAction.END.value, reason="所有计划 topic 已完成，生成严厉模式报告。")
+        # ---- 仍有预算 → 继续追问 --------------------------------------------
+        # coverage 未完整时优先追 next_target（Policy 决定「问什么」）；
+        # coverage 已完整但质量不达标时退回缺口驱动（gap → intent）。
+        gap_intent, gap_target = self._follow_up_intent(
+            topic,
+            evaluation,
+            state.followup_count + 1,
+            used_intents=self._used_follow_up_intents(answered_turns_after_current),
+        )
+        target_key = coverage.next_target_key if not coverage.complete else None
+        if target_key:
+            intent = target_intent(topic.question_type, target_key) or gap_intent
+            target_gap = coverage.next_target_label or gap_target
+        else:
+            intent, target_gap = gap_intent, gap_target
+
+        reason = (
+            f"严厉模式继续验证未覆盖的关键点：{coverage.next_target_label}。"
+            if target_key
+            else "严厉模式继续验证回答真实性、细节和抗压稳定性。"
+        )
+        return DynamicDecisionDTO(
+            action=DecisionAction.FOLLOW_UP.value,
+            reason=reason,
+            hint=None,
+            next_question=None,
+            follow_up_intent=intent,
+            target_gap=target_gap,
+            target_coverage_key=target_key,
+        )
 
     @classmethod
     def _follow_up_intent(
@@ -1261,7 +1354,22 @@ class StrictInterviewPolicy:
         topic: DynamicTopicDTO,
         evaluation: DynamicTurnEvaluationDTO,
         followup_number: int,
+        *,
+        follow_up_intent: str | None = None,
+        target_gap: str | None = None,
     ) -> str:
+        """fallback 追问模板。
+
+        PR3 起优先按 Policy 给出的 ``follow_up_intent`` 生成 —— 保证
+        「Policy = VERIFY_METRIC 但 Realizer 超时」时，fallback 仍然在问
+        结果/指标/baseline，而不是突然跳回实现链路。
+        没有 intent 时退回按题型 + 缺口生成的旧模板（向后兼容）。
+        """
+        del target_gap  # 只用于 intent 选择之外的可读性，模板不拼接自由文本
+        intent_question = StrictInterviewPolicy._intent_question(topic, follow_up_intent)
+        if intent_question:
+            return intent_question
+
         gaps = evaluation.signals.get("gaps") or evaluation.signals.get("risks") or []
         gap = gaps[0] if gaps else ""
         if topic.question_type == "PROJECT":
@@ -1275,6 +1383,31 @@ class StrictInterviewPolicy:
         if followup_number == 1:
             return f"我想确认你不是只记了概念。请用 3 步讲清楚「{topic.topic_title}」的核心机制，再补一个最容易踩错的边界。"
         return "最后只举一个工程场景：它什么时候适用，什么时候不适用？"
+
+    @staticmethod
+    def _intent_question(topic: DynamicTopicDTO, follow_up_intent: str | None) -> str:
+        """按 intent 生成 fallback 追问（六种 intent 全覆盖）。"""
+        if not follow_up_intent:
+            return ""
+        if follow_up_intent == FollowUpIntent.VERIFY_METRIC.value:
+            return "先只讲一个指标：你们看的是延迟、成功率、召回率还是转化？上线前后怎么对比，baseline 是多少？"
+        if follow_up_intent == FollowUpIntent.VERIFY_BOUNDARY.value:
+            return "只讲一个边界：什么输入或什么量级下这套做法会失效？当时是怎么限制或兜住的？"
+        if follow_up_intent == FollowUpIntent.VERIFY_FAILURE.value:
+            return "只挑一个失败场景：依赖超时、参数错误或结果为空时，你们怎么发现、怎么恢复？"
+        if follow_up_intent == FollowUpIntent.VERIFY_TRADEOFF.value:
+            return "只讲一个取舍：当时有哪两个可选方案？你们为什么选现在这个，放弃了什么？"
+        if follow_up_intent == FollowUpIntent.VERIFY_OWNERSHIP.value:
+            return "这部分具体是你自己设计并落地的吗？从方案确定到上线，哪几步是你亲手做的？"
+        if follow_up_intent == FollowUpIntent.VERIFY_IMPLEMENTATION.value:
+            if topic.question_type == "PROJECT":
+                return StrictInterviewPolicy._project_minimal_chain_prompt(topic.topic_title)
+            if topic.question_type == "SYSTEM_DESIGN":
+                return (
+                    "先不谈容量。你先口述最小链路：用户请求进来后，依次经过哪 3 到 5 个模块？每个模块一句话负责什么。"
+                )
+            return f"请用 3 步讲清楚「{topic.topic_title}」的核心机制，不要只讲结论。"
+        return ""
 
     @staticmethod
     def _project_followup_question(topic: DynamicTopicDTO, gap: str, followup_number: int) -> str:
@@ -1360,6 +1493,7 @@ class DynamicInterviewReportService:
         score_delta = final_score - initial_score if final_score is not None and initial_score is not None else None
         strengths, gaps, risks = self._merge_signals(answered)
         next_action = self._next_training_action(topic, gaps, risks, score_delta)
+        coverage = self._topic_coverage_view(topic)
         return DynamicTopicSummaryDTO(
             topic_id=topic.id,
             topic_key=topic.topic_key,
@@ -1375,7 +1509,16 @@ class DynamicInterviewReportService:
             risks=risks[:4],
             gaps=gaps[:4],
             next_training_action=next_action,
+            coverage_ratio=coverage.coverage_ratio,
+            covered_points=_coverage_labels(coverage, coverage.covered_keys),
+            partial_points=_coverage_labels(coverage, coverage.partial_keys),
+            unresolved_points=_coverage_labels(coverage, coverage.unresolved_keys),
         )
+
+    @staticmethod
+    def _topic_coverage_view(topic: InterviewTopicEntity) -> TopicCoverageStateDTO:
+        """report 用：从 coverage_state_json 解析出 topic 级 coverage（NULL → initial）。"""
+        return topic_coverage_tracker.parse_state(topic.coverage_state_json, topic.question_type)
 
     @staticmethod
     def _merge_signals(turns: list[InterviewTurnEntity]) -> tuple[list[str], list[str], list[str]]:
@@ -2118,6 +2261,69 @@ class DynamicInterviewService:
 
         return evaluation
 
+    @staticmethod
+    def _reduce_coverage(
+        *,
+        topic: DynamicTopicDTO,
+        turn_id: int,
+        answer: str,
+        evaluation: DynamicTurnEvaluationDTO,
+    ) -> TopicCoverageStateDTO:
+        """把当前轮次的 coverage 贡献合并进 topic 累计状态。
+
+        纯计算：不查 DB、不调 LLM、不碰 ORM；因此可以安全地放在 Phase 1 事务里，
+        也可以在测试里直接调用。
+        """
+        try:
+            return topic_coverage_tracker.update(
+                topic=topic,
+                current_state=topic.coverage_state or topic_coverage_tracker.initial_state(topic.question_type),
+                turn_id=turn_id,
+                answer=answer,
+                evaluation=evaluation,
+            )
+        except Exception as exc:
+            # coverage 属于「体验/策略」层，任何异常都不允许影响 answer 落库
+            logger.warning("coverage reduce 失败，保持原状态: turn_id=%s, error=%s", turn_id, exc)
+            return topic.coverage_state or topic_coverage_tracker.initial_state(topic.question_type)
+
+    @staticmethod
+    def _topic_progress(state: TopicStateDTO) -> dict:
+        """topic_progress：score 与 coverage 是两个独立概念，这里都如实暴露。"""
+        coverage = state.coverage
+        return {
+            "answered_turns": state.turn_count,
+            "max_turns": state.max_turns,
+            "remaining_turns": state.remaining_turns,
+            "best_score": state.best_score,
+            "final_score": state.current_score,
+            "coverage_ratio": coverage.coverage_ratio,
+            "coverage_complete": coverage.complete,
+            "covered_points": _coverage_labels(coverage, coverage.covered_keys),
+            "partial_points": _coverage_labels(coverage, coverage.partial_keys),
+            "unresolved_points": _coverage_labels(coverage, coverage.unresolved_keys),
+            "next_target_key": coverage.next_target_key,
+            "next_target_label": coverage.next_target_label,
+        }
+
+    @staticmethod
+    def _attach_coverage_target(
+        coach_hint: dict | None,
+        state: TopicStateDTO,
+        decision: DynamicDecisionDTO,
+    ) -> dict:
+        """COACH_RETRY 提示里带上本轮瞄准的 coverage target（仍然不给标准答案）。"""
+        target_key = decision.target_coverage_key
+        if not target_key:
+            return coach_hint or {}
+        label = state.coverage.points.get(target_key)
+        hint = dict(coach_hint or {})
+        hint["coverage_target"] = {
+            "key": target_key,
+            "label": (label.label if label else None) or decision.target_gap or "",
+        }
+        return hint
+
     def _catastrophic_fallback(
         self, snapshot: EvaluationSnapshot, answer: str, error_type: str
     ) -> DynamicTurnEvaluationDTO:
@@ -2186,7 +2392,11 @@ class DynamicInterviewService:
         if turn.answer is not None:
             raise BusinessException(ErrorCode.BAD_REQUEST, "该轮回答已提交，不能重复提交")
 
-        topic_entity = await dynamic_interview_persistence_service.find_topic_or_throw(db, turn.topic_id, user_id)
+        # 锁顺序固定 turn → topic：先锁 turn 并确认 answer is None，再锁 topic 读取
+        # **最新**的 coverage 状态做 reduce，避免并发请求基于过期状态互相覆盖。
+        topic_entity = await dynamic_interview_persistence_service.find_topic_for_update_or_throw(
+            db, turn.topic_id, user_id
+        )
         topic = dynamic_interview_persistence_service.topic_to_dto(topic_entity)
         previous_turns = [
             dynamic_interview_persistence_service.turn_to_dto(item)
@@ -2221,6 +2431,26 @@ class DynamicInterviewService:
         ]
         all_topics = await dynamic_interview_persistence_service.list_topics(db, session.id)
         next_topic_entity = self._next_pending_topic(all_topics, topic_entity.topic_order)
+
+        # =====================================================================
+        # Coverage reduce（确定性，纯计算，不查 DB、不调 LLM）
+        # ---------------------------------------------------------------------
+        # 输入：加锁重读得到的**最新** topic coverage + 当前轮的 evaluation。
+        # 输出：单调合并后的累计状态 —— covered/partial/unresolved、complete、
+        # next_target。Policy 只消费这个结果，LLM 不参与「要不要继续追问」。
+        # =====================================================================
+        coverage_state = self._reduce_coverage(
+            topic=topic,
+            turn_id=turn.id,
+            answer=request.answer,
+            evaluation=evaluation,
+        )
+        topic_state = topic_coverage_tracker.build_state(
+            topic=topic,
+            answered_turns=answered_after,
+            coverage=coverage_state,
+        )
+
         policy = self._policy_for_mode(session.interview_mode)
         decision = policy.decide(
             topic=topic,
@@ -2229,12 +2459,17 @@ class DynamicInterviewService:
             answered_turns_after_current=answered_after,
             has_next_topic=next_topic_entity is not None,
             coach_hint=coach_hint,
+            topic_state=topic_state,
         )
         if decision.action != DecisionAction.COACH_RETRY.value:
             coach_hint = None
+        elif decision.target_coverage_key:
+            # 教练模式重答提示里带上本轮瞄准的 coverage target（不给标准答案）
+            coach_hint = self._attach_coverage_target(coach_hint, topic_state, decision)
+
+        followup_count = topic_state.followup_count
 
         # Answer -> InterviewContext：所有下游（Realizer / Prompt）只消费这一份 Context
-        followup_count = sum(1 for item in answered_after if item.turn_type == TurnType.FOLLOW_UP.value)
         interview_context = self.context_builder.build(
             session_id=session.session_id,
             interview_mode=session.interview_mode,
@@ -2244,18 +2479,28 @@ class DynamicInterviewService:
             answered_turns=previous_turns,
             evaluation=evaluation,
             follow_up_count=followup_count,
+            coverage_state=coverage_state,
+            target_coverage_key=decision.target_coverage_key,
         )
 
         # =====================================================================
         # Phase 1：确定性状态持久化
         # ---------------------------------------------------------------------
-        # 候选人的 answer / evaluation / policy decision / topic 状态/下一轮的
-        # 「兜底问题」全部先落库并提交。QuestionRealizer 是可降级的外部调用，
+        # 候选人的 answer / evaluation / policy decision / topic 状态（含 coverage）/
+        # 下一轮的「兜底问题」全部先落库并提交。QuestionRealizer 是可降级的外部调用，
         # 不能让它的 25s 等待时间持有本 endpoint 的 DB transaction / connection。
         # =====================================================================
         fallback_question = ""
         if decision.action == DecisionAction.FOLLOW_UP.value:
-            fallback_question = StrictInterviewPolicy._followup_question(topic, evaluation, followup_count + 1)
+            # 兜底问题必须与 Policy 的 target 一致：Policy 说要追指标，
+            # Realizer 失败后 fallback 也必须继续追指标，不能跳回实现链路。
+            fallback_question = StrictInterviewPolicy._followup_question(
+                topic,
+                evaluation,
+                followup_count + 1,
+                follow_up_intent=decision.follow_up_intent,
+                target_gap=decision.target_gap,
+            )
 
         # Phase 1 落库的 decision 使用**确定性的兜底问题**作为 next_question（按 action 区分）：
         # - FOLLOW_UP：模板追问；COACH_RETRY：Policy 给的 main_question；
@@ -2295,6 +2540,9 @@ class DynamicInterviewService:
             best_score=max(scores) if scores else None,
             final_score=scores[-1] if scores else None,
             completed=completed,
+            # coverage 与 turn_count / best_score / final_score / completed
+            # 在**同一个 Phase 1 transaction** 内落库
+            coverage_state=coverage_state,
         )
 
         next_turn_entity: InterviewTurnEntity | None = None
@@ -2393,12 +2641,8 @@ class DynamicInterviewService:
         # session.status / topic_entity.* / next_turn_entity.question 会触发隐式
         # reload，在 AsyncSession 下可能直接抛 MissingGreenlet。
         response_status = session.status.value if session.status else SessionStatus.INTERVIEWING.value
-        topic_progress = {
-            "answered_turns": len(answered_turns),
-            "max_turns": topic_entity.max_turns,
-            "best_score": topic_entity.best_score,
-            "final_score": topic_entity.final_score,
-        }
+        # 全部取自 Phase 1 已固化的 TopicState（纯 DTO），Phase 3 rollback 后仍可用
+        topic_progress = self._topic_progress(topic_state)
         session_id_value = session.session_id
         answer_turn_id = turn.id
         persisted_question = next_turn_entity.question if next_turn_entity is not None else None
@@ -2572,7 +2816,15 @@ class DynamicInterviewService:
         )
         if realized:
             return realized
-        return StrictInterviewPolicy._followup_question(topic, evaluation, followup_count + 1)
+        # fallback 必须与 Policy 的 target 对齐：Policy 说要追指标，
+        # Realizer 失败后也必须继续追指标，不能跳回实现链路。
+        return StrictInterviewPolicy._followup_question(
+            topic,
+            evaluation,
+            followup_count + 1,
+            follow_up_intent=decision.follow_up_intent,
+            target_gap=decision.target_gap,
+        )
 
     async def _realize_topic_transition(
         self,

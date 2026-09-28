@@ -79,6 +79,58 @@ class DynamicInterviewCreateRequest(BaseModel):
     llm_provider: str | None = Field(default=None, max_length=50)
 
 
+COVERAGE_STATUS_NOT_COVERED = "NOT_COVERED"
+COVERAGE_STATUS_PARTIAL = "PARTIAL"
+COVERAGE_STATUS_COVERED = "COVERED"
+
+CoverageStatusLiteral = Literal["NOT_COVERED", "PARTIAL", "COVERED"]
+
+
+class TopicCoveragePointDTO(BaseModel):
+    """单个 canonical coverage target 的**累计**状态。"""
+
+    target_key: str
+    label: str = ""
+    status: CoverageStatusLiteral = COVERAGE_STATUS_NOT_COVERED
+    evidence_quotes: list[str] = Field(default_factory=list)
+    source_turn_ids: list[int] = Field(default_factory=list)
+
+
+class TopicCoverageStateDTO(BaseModel):
+    """一个 topic 的 coverage 累计状态（可持久化到 coverage_state_json）。"""
+
+    version: str = "topic-coverage-v1"
+    points: dict[str, TopicCoveragePointDTO] = Field(default_factory=dict)
+
+    covered_keys: list[str] = Field(default_factory=list)
+    partial_keys: list[str] = Field(default_factory=list)
+    unresolved_keys: list[str] = Field(default_factory=list)
+
+    coverage_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+    complete: bool = False
+
+    next_target_key: str | None = None
+    next_target_label: str | None = None
+
+
+class TopicStateDTO(BaseModel):
+    """由确定性数据重建的 topic 运行态视图（**不整体持久化**，只持久化 coverage）。"""
+
+    coverage: TopicCoverageStateDTO = Field(default_factory=TopicCoverageStateDTO)
+
+    turn_count: int = 0
+    max_turns: int = 3
+    remaining_turns: int = 0
+
+    initial_score: int | None = None
+    current_score: int = 0
+    best_score: int = 0
+    score_improvement: int | None = None
+
+    followup_count: int = 0
+    coach_retry_count: int = 0
+
+
 class DynamicTopicDTO(BaseModel):
     id: int | None = None
     topic_key: str
@@ -97,6 +149,9 @@ class DynamicTopicDTO(BaseModel):
     followup_goals: list[str] = Field(default_factory=list)
     exit_criteria: list[str] = Field(default_factory=list)
     rubric: dict[str, str] = Field(default_factory=dict)
+    # PR3：topic 级 coverage 累计状态。backward compatible：老 topic 为 None，
+    # 读取方按 initial_state(question_type) 处理，不需要 backfill。
+    coverage_state: "TopicCoverageStateDTO | None" = None
 
 
 class DynamicTurnDTO(BaseModel):
@@ -139,6 +194,20 @@ class EvaluationEvidenceDTO(BaseModel):
     assessment: Literal["SUPPORT", "RISK"] = "SUPPORT"
 
 
+class EvaluationCoverageAssessmentDTO(BaseModel):
+    """**当前这一轮回答**对某个 canonical coverage target 的贡献。
+
+    - ``target_key`` 必须是当前 question_type 的 canonical target；
+    - ``PARTIAL`` / ``COVERED`` 必须至少带 1 条逐字来自当前回答的 quote，
+      否则会被代码保守降级为 ``NOT_COVERED``；
+    - 历史累计状态不在这里，由 ``TopicCoverageTracker`` 负责。
+    """
+
+    target_key: str
+    status: CoverageStatusLiteral = COVERAGE_STATUS_NOT_COVERED
+    evidence_quotes: list[str] = Field(default_factory=list)
+
+
 class DynamicTurnEvaluationDTO(BaseModel):
     ability_score: int = Field(default=0, ge=0, le=100)
     feedback: str
@@ -151,6 +220,10 @@ class DynamicTurnEvaluationDTO(BaseModel):
     evidence: list[EvaluationEvidenceDTO] = Field(default_factory=list)
     guard_flags: list[str] = Field(default_factory=list)
 
+    # ---- PR3 新增：**当前这一轮回答**对 canonical coverage targets 的贡献 ----
+    # 只描述 CURRENT CANDIDATE ANSWER；历史累计由 TopicCoverageTracker 负责。
+    coverage_assessments: list[EvaluationCoverageAssessmentDTO] = Field(default_factory=list)
+
 
 class DynamicDecisionDTO(BaseModel):
     action: str
@@ -161,6 +234,8 @@ class DynamicDecisionDTO(BaseModel):
     # QuestionRealizer 失败时回退为 StrictInterviewPolicy 的模板追问。
     follow_up_intent: str | None = None
     target_gap: str | None = None
+    # PR3：这一轮追问瞄准的 canonical coverage target（解释「为什么追这个点」）。
+    target_coverage_key: str | None = None
 
 
 class ConversationTurn(BaseModel):
@@ -210,6 +285,11 @@ class DynamicTopicSummaryDTO(BaseModel):
     risks: list[str] = Field(default_factory=list)
     gaps: list[str] = Field(default_factory=list)
     next_training_action: str
+    # PR3：最终 coverage 展示（只读派生；不影响 readiness_score / type score 公式）
+    coverage_ratio: float = 0.0
+    covered_points: list[str] = Field(default_factory=list)
+    partial_points: list[str] = Field(default_factory=list)
+    unresolved_points: list[str] = Field(default_factory=list)
 
 
 class TomorrowTaskDTO(BaseModel):

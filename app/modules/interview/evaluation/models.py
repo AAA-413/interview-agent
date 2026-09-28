@@ -19,9 +19,12 @@ from app.modules.interview.schemas import DynamicTopicDTO, DynamicTurnDTO
 #
 # v2（PR2 review round 4）改变了实际评分语义：unique evidence span 校准、
 # 高分证据门槛、UNGROUNDED_POSITIVE_DIMENSION 拒绝、previous score 移出 prompt、
-# rubric dimension mapping。SingleFlight 会把结果写入 Redis（result TTL 默认 600s），
+# rubric dimension mapping。
+# v3（PR3）改变了 structured output schema 与 prompt 语义：新增 current-turn
+# coverage assessment（canonical coverage targets）。
+# SingleFlight 会把结果写入 Redis（result TTL 默认 600s），
 # 版本号不变时滚动部署期间新代码会读到旧 evaluator 写入的缓存结果。
-EVALUATOR_VERSION = "hybrid-evaluator-v2"
+EVALUATOR_VERSION = "hybrid-evaluator-v3"
 
 # ---------------- active dimensions & weights ----------------
 
@@ -46,6 +49,15 @@ DIMENSION_LABELS: dict[str, str] = {
 
 def active_dimension_weights(question_type: str) -> dict[str, float]:
     return QUESTION_TYPE_DIMENSION_WEIGHTS.get((question_type or "").upper(), FALLBACK_DIMENSION_WEIGHTS)
+
+
+def normalize_evidence_text(text: str | None) -> str:
+    """证据比对用的归一化：去掉所有空白并小写（对换行/缩进不敏感）。
+
+    评分证据（PR2）与 coverage 证据（PR3）共用这一份实现，
+    避免出现两套「相似但不一致」的 substring 校验。
+    """
+    return "".join(str(text or "").split()).lower()
 
 
 def filter_active_dimension_scores(question_type: str, scores: dict[str, int]) -> dict[str, int]:
@@ -134,9 +146,23 @@ class LLMDimensionAssessment(BaseModel):
     gaps: list[str] = Field(default_factory=list)
 
 
+class LLMCoverageAssessment(BaseModel):
+    """**当前回答**对某个 canonical coverage target 的贡献（PR3）。
+
+    只描述 CURRENT CANDIDATE ANSWER：previous turns 只用于理解上下文，
+    不得把历史回答当作本轮 evidence。
+    """
+
+    target_key: str
+    status: str = "NOT_COVERED"
+    evidence_quotes: list[str] = Field(default_factory=list)
+
+
 class LLMEvaluationResult(BaseModel):
     dimensions: list[LLMDimensionAssessment] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
+    # PR3：与 dimensions 共用同一次 structured output，不额外增加 LLM 调用
+    coverage: list[LLMCoverageAssessment] = Field(default_factory=list)
 
 
 # ---------------- snapshot / guard ----------------

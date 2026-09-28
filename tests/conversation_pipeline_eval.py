@@ -257,7 +257,9 @@ async def check_fallback_available() -> list[dict]:
     decision = DynamicDecisionDTO(
         action="FOLLOW_UP", reason="r", follow_up_intent="VERIFY_METRIC", target_gap="缺少指标"
     )
-    expected_template = StrictInterviewPolicy._followup_question(topic, evaluation, followup_number=1)
+    expected_template = StrictInterviewPolicy._followup_question(
+        topic, evaluation, followup_number=1, follow_up_intent="VERIFY_METRIC", target_gap="缺少指标"
+    )
 
     results = []
 
