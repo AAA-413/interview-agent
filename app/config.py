@@ -82,6 +82,10 @@ class InterviewSettings(BaseSettings):
     evaluation_batch_size: int = 8
     default_skill_id: str = "java-backend"
     default_difficulty: str = "mid"
+    # LLM 追问/转场生成开关：关闭后链路自动回退到规则模板，保证面试不中断
+    question_realizer_enabled: bool = True
+    # 单次 QuestionRealizer 的超时上限（秒），超时即回退模板，避免卡住答题链路
+    question_realizer_timeout_seconds: float = 25.0
 
 
 class ResumeSettings(BaseSettings):

@@ -14,6 +14,7 @@ WebSocket 鉴权说明：
 - C→S 终止（可选）：JSON {"type":"end"}
 - S→C：JSON {"type":"partial|final|error", ...}
 """
+
 import asyncio
 import json
 import logging
@@ -121,19 +122,19 @@ async def voice_stream_ws(
 
     # ---- 3. 构造 PCM 流迭代器 ----
     if first_bytes is not None:
+
         async def _chunks() -> AsyncIterator[bytes]:
             yield first_bytes
             async for c in _pcm_chunker(websocket):
                 yield c
+
         chunks_iter: AsyncIterator[bytes] = _chunks()
     else:
         chunks_iter = _pcm_chunker(websocket)
 
     # ---- 4. 跑流式识别 ----
     try:
-        async for event in voice_streaming_service.stream_transcribe(
-            chunks_iter, sample_rate=sample_rate
-        ):
+        async for event in voice_streaming_service.stream_transcribe(chunks_iter, sample_rate=sample_rate):
             await websocket.send_json(event.to_dict())
             if event.type == STTEventType.FINAL:
                 break

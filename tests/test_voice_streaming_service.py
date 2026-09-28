@@ -7,11 +7,9 @@ Mock 掉 FunASR 推理，验证：
 - session 超时
 - SenseVoice 标签清理
 """
+
 import asyncio
 
-import pytest
-
-from app.common.error_code import ErrorCode
 from app.modules.interview.voice_streaming_service import (
     STTEvent,
     STTEventType,
@@ -48,11 +46,13 @@ def _patch_transcribe(monkeypatch, service: VoiceStreamingService, fake: FakeFun
 
 def _make_audio_chunker(chunks: list[bytes], delay: float = 0.0):
     """把 list[bytes] 包成 async iterator，可选每片 delay。"""
+
     async def _iter():
         for chunk in chunks:
             if delay:
                 await asyncio.sleep(delay)
             yield chunk
+
     return _iter()
 
 
@@ -163,15 +163,11 @@ async def test_stream_transcribe_empty_audio():
 def test_clean_sensevoice_output_strips_tags():
     """验证 SenseVoice 标签清理。"""
     assert _clean_sensevoice_output("你好世界") == "你好世界"
-    assert (
-        _clean_sensevoice_output("<|zh|><|NEUTRAL|><|Speech|><|withitn|>你好世界") == "你好世界"
-    )
+    assert _clean_sensevoice_output("<|zh|><|NEUTRAL|><|Speech|><|withitn|>你好世界") == "你好世界"
     assert _clean_sensevoice_output("<|en|><|HAPPY|>hello world") == "hello world"
     assert _clean_sensevoice_output("") == ""
     # 多个标签
-    assert (
-        _clean_sensevoice_output("<|zh|><|NEUTRAL|><|Speech|>中间<|withitn|>文本") == "中间文本"
-    )
+    assert _clean_sensevoice_output("<|zh|><|NEUTRAL|><|Speech|>中间<|withitn|>文本") == "中间文本"
 
 
 def test_stt_event_to_dict():

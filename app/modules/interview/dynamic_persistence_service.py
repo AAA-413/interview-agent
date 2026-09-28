@@ -202,6 +202,16 @@ class DynamicInterviewPersistenceService:
         await db.flush()
         return entity
 
+    async def update_turn_question(self, db: AsyncSession, turn: InterviewTurnEntity, question: str) -> None:
+        """更新已创建轮次的问题文案（NEXT_TOPIC 自然转场会重写下一题的开场话术）。"""
+        turn.question = question
+        await db.flush()
+
+    async def update_turn_decision(self, db: AsyncSession, turn: InterviewTurnEntity, decision: dict) -> None:
+        """回填当前轮次的 decision（Phase 3 拿到 LLM 生成的问题后补写 next_question）。"""
+        turn.decision_json = _json_dumps(decision)
+        await db.flush()
+
     async def find_session(
         self, db: AsyncSession, session_id: str, user_id: int | None = None
     ) -> InterviewSessionEntity | None:

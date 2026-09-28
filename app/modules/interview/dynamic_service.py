@@ -16,6 +16,8 @@ from app.common.error_code import ErrorCode
 from app.common.exception import BusinessException
 from app.common.model import AsyncTaskStatus
 from app.config import settings
+from app.modules.interview.context.builder import InterviewContextBuilder
+from app.modules.interview.context.models import FollowUpIntent, InterviewContext
 from app.modules.interview.dynamic_persistence_service import dynamic_interview_persistence_service
 from app.modules.interview.jd_parse_service import jd_parse_service
 from app.modules.interview.models import (
@@ -28,6 +30,7 @@ from app.modules.interview.models import (
     TopicStatus,
     TurnType,
 )
+from app.modules.interview.question_realizer import compose_utterance, question_realizer
 from app.modules.interview.schemas import (
     DynamicDecisionDTO,
     DynamicInterviewCreateRequest,
@@ -1036,7 +1039,25 @@ class CoachInterviewPolicy:
 
 
 class StrictInterviewPolicy:
+    """严厉模式策略层。
+
+    只负责确定性决策：是否追问、追问几次、是否切 topic、是否结束，
+    以及「这一轮要验证什么」（``follow_up_intent`` + ``target_gap``）。
+
+    **不负责**最终追问措辞：``next_question`` 留空，由 ``QuestionRealizer`` 生成；
+    Realizer 失败时由调用方回退到本类的 ``_followup_question()`` 模板。
+    """
+
     max_followups_per_topic = 2
+
+    # gap 关键词 → 追问意图（有限集合，顺序即优先级）
+    _INTENT_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+        (("指标", "效果", "结果", "验证", "口径", "baseline"), FollowUpIntent.VERIFY_METRIC.value),
+        (("取舍", "权衡", "替代方案", "成本", "为什么选"), FollowUpIntent.VERIFY_TRADEOFF.value),
+        (("职责", "个人", "贡献", "真实性", "证据"), FollowUpIntent.VERIFY_OWNERSHIP.value),
+        (("排查", "定位", "监控", "恢复", "故障", "修复"), FollowUpIntent.VERIFY_FAILURE.value),
+        (("异常", "边界", "失败", "兜底", "降级", "重试"), FollowUpIntent.VERIFY_BOUNDARY.value),
+    )
 
     def decide(
         self,
@@ -1054,11 +1075,19 @@ class StrictInterviewPolicy:
             turn.turn_type in {TurnType.MAIN.value, TurnType.FOLLOW_UP.value}
             and followup_count < self.max_followups_per_topic
         ):
+            intent, target_gap = self._follow_up_intent(
+                topic,
+                evaluation,
+                followup_count + 1,
+                used_intents=self._used_follow_up_intents(answered_turns_after_current),
+            )
             return DynamicDecisionDTO(
                 action=DecisionAction.FOLLOW_UP.value,
                 reason="严厉模式下继续验证回答真实性、细节和抗压稳定性。",
                 hint=None,
-                next_question=self._followup_question(topic, evaluation, followup_count + 1),
+                next_question=None,
+                follow_up_intent=intent,
+                target_gap=target_gap,
             )
 
         if has_next_topic:
@@ -1068,6 +1097,79 @@ class StrictInterviewPolicy:
                 hint=None,
             )
         return DynamicDecisionDTO(action=DecisionAction.END.value, reason="所有计划 topic 已完成，生成严厉模式报告。")
+
+    @classmethod
+    def _follow_up_intent(
+        cls,
+        topic: DynamicTopicDTO,
+        evaluation: DynamicTurnEvaluationDTO,
+        followup_number: int,
+        used_intents: set[str] | None = None,
+    ) -> tuple[str, str]:
+        """把规则评分的缺口翻译成「追问意图 + 目标缺口」。
+
+        Policy 只输出意图分类，不写自然语言问题（那是 QuestionRealizer 的职责）。
+        同一 topic 内优先换一个还没用过的意图，避免连续追问都停在同一个维度。
+        """
+        signals = evaluation.signals or {}
+        candidates = [*(signals.get("gaps") or []), *(signals.get("risks") or [])]
+        ranked: list[tuple[str, str]] = []
+        for gap in candidates:
+            text = str(gap)
+            for keywords, candidate_intent in cls._INTENT_RULES:
+                if any(keyword in text for keyword in keywords):
+                    if not any(item[0] == candidate_intent for item in ranked):
+                        ranked.append((candidate_intent, text))
+                    break
+        ranked.append((cls._default_intent(topic, followup_number), ""))
+
+        used = used_intents or set()
+        intent, matched_gap = ranked[0]
+        for candidate_intent, candidate_gap in ranked:
+            if candidate_intent not in used:
+                intent, matched_gap = candidate_intent, candidate_gap
+                break
+
+        target_gap = cls._target_gap(candidates, matched_gap)
+        return intent, target_gap
+
+    @staticmethod
+    def _used_follow_up_intents(answered_turns_after_current: list[DynamicTurnDTO]) -> set[str]:
+        """从历史轮次的 decision 里提取已经用过的追问意图。"""
+        used: set[str] = set()
+        for turn in answered_turns_after_current:
+            decision = turn.decision or {}
+            if isinstance(decision, dict):
+                intent = decision.get("follow_up_intent")
+                if intent:
+                    used.add(str(intent))
+        return used
+
+    @staticmethod
+    def _default_intent(topic: DynamicTopicDTO, followup_number: int) -> str:
+        if followup_number <= 1:
+            return FollowUpIntent.VERIFY_IMPLEMENTATION.value
+        if topic.question_type == "PROJECT":
+            return FollowUpIntent.VERIFY_METRIC.value
+        if topic.question_type == "SYSTEM_DESIGN":
+            return FollowUpIntent.VERIFY_FAILURE.value
+        return FollowUpIntent.VERIFY_BOUNDARY.value
+
+    @staticmethod
+    def _target_gap(candidates: list[str], matched_gap: str, limit: int = 160) -> str:
+        """构造给 QuestionRealizer 的「要验证什么」，只描述缺口，不写问题。"""
+        ordered: list[str] = []
+        if matched_gap:
+            ordered.append(str(matched_gap))
+        for item in candidates:
+            text = str(item)
+            if text and text not in ordered:
+                ordered.append(text)
+            if len(ordered) >= 2:
+                break
+        if not ordered:
+            return "回答整体偏泛，需要补一个可验证的具体点"
+        return "；".join(ordered)[:limit]
 
     @staticmethod
     def _followup_question(
@@ -1506,6 +1608,15 @@ class DynamicRagCoachService:
         return f"用 1 分钟解释「{topic.topic_title}」的定义、机制、场景和风险。"
 
 
+def resolve_topic_opening(transition: str | None, main_question: str) -> str:
+    """决定下一 topic 的开场话术。
+
+    LLM 只负责生成转场语；**下一题永远是 Planner 产出的 ``main_question``**，
+    不允许被重写。转场失败 / 为空时原样返回 main_question，保证面试不中断。
+    """
+    return compose_utterance(transition or "", main_question)
+
+
 class DynamicInterviewService:
     generation_stages = [
         ("RESUME_PROFILE", "正在分析简历项目"),
@@ -1519,12 +1630,38 @@ class DynamicInterviewService:
         self.evaluator = DynamicAnswerEvaluationService()
         self.report_service = DynamicInterviewReportService()
         self.rag_coach_service = DynamicRagCoachService()
+        self.context_builder = InterviewContextBuilder()
 
     @staticmethod
     def _policy_for_mode(mode: str | None):
         if mode and mode.upper() == InterviewMode.STRICT.value:
             return StrictInterviewPolicy()
         return CoachInterviewPolicy()
+
+    @staticmethod
+    def _resolve_pending_next_question(
+        *,
+        action: str,
+        decision: DynamicDecisionDTO,
+        topic_entity: InterviewTopicEntity,
+        fallback_question: str,
+        next_topic_entity: InterviewTopicEntity | None,
+    ) -> str | None:
+        """Phase 1 落库时每个 action 对应的「确定性下一题」。
+
+        必须按 action 区分，不能用单一兜底值覆盖所有分支：
+        - FOLLOW_UP   -> 规则模板追问
+        - COACH_RETRY -> Policy 已经给出的 next_question（重答同一题）
+        - NEXT_TOPIC  -> 下一个 topic 的 main_question（转场语只是增强）
+        - END         -> None
+        """
+        if action == DecisionAction.FOLLOW_UP.value:
+            return fallback_question or topic_entity.main_question
+        if action == DecisionAction.COACH_RETRY.value:
+            return decision.next_question or topic_entity.main_question
+        if action == DecisionAction.NEXT_TOPIC.value:
+            return next_topic_entity.main_question if next_topic_entity is not None else None
+        return None
 
     async def create_session(
         self,
@@ -1866,6 +2003,44 @@ class DynamicInterviewService:
         if decision.action != DecisionAction.COACH_RETRY.value:
             coach_hint = None
 
+        # Answer -> InterviewContext：所有下游（Realizer / Prompt）只消费这一份 Context
+        followup_count = sum(1 for item in answered_after if item.turn_type == TurnType.FOLLOW_UP.value)
+        interview_context = self.context_builder.build(
+            session_id=session.session_id,
+            interview_mode=session.interview_mode,
+            topic=topic,
+            current_question=turn.question,
+            current_answer=request.answer,
+            answered_turns=previous_turns,
+            evaluation=evaluation,
+            follow_up_count=followup_count,
+        )
+
+        # =====================================================================
+        # Phase 1：确定性状态持久化
+        # ---------------------------------------------------------------------
+        # 候选人的 answer / evaluation / policy decision / topic 状态/下一轮的
+        # 「兜底问题」全部先落库并提交。QuestionRealizer 是可降级的外部调用，
+        # 不能让它的 25s 等待时间持有本 endpoint 的 DB transaction / connection。
+        # =====================================================================
+        fallback_question = ""
+        if decision.action == DecisionAction.FOLLOW_UP.value:
+            fallback_question = StrictInterviewPolicy._followup_question(topic, evaluation, followup_count + 1)
+
+        # Phase 1 落库的 decision 使用**确定性的兜底问题**作为 next_question（按 action 区分）：
+        # - FOLLOW_UP：模板追问；COACH_RETRY：Policy 给的 main_question；
+        #   NEXT_TOPIC：下一个 topic 的 main_question；END：None。
+        # 这样即使 Phase 2/3 全部失败，库里的 decision 与已创建的 turn 依然自洽，
+        # 且重新 GET session 时 decision.next_question 与 submit 返回值语义一致。
+        pending_question = self._resolve_pending_next_question(
+            action=decision.action,
+            decision=decision,
+            topic_entity=topic_entity,
+            fallback_question=fallback_question,
+            next_topic_entity=next_topic_entity,
+        )
+        pending_decision = decision.model_copy(update={"next_question": pending_question})
+
         await dynamic_interview_persistence_service.save_turn_answer(
             db,
             turn,
@@ -1874,8 +2049,8 @@ class DynamicInterviewService:
             feedback=evaluation.feedback,
             signals=evaluation.signals,
             evaluation=evaluation.model_dump(),
-            decision_action=decision.action,
-            decision=decision.model_dump(),
+            decision_action=pending_decision.action,
+            decision=pending_decision.model_dump(),
             coach_hint=coach_hint,
         )
 
@@ -1892,6 +2067,7 @@ class DynamicInterviewService:
             completed=completed,
         )
 
+        next_turn_entity: InterviewTurnEntity | None = None
         next_turn = None
         current_topic = dynamic_interview_persistence_service.topic_to_dto(topic_entity)
         report = None
@@ -1906,7 +2082,6 @@ class DynamicInterviewService:
                 question=topic_entity.main_question,
                 coach_hint=coach_hint,
             )
-            next_turn = dynamic_interview_persistence_service.turn_to_dto(next_turn_entity)
         elif decision.action == DecisionAction.FOLLOW_UP.value:
             next_turn_entity = await dynamic_interview_persistence_service.create_turn(
                 db,
@@ -1915,9 +2090,8 @@ class DynamicInterviewService:
                 user_id=user_id,
                 turn_type=TurnType.FOLLOW_UP.value,
                 turn_order=len(refreshed_turns) + 1,
-                question=decision.next_question or topic_entity.main_question,
+                question=fallback_question or topic_entity.main_question,
             )
-            next_turn = dynamic_interview_persistence_service.turn_to_dto(next_turn_entity)
         elif decision.action == DecisionAction.NEXT_TOPIC.value and next_topic_entity is not None:
             await dynamic_interview_persistence_service.activate_topic(db, next_topic_entity.id, session.id)
             existing_next_turns = await dynamic_interview_persistence_service.list_turns_by_topic(
@@ -1927,6 +2101,7 @@ class DynamicInterviewService:
                 (item for item in existing_next_turns if item.turn_type == TurnType.MAIN.value),
                 None,
             )
+            # 下一题永远由 Planner 的 main_question 决定，转场语只是前置包装
             if next_turn_entity is None:
                 next_turn_entity = await dynamic_interview_persistence_service.create_turn(
                     db,
@@ -1937,24 +2112,267 @@ class DynamicInterviewService:
                     turn_order=1,
                     question=next_topic_entity.main_question,
                 )
-            next_turn = dynamic_interview_persistence_service.turn_to_dto(next_turn_entity)
             current_topic = dynamic_interview_persistence_service.topic_to_dto(next_topic_entity)
         elif decision.action == DecisionAction.END.value:
             report = await self._complete_and_report(db, session)
 
+        if next_turn_entity is not None:
+            next_turn = dynamic_interview_persistence_service.turn_to_dto(next_turn_entity)
+
+        # Phase 1 提交点：此后连接归还连接池，LLM 调用不再占用 DB transaction
+        await db.commit()
+
+        # =====================================================================
+        # Phase 2：可降级的 LLM 调用（期间不访问数据库）
+        # =====================================================================
+        realized_question: str | None = None
+        realized_transition: str | None = None
+        if decision.action == DecisionAction.FOLLOW_UP.value:
+            realized_question = await self._realize_follow_up_question(
+                session,
+                topic=topic,
+                evaluation=evaluation,
+                context=interview_context,
+                decision=decision,
+                followup_count=followup_count,
+                topic_id=topic_entity.id,
+                turn_id=turn.id,
+            )
+        elif decision.action == DecisionAction.NEXT_TOPIC.value and next_topic_entity is not None:
+            realized_transition = await self._realize_topic_transition(
+                session,
+                previous_topic=topic,
+                previous_question=turn.question,
+                previous_answer=request.answer,
+                next_topic=dynamic_interview_persistence_service.topic_to_dto(next_topic_entity),
+                topic_id=topic_entity.id,
+                turn_id=turn.id,
+            )
+
+        # =====================================================================
+        # Phase 3：把生成结果落库（best-effort）
+        # ---------------------------------------------------------------------
+        # Phase 1 已经决定了 correctness：answer / evaluation / decision /
+        # topic 状态 / 下一轮兜底 turn 全部提交完成。Phase 3 只是把 LLM 生成的
+        # 措辞替换成更自然的一版，**不允许**因为它的 DB 写失败而让整个 submit 失败
+        # （否则用户会看到 500，重试时又收到「该轮回答已提交」）。
+        # =====================================================================
+        # 返回所需的普通数据必须在 Phase 3 之前固化：
+        # 一旦 Phase 3 rollback，SQLAlchemy 会 expire 本次 session 中的 ORM 对象
+        # （expire_on_commit=False 不影响 rollback 语义），此后再读
+        # session.status / topic_entity.* / next_turn_entity.question 会触发隐式
+        # reload，在 AsyncSession 下可能直接抛 MissingGreenlet。
+        response_status = session.status.value if session.status else SessionStatus.INTERVIEWING.value
+        topic_progress = {
+            "answered_turns": len(answered_turns),
+            "max_turns": topic_entity.max_turns,
+            "best_score": topic_entity.best_score,
+            "final_score": topic_entity.final_score,
+        }
+        session_id_value = session.session_id
+        answer_turn_id = turn.id
+        persisted_question = next_turn_entity.question if next_turn_entity is not None else None
+        phase1_next_turn = next_turn
+
+        final_question: str | None = None
+        if decision.action == DecisionAction.FOLLOW_UP.value:
+            final_question = realized_question or fallback_question or topic_entity.main_question
+        elif decision.action == DecisionAction.NEXT_TOPIC.value and next_topic_entity is not None:
+            final_question = resolve_topic_opening(realized_transition, next_topic_entity.main_question)
+
+        if persisted_question is not None and final_question and persisted_question != final_question:
+            try:
+                await dynamic_interview_persistence_service.update_turn_question(db, next_turn_entity, final_question)
+                await dynamic_interview_persistence_service.update_turn_decision(
+                    db,
+                    turn,
+                    decision.model_copy(update={"next_question": final_question}).model_dump(),
+                )
+                await db.commit()
+                next_turn = dynamic_interview_persistence_service.turn_to_dto(next_turn_entity)
+            except Exception as exc:
+                logger.warning(
+                    "Phase 3 持久化失败，保留 Phase 1 兜底状态: session_id=%s, turn_id=%s, error=%s",
+                    session_id_value,
+                    answer_turn_id,
+                    exc,
+                )
+                await self._safe_rollback(db)
+                # rollback 后不再触碰 ORM：全部回落到 Phase 1 的普通数据/DTO
+                final_question = persisted_question
+                next_turn = phase1_next_turn
+
+        response_decision = decision
+        if final_question:
+            response_decision = decision.model_copy(update={"next_question": final_question})
+
         return DynamicTurnAnswerResponse(
-            status=session.status.value if session.status else SessionStatus.INTERVIEWING.value,
+            status=response_status,
             evaluation=evaluation,
-            decision=decision,
+            decision=response_decision,
             next_turn=next_turn,
             current_topic=current_topic,
-            topic_progress={
-                "answered_turns": len(answered_turns),
-                "max_turns": topic_entity.max_turns,
-                "best_score": topic_entity.best_score,
-                "final_score": topic_entity.final_score,
-            },
+            topic_progress=topic_progress,
             report=report,
+        )
+
+    async def _run_realizer_outside_transaction(
+        self,
+        session: InterviewSessionEntity,
+        operation_type: str,
+        invoke,
+        *,
+        topic_id: int,
+        turn_id: int,
+    ):
+        """执行 QuestionRealizer，**调用期间不访问数据库**。
+
+        QuestionRealizer 最长可能等待 ``question_realizer_timeout_seconds``（默认 25s）。
+        若用 ``_track_operation`` 包裹，metric 的 insert 会在 LLM 等待期间打开一个新的
+        DB transaction 并占用连接；这里改为「先调用、后写 metric（独立 session）」，
+        保证 Phase 2 期间 endpoint 的 session 上没有打开的事务。
+
+        metric 使用**独立短生命周期 session**，不再复用业务 session：
+        SQLAlchemy 的 ``Session.rollback()`` 会 expire 当前 session 中的 ORM 对象
+        （``expire_on_commit=False`` 也救不了），在 AsyncSession 下后续属性访问可能
+        触发隐式 reload 甚至 MissingGreenlet。业务 session 不应因为 metric 写失败
+        而被污染。
+
+        注意：这里只读 ``session`` 上不会变化的标量字段（id / user_id / provider /
+        session_id），不触发懒加载。只捕获 ``Exception``：外部取消（CancelledError）
+        仍然向上抛，不吞掉。
+        """
+        start = time.perf_counter()
+        error_type: str | None = None
+        result = None
+        try:
+            result = await invoke()
+        except Exception as exc:
+            error_type = exc.__class__.__name__
+            logger.warning(
+                "%s 失败，使用兜底: session_id=%s, turn_id=%s, error=%s",
+                operation_type,
+                session.session_id,
+                turn_id,
+                exc,
+            )
+            result = None
+
+        await self._record_operation_metric(
+            session_entity_id=session.id,
+            user_id=session.user_id,
+            llm_provider=session.llm_provider,
+            operation_type=operation_type,
+            topic_id=topic_id,
+            turn_id=turn_id,
+            latency_ms=self._latency_ms(start),
+            success=error_type is None,
+            error_type=error_type,
+        )
+        return result
+
+    @staticmethod
+    async def _record_operation_metric(
+        *,
+        session_entity_id: int,
+        user_id: int,
+        llm_provider: str | None,
+        operation_type: str,
+        topic_id: int | None,
+        turn_id: int | None,
+        latency_ms: int,
+        success: bool,
+        error_type: str | None,
+    ) -> None:
+        """用独立 DB session 写 operation metric，失败只记日志。
+
+        独立 session 隔离了 metric 写失败（例如 flush 报错）对业务 session 的影响，
+        业务状态由 Phase 1 的 commit 保证。
+        """
+        try:
+            from app.database import get_db_context
+
+            async with get_db_context() as metric_db:
+                await dynamic_interview_persistence_service.record_operation_metric(
+                    metric_db,
+                    session_entity_id=session_entity_id,
+                    user_id=user_id,
+                    operation_type=operation_type,
+                    topic_id=topic_id,
+                    turn_id=turn_id,
+                    llm_provider=llm_provider,
+                    latency_ms=latency_ms,
+                    success=success,
+                    error_type=error_type,
+                )
+                await metric_db.commit()
+        except Exception as exc:
+            logger.warning("记录 %s metric 失败（独立 session，不影响主链路）: %s", operation_type, exc)
+
+    @staticmethod
+    async def _safe_rollback(db: AsyncSession) -> None:
+        """best-effort 回滚：回滚本身失败也不能影响调用方。"""
+        try:
+            await db.rollback()
+        except Exception as exc:
+            logger.warning("rollback 失败（不影响返回结果）: %s", exc)
+
+    async def _realize_follow_up_question(
+        self,
+        session: InterviewSessionEntity,
+        *,
+        topic: DynamicTopicDTO,
+        evaluation: DynamicTurnEvaluationDTO,
+        context: InterviewContext,
+        decision: DynamicDecisionDTO,
+        followup_count: int,
+        topic_id: int,
+        turn_id: int,
+    ) -> str:
+        """LLM 生成追问；任何失败都回退到 StrictInterviewPolicy 的模板追问。
+
+        不需要业务 ``db``：Phase 2 期间不访问数据库，metric 走独立 session。
+        """
+        realized = await self._run_realizer_outside_transaction(
+            session,
+            "FOLLOW_UP_REALIZE",
+            lambda: question_realizer.realize_follow_up(context, decision, llm_provider=session.llm_provider),
+            topic_id=topic_id,
+            turn_id=turn_id,
+        )
+        if realized:
+            return realized
+        return StrictInterviewPolicy._followup_question(topic, evaluation, followup_count + 1)
+
+    async def _realize_topic_transition(
+        self,
+        session: InterviewSessionEntity,
+        *,
+        previous_topic: DynamicTopicDTO,
+        previous_question: str,
+        previous_answer: str,
+        next_topic: DynamicTopicDTO,
+        topic_id: int,
+        turn_id: int,
+    ) -> str | None:
+        """LLM 只生成转场语；失败返回 None，调用方直接使用 main_question。
+
+        下一题本身由 Planner 的 ``main_question`` 决定，LLM 不得改写。
+        """
+        context = self.context_builder.build_topic_transition(
+            session_id=session.session_id,
+            interview_mode=session.interview_mode,
+            previous_topic=previous_topic,
+            previous_question=previous_question,
+            previous_answer=previous_answer,
+            next_topic=next_topic,
+        )
+        return await self._run_realizer_outside_transaction(
+            session,
+            "TOPIC_TRANSITION_REALIZE",
+            lambda: question_realizer.realize_topic_transition(context, llm_provider=session.llm_provider),
+            topic_id=topic_id,
+            turn_id=turn_id,
         )
 
     async def get_session_detail(self, db: AsyncSession, session_id: str, user_id: int) -> DynamicSessionDetailDTO:

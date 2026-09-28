@@ -105,6 +105,8 @@ class DynamicTurnDTO(BaseModel):
     turn_type: str
     turn_order: int
     question: str
+    # 说明：NEXT_TOPIC 时 question 存的是面试官完整话术（转场语 + 下一题），
+    # 这样 submit 返回与重新 GET session 的结果完全一致，不引入额外展示字段。
     answer: str | None = None
     ability_score: int | None = None
     decision_action: str | None = None
@@ -141,6 +143,17 @@ class DynamicDecisionDTO(BaseModel):
     reason: str
     hint: dict | None = None
     next_question: str | None = None
+    # Policy 只产出「意图」，不产出最终措辞；next_question 由 QuestionRealizer 填充，
+    # QuestionRealizer 失败时回退为 StrictInterviewPolicy 的模板追问。
+    follow_up_intent: str | None = None
+    target_gap: str | None = None
+
+
+class ConversationTurn(BaseModel):
+    """标准面试模式下，当前 topic 内已经发生的一轮 Q/A（不可信数据）。"""
+
+    question: str
+    answer: str
 
 
 class DynamicTurnAnswerResponse(BaseModel):

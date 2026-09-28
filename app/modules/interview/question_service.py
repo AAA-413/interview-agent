@@ -14,8 +14,10 @@ from app.common.exception import BusinessException
 from app.common.prompt_utils import load_prompt, render_template
 from app.common.single_flight import build_single_flight_key, single_flight
 from app.config import settings
+from app.modules.interview.context.models import ContextBudget
 from app.modules.interview.schemas import (
     CategoryDTO,
+    ConversationTurn,
     HistoricalQuestion,
     InterviewQuestionDTO,
     SkillDTO,
@@ -29,6 +31,11 @@ _PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
 DEFAULT_QUESTION_TYPE = "GENERAL"
 MAX_FOLLOW_UP_COUNT = 2
 RESUME_QUESTION_RATIO = 0.6
+
+# 追问 prompt 的对话历史预算（字符级，集中定义避免 magic number 散落）
+MAX_FOLLOW_UP_HISTORY_TURNS = 4
+MAX_FOLLOW_UP_HISTORY_QUESTION_CHARS = 260
+MAX_FOLLOW_UP_HISTORY_ANSWER_CHARS = 800
 
 # 放弃性回答：直接短路不追问（追问也无法获得有效信息），省一次 LLM 调用
 _GIVEUP_MARKERS = (
@@ -132,6 +139,7 @@ class InterviewQuestionService:
         self._resume_system_prompt = load_prompt(_PROMPTS_DIR, "interview-question-resume-system.md")
         self._resume_user_prompt = load_prompt(_PROMPTS_DIR, "interview-question-resume-user.md")
         self._follow_up_decision_prompt = load_prompt(_PROMPTS_DIR, "follow-up-decision-system.md")
+        self._follow_up_decision_user_prompt = load_prompt(_PROMPTS_DIR, "follow-up-decision-user.md")
 
     async def generate_questions(
         self,
@@ -638,7 +646,14 @@ class InterviewQuestionService:
         question_type: str = "knowledge",
         category: str | None = None,
         follow_up_count: int = 0,
+        conversation_history: list[ConversationTurn] | None = None,
     ) -> _FollowUpDecisionDTO | None:
+        """生成追问决策。
+
+        Args:
+            conversation_history: 当前题目下已经发生过的 Q/A（不含本轮），
+                用于避免重复追问、并让追问承接候选人已经说出的具体内容。
+        """
         if follow_up_count >= MAX_FOLLOW_UP_COUNT:
             return None
 
@@ -652,13 +667,23 @@ class InterviewQuestionService:
 
             model = llm_registry.get_chat_model(None)
 
-            # 内容指纹：同一题 + 同一答案 + 相同追问次数 → 相同 key，跨实例合并
+            history_text = self._render_conversation_history(conversation_history)
+            # 内容指纹：题 + 答案 + 历史 + 追问次数 → 相同 key 才合并。
+            # 历史必须进 key，否则不同会话状态会错误复用同一份追问。
             single_flight_key = build_single_flight_key(
-                "followup", question, user_answer, question_type, follow_up_count
+                "followup", question, user_answer, question_type, follow_up_count, history_text
             )
             raw = await single_flight(
                 single_flight_key,
-                lambda: self._invoke_follow_up_model(model, question, user_answer, question_type, follow_up_count),
+                lambda: self._invoke_follow_up_model(
+                    model,
+                    question,
+                    user_answer,
+                    question_type,
+                    follow_up_count,
+                    history_text,
+                    category,
+                ),
             )
             if not raw:
                 return None
@@ -681,19 +706,22 @@ class InterviewQuestionService:
         user_answer: str,
         question_type: str,
         follow_up_count: int,
+        history_text: str,
+        category: str | None = None,
     ) -> str:
         """调用追问决策 LLM，返回序列化后的 JSON 字符串（供 single-flight 合并复用）。"""
-        user_prompt = f"""## 原问题
-{question}
-
-## 候选人回答
-{user_answer}
-
-## 当前已追问次数
-{follow_up_count}（最多追问{MAX_FOLLOW_UP_COUNT}次）
-
-## 问题类型
-{question_type}"""
+        user_prompt = render_template(
+            self._follow_up_decision_user_prompt,
+            {
+                "question": question,
+                "conversationHistory": history_text,
+                "userAnswer": user_answer,
+                "followUpCount": follow_up_count,
+                "maxFollowUpCount": MAX_FOLLOW_UP_COUNT,
+                "questionType": question_type,
+                "category": category or "综合能力",
+            },
+        )
 
         dto = await structured_output_invoker.invoke(
             chat_model=model,
@@ -707,6 +735,26 @@ class InterviewQuestionService:
         return dto.model_dump_json()
 
     @staticmethod
+    def _render_conversation_history(conversation_history: list[ConversationTurn] | None) -> str:
+        """把历史 Q/A 渲染成「面试官 / 候选人」交替的纯文本。
+
+        - 只保留最近若干轮，避免 context 无限增长
+        - 内容做单行折叠，避免候选人伪造对话行
+        - 转义模板标记，避免不可信数据干扰 prompt 渲染
+        """
+        if not conversation_history:
+            return "（这是本题目的第一轮回答，暂无历史对话）"
+        lines: list[str] = []
+        for turn in conversation_history[-MAX_FOLLOW_UP_HISTORY_TURNS:]:
+            question = _sanitize_untrusted(turn.question, MAX_FOLLOW_UP_HISTORY_QUESTION_CHARS)
+            answer = _sanitize_untrusted(turn.answer, MAX_FOLLOW_UP_HISTORY_ANSWER_CHARS)
+            if not question and not answer:
+                continue
+            lines.append(f"面试官：{question}")
+            lines.append(f"候选人：{answer}")
+        return "\n".join(lines) if lines else "（这是本题目的第一轮回答，暂无历史对话）"
+
+    @staticmethod
     def _is_giveup_answer(answer: str | None) -> bool:
         if not answer or not answer.strip():
             return True
@@ -715,6 +763,14 @@ class InterviewQuestionService:
             return False
         lowered = text.lower()
         return any(marker in lowered for marker in _GIVEUP_MARKERS)
+
+
+def _sanitize_untrusted(text: str | None, limit: int) -> str:
+    """不可信文本（候选人回答）进入 prompt 前的清洗：单行折叠 + 模板标记转义 + 限长。"""
+    sanitized = ContextBudget.sanitize(text)
+    if len(sanitized) <= limit:
+        return sanitized
+    return f"{sanitized[:limit]}…"
 
 
 interview_question_service = InterviewQuestionService()
