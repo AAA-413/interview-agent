@@ -1,19 +1,20 @@
-"""Conversation Quality 基线评测（deterministic，不调用真实 LLM）。
+"""Conversation **Pipeline Contract** 评测（deterministic，不调用真实 LLM）。
 
-与 ``quality_baseline_eval.py`` 并列，但只覆盖「面试对话主链路 V1」引入的行为：
+注意命名：这里验证的是「对话主链路的契约正确性」，**不是真实对话质量**：
 
 1. Context 包含上一轮 Q/A（避免重复追问 / 保证语义承接的数据基础）
 2. Context 不包含超过预算的过旧历史（防止 context 无限增长）
 3. FOLLOW_UP intent 正确传递到 QuestionRealizer
 4. QuestionRealizer 失败时 fallback 可用，且面试不中断
-5. NEXT_TOPIC 能拿到上一个 topic 的信息
+5. NEXT_TOPIC 能拿到上一个 topic 的信息，且下一题仍是 canonical main_question
 6. 不可信数据（候选人回答 / 简历证据）不会进入 system prompt
 
-LLM 调用使用替身（stub）：本脚本只做结构与链路的确定性校验，
-生成质量本身由人工冒烟 + 后续 LLM Judge 负责。
+LLM 调用使用替身（stub）：本脚本只做结构与链路的确定性校验。
+真实 Conversation Quality 后续会用固定真实对话集 + semantic metrics /
+LLM judge / human review 来做，不在本脚本范围内。
 
 Usage:
-    PYTHONPATH=. .venv/bin/python tests/conversation_quality_eval.py
+    PYTHONPATH=. .venv/bin/python tests/conversation_pipeline_eval.py
 """
 
 from __future__ import annotations
@@ -44,11 +45,10 @@ from app.modules.interview.question_realizer import (
 from app.modules.interview.schemas import (
     DynamicDecisionDTO,
     DynamicTopicDTO,
-    DynamicTransitionDTO,
     DynamicTurnDTO,
 )
 
-OUTPUT_DIR = Path(__file__).parent / "quality_baselines" / "conversation"
+OUTPUT_DIR = Path(__file__).parent / "quality_baselines" / "conversation-pipeline"
 
 REDIS_TOPIC = DynamicTopicDTO(
     topic_key="async_task_pipeline",
@@ -219,7 +219,9 @@ async def check_follow_up_intent_reaches_realizer() -> list[dict]:
     return [
         {
             "check": "policy_emits_intent_only",
-            "passed": decision.action == "FOLLOW_UP" and decision.next_question is None and bool(decision.follow_up_intent),
+            "passed": decision.action == "FOLLOW_UP"
+            and decision.next_question is None
+            and bool(decision.follow_up_intent),
             "detail": f"action={decision.action}, intent={decision.follow_up_intent}, next_question={decision.next_question}",
         },
         {
@@ -260,7 +262,9 @@ async def check_fallback_available() -> list[dict]:
         answered_turns=[],
         evaluation=evaluation,
     )
-    decision = DynamicDecisionDTO(action="FOLLOW_UP", reason="r", follow_up_intent="VERIFY_METRIC", target_gap="缺少指标")
+    decision = DynamicDecisionDTO(
+        action="FOLLOW_UP", reason="r", follow_up_intent="VERIFY_METRIC", target_gap="缺少指标"
+    )
     expected_template = StrictInterviewPolicy._followup_question(topic, evaluation, followup_number=1)
 
     results = []
@@ -315,7 +319,7 @@ async def check_next_topic_has_previous_topic_info() -> list[dict]:
         next_topic=IDEMPOTENCY_TOPIC,
     )
 
-    stub = _StubInvoker(_TransitionDTO(transition="这块先到这里。", question="消费者重复收到任务时怎么保证幂等？"))
+    stub = _StubInvoker(_TransitionDTO(transition="这块先到这里。"))
     original_invoker = question_realizer_module.structured_output_invoker
     original_single_flight = question_realizer_module.single_flight
     question_realizer_module.structured_output_invoker = stub
@@ -327,8 +331,8 @@ async def check_next_topic_has_previous_topic_info() -> list[dict]:
         question_realizer_module.single_flight = original_single_flight
 
     user_prompt = stub.calls[0]["user_prompt"] if stub.calls else ""
-    opening, transition_text = resolve_topic_opening(transition, IDEMPOTENCY_TOPIC.main_question)
-    failed_opening, failed_transition = resolve_topic_opening(None, IDEMPOTENCY_TOPIC.main_question)
+    opening = resolve_topic_opening(transition, IDEMPOTENCY_TOPIC.main_question)
+    failed_opening = resolve_topic_opening(None, IDEMPOTENCY_TOPIC.main_question)
 
     return [
         {
@@ -344,12 +348,17 @@ async def check_next_topic_has_previous_topic_info() -> list[dict]:
         },
         {
             "check": "transition_composed_into_opening",
-            "passed": opening.startswith("这块先到这里。") and "幂等" in opening and bool(transition_text),
+            "passed": opening.startswith("这块先到这里。") and "幂等" in opening,
             "detail": f"opening={opening[:40]}",
         },
         {
+            "check": "next_question_is_canonical_main_question",
+            "passed": opening.endswith(IDEMPOTENCY_TOPIC.main_question),
+            "detail": "LLM 只产出转场语，下一题语义由 Planner 决定",
+        },
+        {
             "check": "transition_fallback_uses_main_question",
-            "passed": failed_opening == IDEMPOTENCY_TOPIC.main_question and failed_transition == "",
+            "passed": failed_opening == IDEMPOTENCY_TOPIC.main_question,
             "detail": f"opening={failed_opening[:40]}",
         },
     ]
@@ -417,7 +426,7 @@ def write_outputs(checks: list[dict]) -> tuple[Path, Path]:
     results_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     lines = [
-        "# Conversation Quality 基线（deterministic）",
+        "# Conversation Pipeline Contract Eval（deterministic，非对话质量评测）",
         "",
         f"- 生成时间：{payload['generated_at']}",
         f"- 通过：{passed}/{len(checks)}（{payload['pass_rate'] * 100:.1f}%）",
@@ -447,7 +456,7 @@ def main() -> int:
     if not args.quiet:
         for item in checks:
             print(f"  [{'PASS' if item['passed'] else 'FAIL'}] {item['check']} - {item['detail']}")
-    print(f"\nConversation Quality: {passed}/{len(checks)} passed")
+    print(f"\nConversation Pipeline Contract Eval: {passed}/{len(checks)} passed")
     print(f"Report: {os.path.relpath(report_path)}")
     print(f"Results: {os.path.relpath(results_path)}")
     return 1 if failed else 0

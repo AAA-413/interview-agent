@@ -75,11 +75,13 @@ async def single_flight(
         return await fn()
 
     if acquired:
+        # Owner 生命周期：只要拿到了 running lock，无论成功 / fn 异常 /
+        # asyncio timeout / task cancellation，最终都必须释放锁。
+        # 注意 CancelledError 在 Python 3.8+ 继承自 BaseException，
+        # 用 ``except Exception`` 会漏掉取消路径并留下悬挂锁。
         try:
             result = await fn()
-        except Exception:
-            # fn 自身失败（LLM 超时 / 结构化输出非法）直接上抛给调用方：
-            # 不能走降级分支，否则同一份请求会对模型重复调用一次。
+        except BaseException:
             await _safe_delete(redis, running_key)
             raise
         try:

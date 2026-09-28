@@ -31,7 +31,7 @@ from app.modules.interview.context.models import (
     TopicTransitionContext,
     intent_guidance,
 )
-from app.modules.interview.schemas import DynamicDecisionDTO, DynamicTransitionDTO
+from app.modules.interview.schemas import DynamicDecisionDTO
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,6 @@ _PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
 # 输出长度保护：防止模型把追问写成一段教学材料
 MAX_FOLLOW_UP_QUESTION_CHARS = 300
 MAX_TRANSITION_CHARS = 120
-MAX_TRANSITION_QUESTION_CHARS = 300
 
 
 class _StructuredDTO(BaseModel):
@@ -53,8 +52,9 @@ class _FollowUpQuestionDTO(_StructuredDTO):
 
 
 class _TransitionDTO(_StructuredDTO):
+    """只输出转场语：下一题由 Planner 的 main_question 决定，不允许 LLM 改写。"""
+
     transition: str = ""
-    question: str = ""
 
 
 class QuestionRealizerService:
@@ -140,8 +140,12 @@ class QuestionRealizerService:
     async def realize_topic_transition(
         self,
         context: TopicTransitionContext,
-    ) -> DynamicTransitionDTO | None:
-        """一次生成「转场 + 下一题」；失败返回 ``None``（调用方使用 main_question）。"""
+    ) -> str | None:
+        """只生成「转场语」；失败返回 ``None``（调用方使用 main_question）。
+
+        下一题本身由 Topic Planner / Policy 决定（``next_topic.main_question``），
+        LLM 不得改写核心问题语义，只允许负责怎么衔接。
+        """
         if not self._enabled():
             return None
         if not context.previous_answer.strip():
@@ -181,12 +185,11 @@ class QuestionRealizerService:
             timeout=self._timeout_seconds(),
         )
         dto = _TransitionDTO.model_validate_json(raw)
-        question = _clean_text(dto.question, MAX_TRANSITION_QUESTION_CHARS)
-        if not question:
-            logger.warning("QuestionRealizer 返回空下一题，回退主问题: session=%s", context.session_id)
-            return None
         transition = _clean_text(dto.transition, MAX_TRANSITION_CHARS)
-        return DynamicTransitionDTO(transition=transition, question=question)
+        if not transition:
+            logger.info("QuestionRealizer 未生成转场语，直接使用主问题: session=%s", context.session_id)
+            return None
+        return transition
 
     # ---------- internal ----------
 

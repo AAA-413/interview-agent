@@ -17,6 +17,7 @@ FunASR 输出格式：
 - SenseVoice 在 text 前会带 <|zh|><|NEUTRAL|><|Speech|><|withitn|> 标签
 - _clean_sensevoice_output 把这些标签移除
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -158,8 +159,6 @@ class VoiceStreamingService:
         if sample_rate is None:
             sample_rate = settings.voice_interview.streaming_stt_sample_rate
 
-        bytes_per_second = sample_rate * 2  # Int16 = 2 bytes
-        rolling_window_bytes = self._ROLLING_WINDOW_SECONDS * bytes_per_second
         max_session_seconds = settings.voice_interview.streaming_stt_max_session_seconds
 
         buffer = bytearray()
@@ -190,9 +189,7 @@ class VoiceStreamingService:
                     last_infer_at = now
                     audio_chunk = bytes(buffer)
                     try:
-                        text = await asyncio.to_thread(
-                            self._transcribe_sync, audio_chunk, sample_rate
-                        )
+                        text = await asyncio.to_thread(self._transcribe_sync, audio_chunk, sample_rate)
                         consecutive_errors = 0
                         if text and text != last_text:
                             last_text = text
@@ -231,9 +228,7 @@ class VoiceStreamingService:
         try:
             text = ""
             if buffer:
-                text = await asyncio.to_thread(
-                    self._transcribe_sync, bytes(buffer), sample_rate
-                )
+                text = await asyncio.to_thread(self._transcribe_sync, bytes(buffer), sample_rate)
             yield STTEvent(
                 type=STTEventType.FINAL,
                 text=text,

@@ -105,9 +105,8 @@ class DynamicTurnDTO(BaseModel):
     turn_type: str
     turn_order: int
     question: str
-    # NEXT_TOPIC 自然转场语；question 字段已包含完整话术（转场 + 问题），
-    # 这里单独保留一份，便于前端后续做差异化展示。老前端忽略该字段即可。
-    transition: str | None = None
+    # 说明：NEXT_TOPIC 时 question 存的是面试官完整话术（转场语 + 下一题），
+    # 这样 submit 返回与重新 GET session 的结果完全一致，不引入额外展示字段。
     answer: str | None = None
     ability_score: int | None = None
     decision_action: str | None = None
@@ -155,13 +154,6 @@ class ConversationTurn(BaseModel):
 
     question: str
     answer: str
-
-
-class DynamicTransitionDTO(BaseModel):
-    """NEXT_TOPIC 场景的自然转场结果。"""
-
-    transition: str = ""
-    question: str = ""
 
 
 class DynamicTurnAnswerResponse(BaseModel):

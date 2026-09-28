@@ -207,6 +207,11 @@ class DynamicInterviewPersistenceService:
         turn.question = question
         await db.flush()
 
+    async def update_turn_decision(self, db: AsyncSession, turn: InterviewTurnEntity, decision: dict) -> None:
+        """回填当前轮次的 decision（Phase 3 拿到 LLM 生成的问题后补写 next_question）。"""
+        turn.decision_json = _json_dumps(decision)
+        await db.flush()
+
     async def find_session(
         self, db: AsyncSession, session_id: str, user_id: int | None = None
     ) -> InterviewSessionEntity | None:

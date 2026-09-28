@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from app.common.single_flight import build_single_flight_key, single_flight
 from app.modules.interview.question_service import interview_question_service
 
@@ -124,6 +126,59 @@ async def test_single_flight_does_not_rerun_failed_fn(monkeypatch):
         pass
     else:  # pragma: no cover
         raise AssertionError("异常应向上抛出")
+
+    assert calls == 1
+
+
+async def test_single_flight_releases_lock_when_owner_cancelled(monkeypatch):
+    """owner 拿到锁后被 cancel，running key 必须被清理（不能留下悬挂锁）。"""
+    fake = _FakeRedis()
+
+    async def fake_get_redis():
+        return fake
+
+    monkeypatch.setattr("app.infrastructure.redis.redis_service.get_redis", fake_get_redis)
+
+    started = asyncio.Event()
+
+    async def fn():
+        started.set()
+        await asyncio.sleep(30)
+        return "never"
+
+    task = asyncio.create_task(single_flight("cancel|test", fn))
+    await started.wait()
+    await asyncio.sleep(0)  # 让 owner 进入 await fn()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert "sf:run:cancel|test" not in fake._store, "取消后 running lock 必须被删除"
+    assert "sf:res:cancel|test" not in fake._store
+
+
+async def test_single_flight_cleanup_error_does_not_mask_fn_error(monkeypatch):
+    """cleanup 自身异常不能覆盖 fn 抛出的原始异常。"""
+
+    class _BrokenDeleteRedis(_FakeRedis):
+        async def delete(self, *keys):
+            raise RuntimeError("redis delete failed")
+
+    fake = _BrokenDeleteRedis()
+
+    async def fake_get_redis():
+        return fake
+
+    monkeypatch.setattr("app.infrastructure.redis.redis_service.get_redis", fake_get_redis)
+    calls = 0
+
+    async def fn():
+        nonlocal calls
+        calls += 1
+        raise ValueError("llm boom")
+
+    with pytest.raises(ValueError, match="llm boom"):
+        await single_flight("cleanup|test", fn)
 
     assert calls == 1
 

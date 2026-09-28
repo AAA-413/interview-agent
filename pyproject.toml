@@ -59,6 +59,9 @@ build-backend = "hatchling.build"
 [tool.ruff]
 target-version = "py311"
 line-length = 120
+# ruff 0.16 起 formatter 会处理 Markdown 里的 Python 代码块，
+# 这里显式排除，避免文档被工具自动改写（lint/format 只针对 .py）
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
