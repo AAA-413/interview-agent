@@ -49,11 +49,26 @@ from app.modules.interview.evaluation.models import (
     RULE_ONLY_CONFIDENCE,
     EvaluationSnapshot,
     GuardVerdict,
+    LLMCoverageAssessment,
     LLMEvaluationResult,
     active_dimension_weights,
     filter_active_dimension_scores,
+    normalize_evidence_text,
 )
-from app.modules.interview.schemas import DynamicTurnEvaluationDTO, EvaluationEvidenceDTO
+from app.modules.interview.schemas import (
+    COVERAGE_STATUS_COVERED,
+    COVERAGE_STATUS_NOT_COVERED,
+    COVERAGE_STATUS_PARTIAL,
+    DynamicTurnEvaluationDTO,
+    EvaluationCoverageAssessmentDTO,
+    EvaluationEvidenceDTO,
+)
+from app.modules.interview.topic_state.models import (
+    COVERAGE_STATUS_RANK,
+    MAX_COVERAGE_QUOTES_PER_TURN,
+    coverage_target_map,
+    coverage_targets_for,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +91,12 @@ class HybridEvaluationOutcome:
 
 
 def _normalize_for_evidence(text: str) -> str:
-    """证据比对用的归一化：去掉所有空白并小写（对换行/缩进不敏感）。"""
-    return "".join(str(text).split()).lower()
+    """证据比对用的归一化：去掉所有空白并小写（对换行/缩进不敏感）。
+
+    实现收敛在 ``evaluation.models.normalize_evidence_text``：
+    评分证据（PR2）与 coverage 证据（PR3）共用同一套 substring 语义。
+    """
+    return normalize_evidence_text(text)
 
 
 class HybridAnswerEvaluationService:
@@ -184,6 +203,7 @@ class HybridAnswerEvaluationService:
                 "mainQuestion": _untrusted(snapshot.topic.main_question),
                 "currentQuestion": _untrusted(snapshot.turn.question),
                 "activeDimensions": _render_active_dimensions(weights),
+                "coverageTargets": _render_coverage_targets(snapshot.topic.question_type),
                 "rubric": _render_rubric(snapshot.topic.rubric, weights),
                 "exitCriteria": _render_list(_safe_items(snapshot.topic.exit_criteria)),
                 "followupGoals": _render_list(_safe_items(snapshot.topic.followup_goals)),
@@ -342,7 +362,72 @@ class HybridAnswerEvaluationService:
             confidence=confidence,
             evidence=evidence,
             guard_flags=guard.flags,
+            # Coverage 与 Score 是**独立失败域**：这里只做保守过滤/降级，
+            # 绝不允许 coverage 的局部异常把已经可信的 score 打成 fallback。
+            coverage_assessments=self._build_coverage_assessments(topic.question_type, answer_norm, llm_result),
         )
+
+    def _build_coverage_assessments(
+        self,
+        question_type: str,
+        answer_norm: str,
+        llm_result: LLMEvaluationResult,
+    ) -> list[EvaluationCoverageAssessmentDTO]:
+        """校验 coverage 输出：unknown → drop / duplicate → 取第一条 / missing → NOT_COVERED。
+
+        本方法必须是**全函数**：任何异常都只能退化成「本轮没有 coverage 贡献」，
+        不能向上抛 —— 否则会破坏 score 的可信结果（PR3 §12）。
+        """
+        try:
+            return self._validate_coverage(question_type, answer_norm, llm_result)
+        except Exception as exc:  # pragma: no cover - 防御性兜底
+            logger.warning("coverage 校验异常，本轮按无贡献处理（score 不受影响）: %s", exc)
+            return []
+
+    def _validate_coverage(
+        self,
+        question_type: str,
+        answer_norm: str,
+        llm_result: LLMEvaluationResult,
+    ) -> list[EvaluationCoverageAssessmentDTO]:
+        canonical = coverage_target_map(question_type)
+        by_key: dict[str, LLMCoverageAssessment] = {}
+        for item in llm_result.coverage or []:
+            key = str(getattr(item, "target_key", "") or "").strip()
+            if key not in canonical:
+                # unknown（含其它题型的 target）→ 直接丢弃，不影响任何其它 target
+                continue
+            if key in by_key:
+                # duplicate → 只取第一条，不做语义猜测
+                continue
+            by_key[key] = item
+
+        result: list[EvaluationCoverageAssessmentDTO] = []
+        for key, definition in canonical.items():
+            item = by_key.get(key)
+            if item is None:
+                # missing → NOT_COVERED（本轮没有贡献）
+                result.append(
+                    EvaluationCoverageAssessmentDTO(
+                        target_key=key,
+                        status=COVERAGE_STATUS_NOT_COVERED,
+                    )
+                )
+                continue
+
+            status = str(getattr(item, "status", "") or "").strip().upper()
+            if status not in COVERAGE_STATUS_RANK:
+                status = COVERAGE_STATUS_NOT_COVERED
+
+            quotes = self._validate_quotes(list(item.evidence_quotes or []), answer_norm)
+            # 每个 target 最多 2 条 quote
+            quotes = quotes[:MAX_COVERAGE_QUOTES_PER_TURN]
+            if status in {COVERAGE_STATUS_PARTIAL, COVERAGE_STATUS_COVERED} and not quotes:
+                # 拿不出逐字原文证据 → 不接受 PARTIAL/COVERED，保守降级
+                status = COVERAGE_STATUS_NOT_COVERED
+
+            result.append(EvaluationCoverageAssessmentDTO(target_key=key, status=status, evidence_quotes=quotes))
+        return result
 
     @staticmethod
     def _validate_dimensions(active: set[str], llm_result: LLMEvaluationResult) -> dict:
@@ -468,6 +553,15 @@ def _render_rubric(rubric: dict[str, str], active_dimensions) -> str:
         if description:
             lines.append(f"- {dimension}: {_untrusted(description)}")
     return "\n".join(lines) if lines else "（topic 未提供）"
+
+
+def _render_coverage_targets(question_type: str | None) -> str:
+    """渲染 canonical coverage targets（key + 判定说明）。
+
+    target 定义来自 ``topic_state.models`` 的**唯一来源**，这里不重复维护文案。
+    """
+    definitions = coverage_targets_for(question_type)
+    return "\n".join(f"- {definition.key}: {definition.description}" for definition in definitions)
 
 
 def _render_active_dimensions(weights: dict[str, float]) -> str:

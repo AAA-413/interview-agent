@@ -190,6 +190,9 @@ class InterviewTopicEntity(Base):
     followup_goals_json: Mapped[str | None] = mapped_column(Text)
     exit_criteria_json: Mapped[str | None] = mapped_column(Text)
     rubric_json: Mapped[str | None] = mapped_column(Text)
+    # PR3：topic 级 coverage 累计状态（TopicCoverageStateDTO 的 JSON）。
+    # 老 topic 为 NULL → 读取时按 initial_state(question_type) 处理，无需 backfill。
+    coverage_state_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), server_default=func.now())
     completed_at: Mapped[str | None] = mapped_column(DateTime(timezone=True))
 

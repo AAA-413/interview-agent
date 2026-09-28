@@ -137,7 +137,12 @@ class InterviewContext(BaseModel):
 
     resume_evidence: str = ""
     unresolved_gaps: list[str] = Field(default_factory=list)
+    #: PR3：来自 TopicCoverageState 的已覆盖 / 部分覆盖关键点（真实 coverage，不再是 strengths 汇总）
     covered_points: list[str] = Field(default_factory=list)
+    partial_points: list[str] = Field(default_factory=list)
+    #: PR3：这一轮瞄准哪个 canonical coverage target（Policy 决定，Realizer 不得改写）
+    target_coverage_key: str | None = None
+    target_coverage_label: str | None = None
 
     follow_up_count: int = 0
     question_type: str = ""
@@ -158,6 +163,9 @@ class InterviewContext(BaseModel):
     def render_covered_points(self) -> str:
         return self._render_list(self.covered_points, "（暂无已覆盖信号）")
 
+    def render_partial_points(self) -> str:
+        return self._render_list(self.partial_points, "（没有只讲了一半的点）")
+
     @staticmethod
     def _render_list(items: list[str], empty_text: str) -> str:
         if not items:
@@ -168,6 +176,10 @@ class InterviewContext(BaseModel):
         """SingleFlight / 调试用的内容指纹入参。
 
         只要会影响模型输出的字段都必须进来，否则不同会话状态会错误复用同一份结果。
+
+        PR3 起 coverage 状态会直接改变 Realizer 的输出（covered 的点不能再问、
+        target 决定追问方向），因此必须参与指纹：否则「同一句回答 + 不同 coverage
+        累计状态」会错误共享同一个追问。
         """
         parts: list[str] = [
             self.session_id,
@@ -184,6 +196,8 @@ class InterviewContext(BaseModel):
             parts.append(f"{turn.turn_order}|{turn.question}|{turn.answer}")
         parts.append("|".join(self.unresolved_gaps))
         parts.append("|".join(self.covered_points))
+        parts.append("|".join(self.partial_points))
+        parts.append(f"target={self.target_coverage_key or ''}|{self.target_coverage_label or ''}")
         return tuple(parts)
 
 

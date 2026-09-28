@@ -37,6 +37,8 @@ from app.modules.interview.models import (
 )
 from app.modules.interview.question_realizer import question_realizer
 from app.modules.interview.schemas import SubmitDynamicTurnAnswerRequest
+from app.modules.interview.topic_state.models import initial_coverage_points
+from app.modules.interview.topic_state.tracker import topic_coverage_tracker
 
 STRONG_ANSWER = (
     "我们用 Redis Streams 做异步任务队列：Producer 用 XADD 写入，Consumer Group 用 XREADGROUP 消费，"
@@ -157,6 +159,10 @@ class _MemoryPersistence:
         # PR2：模拟「另一个请求在 LLM evaluation 期间提交了同一轮」
         self.answer_submitted_by_other = False
         self.lock_reads = 0
+        # PR3：模拟「另一个请求已经写入 coverage」
+        self.topic_lock_reads = 0
+        self.coverage_submitted_by_other: str | None = None
+        self.coverage_writes = 0
         self.metric_calls: list[dict] = []
 
     # ---- DB 访问 ----
@@ -175,6 +181,13 @@ class _MemoryPersistence:
 
     async def find_topic_or_throw(self, _db, topic_id, _user_id=None):
         return self.topics[topic_id]
+
+    async def find_topic_for_update_or_throw(self, _db, topic_id, _user_id=None):
+        self.topic_lock_reads += 1
+        topic = self.topics[topic_id]
+        if self.coverage_submitted_by_other is not None:
+            topic.coverage_state_json = self.coverage_submitted_by_other
+        return topic
 
     async def list_turns_by_topic(self, _db, topic_id):
         return sorted(
@@ -211,10 +224,15 @@ class _MemoryPersistence:
         turn.decision_json = _json(decision)
         turn.coach_hint_json = _json(coach_hint) if coach_hint else None
 
-    async def update_topic_after_answer(self, _db, topic, *, turn_count, best_score, final_score, completed=False):
+    async def update_topic_after_answer(
+        self, _db, topic, *, turn_count, best_score, final_score, completed=False, coverage_state=None
+    ):
         topic.turn_count = turn_count
         topic.best_score = best_score
         topic.final_score = final_score
+        if coverage_state is not None:
+            self.coverage_writes += 1
+            topic.coverage_state_json = json.dumps(coverage_state.model_dump(), ensure_ascii=False)
         if completed:
             topic.status = TopicStatus.COMPLETED.value
 
@@ -370,6 +388,7 @@ def _install(monkeypatch, fake_persistence: _MemoryPersistence):
         "find_turn_or_throw",
         "find_turn_for_update_or_throw",
         "find_topic_or_throw",
+        "find_topic_for_update_or_throw",
         "list_turns_by_topic",
         "list_topics",
         "save_turn_answer",
@@ -443,6 +462,33 @@ async def test_follow_up_failure_keeps_next_question_consistent(monkeypatch):
     assert fake.reload_turn(response.next_turn.id)["question"] == expected
     # 落库前加锁重读一次，避免慢 LLM 放大重复提交 race
     assert fake.lock_reads >= 1
+
+
+async def test_realizer_failure_fallback_aligns_with_policy_target(monkeypatch):
+    """P0-2 service-level：Policy target == Phase1 pending == Phase2 failure 后最终返回的问题 target。"""
+    session, topic, turns = _build_state()
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+
+    async def _timeout(*_args, **_kwargs):
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(question_realizer, "realize_follow_up", _timeout)
+
+    response = await _submit(_make_service(monkeypatch), _FakeDb(), turn_id=1)
+
+    # 兜底评价器（stub 走 HEURISTIC_FALLBACK）→ coverage 全 NOT_COVERED → 第一个 target = PROJECT_GOAL
+    assert response.decision.target_coverage_key == "PROJECT_GOAL"
+    expected_target_question = StrictInterviewPolicy._coverage_target_question(
+        persistence.topic_to_dto(topic), "PROJECT_GOAL"
+    )
+    assert expected_target_question, "PROJECT_GOAL 应有专属 fallback"
+    # Phase1 落库的 pending question、Phase2 失败后最终返回的问题、decision.next_question 三者一致，
+    # 且都等于 target 专属模板（而非 intent 通用模板 / 题型模板）
+    assert response.next_turn.question == expected_target_question
+    assert response.decision.next_question == expected_target_question
+    assert fake.reload_turn(response.next_turn.id)["question"] == expected_target_question
 
 
 # ---------------- Case 2：NEXT_TOPIC + transition failure ----------------
@@ -613,7 +659,6 @@ async def test_phase3_failure_falls_back_to_phase1_state(monkeypatch):
     topic_dto = persistence.topic_to_dto(topic)
     turn_dto = persistence.turn_to_dto(turns[0])
     evaluation = DynamicAnswerEvaluationService().evaluate(topic_dto, turn_dto, STRONG_ANSWER, [])
-    expected_fallback = StrictInterviewPolicy._followup_question(topic_dto, evaluation, followup_number=1)
 
     def _expire_orm_state():
         session.status = "__expired__"
@@ -628,6 +673,15 @@ async def test_phase3_failure_falls_back_to_phase1_state(monkeypatch):
     response = await _submit(_make_service(monkeypatch), db, turn_id=1)
 
     assert response.decision.action == "FOLLOW_UP"
+    # PR3：fallback 必须与 Policy 的 target + intent 对齐（不再是只看 followup number + gap）
+    expected_fallback = StrictInterviewPolicy._followup_question(
+        topic_dto,
+        evaluation,
+        followup_number=1,
+        follow_up_intent=response.decision.follow_up_intent,
+        target_gap=response.decision.target_gap,
+        target_coverage_key=response.decision.target_coverage_key,
+    )
     assert response.next_turn.question == expected_fallback
     assert response.next_turn.question != enhanced, "rollback 后不得使用未落库的 enhancement"
     assert response.decision.next_question == expected_fallback
@@ -722,6 +776,84 @@ async def test_concurrent_submit_is_rejected_after_lock(monkeypatch):
     assert "已提交" in str(exc.value)
     assert fake.turns[1].answer == OTHER_REQUEST_ANSWER, "不得覆盖另一个请求已提交的答案"
     assert db.commits == 0, "重复提交不应产生任何业务提交"
+
+
+# ---------------- PR3：coverage 事务边界 / 持久化 / 并发 ----------------
+
+
+async def test_evaluation_does_not_lock_topic_or_write_coverage(monkeypatch):
+    """PR3 §39/§24：LLM 等待期间不锁 topic、不写 coverage；完成后才 lock topic + 落库。"""
+    session, topic, turns = _build_state()
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+    db = _FakeDb()
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    observed: dict = {}
+
+    async def _on_call(_snapshot, _answer):
+        observed["topic_lock_reads"] = fake.topic_lock_reads
+        observed["coverage_writes"] = fake.coverage_writes
+        observed["coverage_state_json"] = fake.topics[1].coverage_state_json
+        started.set()
+        await release.wait()
+
+    evaluator = _StubHybridEvaluator(on_call=_on_call)
+    service = _make_service(monkeypatch, evaluator)
+
+    task = asyncio.create_task(_submit(service, db, turn_id=1))
+    await started.wait()
+    await asyncio.sleep(0)
+    assert observed == {"topic_lock_reads": 0, "coverage_writes": 0, "coverage_state_json": None}
+
+    release.set()
+    response = await task
+
+    assert response.decision.action == "FOLLOW_UP"
+    assert fake.topic_lock_reads == 1, "topic 锁只能在 evaluation 之后获取"
+    assert fake.coverage_writes == 1, "coverage 与 answer 在同一个 Phase1 事务内写一次"
+    assert fake.topics[1].coverage_state_json is not None
+
+
+async def test_coverage_state_persisted_roundtrip(monkeypatch):
+    """PR3 §22：answer 提交后 coverage_state_json 与 turn 同 Phase1 落库，可重新解析。"""
+    session, topic, turns = _build_state()
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+
+    await _submit(_make_service(monkeypatch), _FakeDb(), turn_id=1)
+
+    raw = fake.topics[1].coverage_state_json
+    assert raw is not None
+    state = topic_coverage_tracker.parse_state(raw, "PROJECT")
+    assert set(state.points) == set(initial_coverage_points("PROJECT"))
+    # stub evaluator 走 HEURISTIC_FALLBACK → coverage 最多 PARTIAL，绝不允许 COVERED
+    assert all(point.status != "COVERED" for point in state.points.values())
+    assert state.next_target_key == "PROJECT_GOAL", "PARTIAL/NOT 并存时优先第一个 NOT_COVERED"
+
+
+async def test_concurrent_submit_does_not_double_write_coverage(monkeypatch):
+    """PR3 §25：B 请求发现 answer 已被提交 → reject，且不得再次修改 coverage。"""
+    session, topic, turns = _build_state()
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+
+    async def _on_call(_snapshot, _answer):
+        fake.answer_submitted_by_other = True
+
+    evaluator = _StubHybridEvaluator(on_call=_on_call)
+    db = _FakeDb()
+
+    with pytest.raises(BusinessException):
+        await _submit(_make_service(monkeypatch, evaluator), db, turn_id=1)
+
+    assert fake.coverage_writes == 0, "重复提交被拒绝时不得写入 coverage"
+    assert fake.topics[1].coverage_state_json is None
+    assert db.commits == 0
 
 
 # ---------------- PR2：evaluation 字段持久化 roundtrip ----------------

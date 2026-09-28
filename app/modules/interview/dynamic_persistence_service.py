@@ -19,7 +19,13 @@ from app.modules.interview.models import (
     SessionStatus,
     TopicStatus,
 )
-from app.modules.interview.schemas import DynamicTopicDTO, DynamicTurnDTO, StructuredJD
+from app.modules.interview.schemas import (
+    DynamicTopicDTO,
+    DynamicTurnDTO,
+    StructuredJD,
+    TopicCoverageStateDTO,
+)
+from app.modules.interview.topic_state.tracker import topic_coverage_tracker
 
 
 def _json_dumps(value: object) -> str:
@@ -357,6 +363,25 @@ class DynamicInterviewPersistenceService:
         turn.answered_at = datetime.now()
         await db.flush()
 
+    async def find_topic_for_update_or_throw(
+        self, db: AsyncSession, topic_id: int, user_id: int | None = None
+    ) -> InterviewTopicEntity:
+        """带行级锁读取 topic，用于 coverage 累计写入前的重读。
+
+        锁顺序固定为 ``turn → topic``：先锁 turn 并确认 ``answer is None``，
+        再锁 topic 读取「最新的 coverage 状态」做 reduce，避免两个并发请求
+        各自基于过期状态覆盖对方的 coverage。
+        **锁只在 Phase 1 事务内短暂持有**，绝不在 LLM 等待期间持锁。
+        """
+        stmt = select(InterviewTopicEntity).where(InterviewTopicEntity.id == topic_id).with_for_update()
+        if user_id is not None:
+            stmt = stmt.where(InterviewTopicEntity.user_id == user_id)
+        result = await db.execute(stmt)
+        entity = result.scalar_one_or_none()
+        if entity is None:
+            raise BusinessException(ErrorCode.INTERVIEW_QUESTION_NOT_FOUND, "动态面试 topic 不存在")
+        return entity
+
     async def update_topic_after_answer(
         self,
         db: AsyncSession,
@@ -366,10 +391,13 @@ class DynamicInterviewPersistenceService:
         best_score: int | None,
         final_score: int | None,
         completed: bool = False,
+        coverage_state: TopicCoverageStateDTO | None = None,
     ) -> None:
         topic.turn_count = turn_count
         topic.best_score = best_score
         topic.final_score = final_score
+        if coverage_state is not None:
+            topic.coverage_state_json = topic_coverage_tracker.dump_state(coverage_state)
         if completed:
             topic.status = TopicStatus.COMPLETED.value
             topic.completed_at = datetime.now()
@@ -454,6 +482,9 @@ class DynamicInterviewPersistenceService:
             followup_goals=safe_json_loads(entity.followup_goals_json, []),
             exit_criteria=safe_json_loads(entity.exit_criteria_json, []),
             rubric=safe_json_loads(entity.rubric_json, {}),
+            # NULL / 非法 / schema 不兼容的 coverage_state_json 都退化成 initial state，
+            # 不允许脏数据把答题链路打挂。
+            coverage_state=topic_coverage_tracker.parse_state(entity.coverage_state_json, entity.question_type),
         )
 
     def turn_to_dto(self, entity: InterviewTurnEntity) -> DynamicTurnDTO:
