@@ -185,10 +185,22 @@ def test_strict_mode_first_answer_returns_followup_without_hint_or_retry():
 
     assert decision.action == "FOLLOW_UP"
     assert decision.hint is None
-    assert decision.next_question
-    assert "一次检索请求" in decision.next_question
-    assert "缺口" not in decision.next_question
-    assert "哪些模块或流程" not in decision.next_question
+    # Policy 只产出意图，不再产出最终追问措辞（由 QuestionRealizer 生成）
+    assert decision.next_question is None
+    assert decision.follow_up_intent in {
+        "VERIFY_IMPLEMENTATION",
+        "VERIFY_BOUNDARY",
+        "VERIFY_METRIC",
+        "VERIFY_FAILURE",
+        "VERIFY_TRADEOFF",
+        "VERIFY_OWNERSHIP",
+    }
+    assert decision.target_gap
+    # 模板追问保留为 fallback：QuestionRealizer 失败时使用
+    fallback_question = StrictInterviewPolicy._followup_question(topic, evaluation, followup_number=1)
+    assert "一次检索请求" in fallback_question
+    assert "缺口" not in fallback_question
+    assert "哪些模块或流程" not in fallback_question
 
 
 def test_strict_project_followup_keeps_second_question_single_focus():

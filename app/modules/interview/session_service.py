@@ -17,6 +17,7 @@ from app.modules.interview.project_drill_schemas import ProjectDrillRequest
 from app.modules.interview.project_drill_service import project_drill_service
 from app.modules.interview.question_service import MAX_FOLLOW_UP_COUNT, interview_question_service
 from app.modules.interview.schemas import (
+    ConversationTurn,
     CreateInterviewRequest,
     InterviewQuestionDTO,
     InterviewReportDTO,
@@ -191,6 +192,7 @@ class InterviewSessionService:
                     question_type=question.question_type,
                     category=question.category,
                     follow_up_count=follow_up_count,
+                    conversation_history=self._build_conversation_history(entity, questions, index),
                 )
             except Exception as e:
                 logger.warning("追问生成失败，继续下一题: %s", e)
@@ -282,6 +284,41 @@ class InterviewSessionService:
     @staticmethod
     def _count_follow_ups(questions: list[InterviewQuestionDTO], parent_index: int) -> int:
         return sum(1 for q in questions if q.is_follow_up and q.parent_question_index == parent_index)
+
+    @staticmethod
+    def _build_conversation_history(
+        entity,
+        questions: list[InterviewQuestionDTO],
+        current_index: int,
+    ) -> list[ConversationTurn]:
+        """收集当前题目（含已生成的追问）下已经发生过的 Q/A，供追问 prompt 使用。
+
+        只取「当前主问题」这条链上的轮次，且排除本轮回答（本轮由 user_answer 传入）。
+        """
+        current = questions[current_index]
+        parent_index = current.parent_question_index if current.is_follow_up else current_index
+        if parent_index is None or parent_index >= len(questions):
+            parent_index = current_index
+
+        answers_by_index = {
+            answer.question_index: answer.user_answer
+            for answer in entity.answers
+            if answer.user_answer and answer.question_index is not None
+        }
+        history: list[ConversationTurn] = []
+        for index, item in enumerate(questions):
+            if index == current_index:
+                continue
+            belongs_to_chain = index == parent_index or (
+                item.is_follow_up and item.parent_question_index == parent_index
+            )
+            if not belongs_to_chain:
+                continue
+            answer = answers_by_index.get(index)
+            if not answer:
+                continue
+            history.append(ConversationTurn(question=item.question, answer=answer))
+        return history
 
     async def save_answer(
         self, db: AsyncSession, session_id: str, request: SubmitAnswerRequest, user_id: int = 0

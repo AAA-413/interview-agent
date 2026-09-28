@@ -16,6 +16,8 @@ from app.common.error_code import ErrorCode
 from app.common.exception import BusinessException
 from app.common.model import AsyncTaskStatus
 from app.config import settings
+from app.modules.interview.context.builder import InterviewContextBuilder
+from app.modules.interview.context.models import FollowUpIntent, InterviewContext
 from app.modules.interview.dynamic_persistence_service import dynamic_interview_persistence_service
 from app.modules.interview.jd_parse_service import jd_parse_service
 from app.modules.interview.models import (
@@ -28,6 +30,7 @@ from app.modules.interview.models import (
     TopicStatus,
     TurnType,
 )
+from app.modules.interview.question_realizer import compose_utterance, question_realizer
 from app.modules.interview.schemas import (
     DynamicDecisionDTO,
     DynamicInterviewCreateRequest,
@@ -38,6 +41,7 @@ from app.modules.interview.schemas import (
     DynamicTopicDTO,
     DynamicTopicRagInsightDTO,
     DynamicTopicSummaryDTO,
+    DynamicTransitionDTO,
     DynamicTurnAnswerResponse,
     DynamicTurnDTO,
     DynamicTurnEvaluationDTO,
@@ -1036,7 +1040,25 @@ class CoachInterviewPolicy:
 
 
 class StrictInterviewPolicy:
+    """严厉模式策略层。
+
+    只负责确定性决策：是否追问、追问几次、是否切 topic、是否结束，
+    以及「这一轮要验证什么」（``follow_up_intent`` + ``target_gap``）。
+
+    **不负责**最终追问措辞：``next_question`` 留空，由 ``QuestionRealizer`` 生成；
+    Realizer 失败时由调用方回退到本类的 ``_followup_question()`` 模板。
+    """
+
     max_followups_per_topic = 2
+
+    # gap 关键词 → 追问意图（有限集合，顺序即优先级）
+    _INTENT_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+        (("指标", "效果", "结果", "验证", "口径", "baseline"), FollowUpIntent.VERIFY_METRIC.value),
+        (("取舍", "权衡", "替代方案", "成本", "为什么选"), FollowUpIntent.VERIFY_TRADEOFF.value),
+        (("职责", "个人", "贡献", "真实性", "证据"), FollowUpIntent.VERIFY_OWNERSHIP.value),
+        (("排查", "定位", "监控", "恢复", "故障", "修复"), FollowUpIntent.VERIFY_FAILURE.value),
+        (("异常", "边界", "失败", "兜底", "降级", "重试"), FollowUpIntent.VERIFY_BOUNDARY.value),
+    )
 
     def decide(
         self,
@@ -1054,11 +1076,19 @@ class StrictInterviewPolicy:
             turn.turn_type in {TurnType.MAIN.value, TurnType.FOLLOW_UP.value}
             and followup_count < self.max_followups_per_topic
         ):
+            intent, target_gap = self._follow_up_intent(
+                topic,
+                evaluation,
+                followup_count + 1,
+                used_intents=self._used_follow_up_intents(answered_turns_after_current),
+            )
             return DynamicDecisionDTO(
                 action=DecisionAction.FOLLOW_UP.value,
                 reason="严厉模式下继续验证回答真实性、细节和抗压稳定性。",
                 hint=None,
-                next_question=self._followup_question(topic, evaluation, followup_count + 1),
+                next_question=None,
+                follow_up_intent=intent,
+                target_gap=target_gap,
             )
 
         if has_next_topic:
@@ -1068,6 +1098,79 @@ class StrictInterviewPolicy:
                 hint=None,
             )
         return DynamicDecisionDTO(action=DecisionAction.END.value, reason="所有计划 topic 已完成，生成严厉模式报告。")
+
+    @classmethod
+    def _follow_up_intent(
+        cls,
+        topic: DynamicTopicDTO,
+        evaluation: DynamicTurnEvaluationDTO,
+        followup_number: int,
+        used_intents: set[str] | None = None,
+    ) -> tuple[str, str]:
+        """把规则评分的缺口翻译成「追问意图 + 目标缺口」。
+
+        Policy 只输出意图分类，不写自然语言问题（那是 QuestionRealizer 的职责）。
+        同一 topic 内优先换一个还没用过的意图，避免连续追问都停在同一个维度。
+        """
+        signals = evaluation.signals or {}
+        candidates = [*(signals.get("gaps") or []), *(signals.get("risks") or [])]
+        ranked: list[tuple[str, str]] = []
+        for gap in candidates:
+            text = str(gap)
+            for keywords, candidate_intent in cls._INTENT_RULES:
+                if any(keyword in text for keyword in keywords):
+                    if not any(item[0] == candidate_intent for item in ranked):
+                        ranked.append((candidate_intent, text))
+                    break
+        ranked.append((cls._default_intent(topic, followup_number), ""))
+
+        used = used_intents or set()
+        intent, matched_gap = ranked[0]
+        for candidate_intent, candidate_gap in ranked:
+            if candidate_intent not in used:
+                intent, matched_gap = candidate_intent, candidate_gap
+                break
+
+        target_gap = cls._target_gap(candidates, matched_gap)
+        return intent, target_gap
+
+    @staticmethod
+    def _used_follow_up_intents(answered_turns_after_current: list[DynamicTurnDTO]) -> set[str]:
+        """从历史轮次的 decision 里提取已经用过的追问意图。"""
+        used: set[str] = set()
+        for turn in answered_turns_after_current:
+            decision = turn.decision or {}
+            if isinstance(decision, dict):
+                intent = decision.get("follow_up_intent")
+                if intent:
+                    used.add(str(intent))
+        return used
+
+    @staticmethod
+    def _default_intent(topic: DynamicTopicDTO, followup_number: int) -> str:
+        if followup_number <= 1:
+            return FollowUpIntent.VERIFY_IMPLEMENTATION.value
+        if topic.question_type == "PROJECT":
+            return FollowUpIntent.VERIFY_METRIC.value
+        if topic.question_type == "SYSTEM_DESIGN":
+            return FollowUpIntent.VERIFY_FAILURE.value
+        return FollowUpIntent.VERIFY_BOUNDARY.value
+
+    @staticmethod
+    def _target_gap(candidates: list[str], matched_gap: str, limit: int = 160) -> str:
+        """构造给 QuestionRealizer 的「要验证什么」，只描述缺口，不写问题。"""
+        ordered: list[str] = []
+        if matched_gap:
+            ordered.append(str(matched_gap))
+        for item in candidates:
+            text = str(item)
+            if text and text not in ordered:
+                ordered.append(text)
+            if len(ordered) >= 2:
+                break
+        if not ordered:
+            return "回答整体偏泛，需要补一个可验证的具体点"
+        return "；".join(ordered)[:limit]
 
     @staticmethod
     def _followup_question(
@@ -1506,6 +1609,23 @@ class DynamicRagCoachService:
         return f"用 1 分钟解释「{topic.topic_title}」的定义、机制、场景和风险。"
 
 
+def resolve_topic_opening(
+    transition: DynamicTransitionDTO | None,
+    main_question: str,
+) -> tuple[str, str]:
+    """决定下一 topic 的开场话术。
+
+    QuestionRealizer 成功时返回（转场 + 下一题）拼接后的完整话术；
+    失败 / 无转场时原样使用 topic 的 main_question，保证面试不中断。
+
+    Returns:
+        (opening_question, transition_text)
+    """
+    if not transition or not transition.question:
+        return main_question, ""
+    return compose_utterance(transition.transition, transition.question), transition.transition
+
+
 class DynamicInterviewService:
     generation_stages = [
         ("RESUME_PROFILE", "正在分析简历项目"),
@@ -1519,6 +1639,7 @@ class DynamicInterviewService:
         self.evaluator = DynamicAnswerEvaluationService()
         self.report_service = DynamicInterviewReportService()
         self.rag_coach_service = DynamicRagCoachService()
+        self.context_builder = InterviewContextBuilder()
 
     @staticmethod
     def _policy_for_mode(mode: str | None):
@@ -1866,6 +1987,47 @@ class DynamicInterviewService:
         if decision.action != DecisionAction.COACH_RETRY.value:
             coach_hint = None
 
+        # Answer -> InterviewContext：所有下游（Realizer / Prompt）只消费这一份 Context
+        followup_count = sum(1 for item in answered_after if item.turn_type == TurnType.FOLLOW_UP.value)
+        interview_context = self.context_builder.build(
+            session_id=session.session_id,
+            interview_mode=session.interview_mode,
+            topic=topic,
+            current_question=turn.question,
+            current_answer=request.answer,
+            answered_turns=previous_turns,
+            evaluation=evaluation,
+            follow_up_count=followup_count,
+        )
+
+        # Policy Intent -> QuestionRealizer -> 自然语言问题（失败回退规则模板）
+        if decision.action == DecisionAction.FOLLOW_UP.value:
+            realized = await self._realize_follow_up_question(
+                db,
+                session,
+                topic=topic,
+                evaluation=evaluation,
+                context=interview_context,
+                decision=decision,
+                followup_count=followup_count,
+                topic_id=topic_entity.id,
+                turn_id=turn.id,
+            )
+            decision = decision.model_copy(update={"next_question": realized})
+
+        transition_dto: DynamicTransitionDTO | None = None
+        if decision.action == DecisionAction.NEXT_TOPIC.value and next_topic_entity is not None:
+            transition_dto = await self._realize_topic_transition(
+                db,
+                session,
+                previous_topic=topic,
+                previous_question=turn.question,
+                previous_answer=request.answer,
+                next_topic=dynamic_interview_persistence_service.topic_to_dto(next_topic_entity),
+                topic_id=topic_entity.id,
+                turn_id=turn.id,
+            )
+
         await dynamic_interview_persistence_service.save_turn_answer(
             db,
             turn,
@@ -1927,6 +2089,7 @@ class DynamicInterviewService:
                 (item for item in existing_next_turns if item.turn_type == TurnType.MAIN.value),
                 None,
             )
+            opening_question, transition_text = resolve_topic_opening(transition_dto, next_topic_entity.main_question)
             if next_turn_entity is None:
                 next_turn_entity = await dynamic_interview_persistence_service.create_turn(
                     db,
@@ -1935,9 +2098,13 @@ class DynamicInterviewService:
                     user_id=user_id,
                     turn_type=TurnType.MAIN.value,
                     turn_order=1,
-                    question=next_topic_entity.main_question,
+                    question=opening_question,
                 )
+            elif opening_question and next_turn_entity.question != opening_question:
+                await dynamic_interview_persistence_service.update_turn_question(db, next_turn_entity, opening_question)
             next_turn = dynamic_interview_persistence_service.turn_to_dto(next_turn_entity)
+            if transition_text:
+                next_turn = next_turn.model_copy(update={"transition": transition_text})
             current_topic = dynamic_interview_persistence_service.topic_to_dto(next_topic_entity)
         elif decision.action == DecisionAction.END.value:
             report = await self._complete_and_report(db, session)
@@ -1956,6 +2123,80 @@ class DynamicInterviewService:
             },
             report=report,
         )
+
+    async def _realize_follow_up_question(
+        self,
+        db: AsyncSession,
+        session: InterviewSessionEntity,
+        *,
+        topic: DynamicTopicDTO,
+        evaluation: DynamicTurnEvaluationDTO,
+        context: InterviewContext,
+        decision: DynamicDecisionDTO,
+        followup_count: int,
+        topic_id: int,
+        turn_id: int,
+    ) -> str:
+        """LLM 生成追问；任何失败都回退到 StrictInterviewPolicy 的模板追问。"""
+        realized: str | None = None
+        try:
+            realized = await self._track_operation(
+                db,
+                session,
+                "FOLLOW_UP_REALIZE",
+                lambda: question_realizer.realize_follow_up(context, decision),
+                topic_id=topic_id,
+                turn_id=turn_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "QuestionRealizer 追问失败，回退模板: session_id=%s, turn_id=%s, error=%s",
+                session.session_id,
+                turn_id,
+                exc,
+            )
+        if realized:
+            return realized
+        return StrictInterviewPolicy._followup_question(topic, evaluation, followup_count + 1)
+
+    async def _realize_topic_transition(
+        self,
+        db: AsyncSession,
+        session: InterviewSessionEntity,
+        *,
+        previous_topic: DynamicTopicDTO,
+        previous_question: str,
+        previous_answer: str,
+        next_topic: DynamicTopicDTO,
+        topic_id: int,
+        turn_id: int,
+    ) -> DynamicTransitionDTO | None:
+        """LLM 一次生成「转场 + 下一题」；失败返回 None，调用方直接使用 main_question。"""
+        context = self.context_builder.build_topic_transition(
+            session_id=session.session_id,
+            interview_mode=session.interview_mode,
+            previous_topic=previous_topic,
+            previous_question=previous_question,
+            previous_answer=previous_answer,
+            next_topic=next_topic,
+        )
+        try:
+            return await self._track_operation(
+                db,
+                session,
+                "TOPIC_TRANSITION_REALIZE",
+                lambda: question_realizer.realize_topic_transition(context),
+                topic_id=topic_id,
+                turn_id=turn_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "QuestionRealizer 转场失败，回退主问题: session_id=%s, turn_id=%s, error=%s",
+                session.session_id,
+                turn_id,
+                exc,
+            )
+            return None
 
     async def get_session_detail(self, db: AsyncSession, session_id: str, user_id: int) -> DynamicSessionDetailDTO:
         session = await dynamic_interview_persistence_service.find_session_or_throw(db, session_id, user_id)

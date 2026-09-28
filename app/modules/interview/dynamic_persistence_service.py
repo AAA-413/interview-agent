@@ -202,6 +202,11 @@ class DynamicInterviewPersistenceService:
         await db.flush()
         return entity
 
+    async def update_turn_question(self, db: AsyncSession, turn: InterviewTurnEntity, question: str) -> None:
+        """更新已创建轮次的问题文案（NEXT_TOPIC 自然转场会重写下一题的开场话术）。"""
+        turn.question = question
+        await db.flush()
+
     async def find_session(
         self, db: AsyncSession, session_id: str, user_id: int | None = None
     ) -> InterviewSessionEntity | None:

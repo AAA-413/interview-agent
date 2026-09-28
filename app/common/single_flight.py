@@ -69,28 +69,47 @@ async def single_flight(
         cached = await redis.get(result_key)
         if cached:
             return cached
-
         acquired = await redis.set(running_key, "1", nx=True, ex=running_ttl)
-        if acquired:
-            try:
-                result = await fn()
-                await redis.set(result_key, result, ex=result_ttl)
-                return result
-            finally:
-                await redis.delete(running_key)
+    except Exception as e:
+        logger.warning("single-flight 读取/加锁失败，降级为直接执行: key=%s, error=%s", key, e)
+        return await fn()
 
+    if acquired:
+        try:
+            result = await fn()
+        except Exception:
+            # fn 自身失败（LLM 超时 / 结构化输出非法）直接上抛给调用方：
+            # 不能走降级分支，否则同一份请求会对模型重复调用一次。
+            await _safe_delete(redis, running_key)
+            raise
+        try:
+            await redis.set(result_key, result, ex=result_ttl)
+        except Exception as e:
+            logger.warning("single-flight 写入结果失败（不重跑 fn）: key=%s, error=%s", key, e)
+        finally:
+            await _safe_delete(redis, running_key)
+        return result
+
+    try:
         deadline = time.monotonic() + wait_timeout
         while time.monotonic() < deadline:
             cached = await redis.get(result_key)
             if cached:
                 return cached
             await asyncio.sleep(poll_interval)
-
-        logger.warning("single-flight 等待在途请求超时，降级为直接执行: key=%s", key)
-        return await fn()
     except Exception as e:
-        logger.warning("single-flight 异常，降级为直接执行: key=%s, error=%s", key, e)
+        logger.warning("single-flight 等待在途结果失败，降级为直接执行: key=%s, error=%s", key, e)
         return await fn()
+
+    logger.warning("single-flight 等待在途请求超时，降级为直接执行: key=%s", key)
+    return await fn()
+
+
+async def _safe_delete(redis, key: str) -> None:
+    try:
+        await redis.delete(key)
+    except Exception as e:
+        logger.warning("single-flight 清理锁失败: key=%s, error=%s", key, e)
 
 
 async def _try_get_redis():

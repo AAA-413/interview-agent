@@ -105,6 +105,9 @@ class DynamicTurnDTO(BaseModel):
     turn_type: str
     turn_order: int
     question: str
+    # NEXT_TOPIC 自然转场语；question 字段已包含完整话术（转场 + 问题），
+    # 这里单独保留一份，便于前端后续做差异化展示。老前端忽略该字段即可。
+    transition: str | None = None
     answer: str | None = None
     ability_score: int | None = None
     decision_action: str | None = None
@@ -141,6 +144,24 @@ class DynamicDecisionDTO(BaseModel):
     reason: str
     hint: dict | None = None
     next_question: str | None = None
+    # Policy 只产出「意图」，不产出最终措辞；next_question 由 QuestionRealizer 填充，
+    # QuestionRealizer 失败时回退为 StrictInterviewPolicy 的模板追问。
+    follow_up_intent: str | None = None
+    target_gap: str | None = None
+
+
+class ConversationTurn(BaseModel):
+    """标准面试模式下，当前 topic 内已经发生的一轮 Q/A（不可信数据）。"""
+
+    question: str
+    answer: str
+
+
+class DynamicTransitionDTO(BaseModel):
+    """NEXT_TOPIC 场景的自然转场结果。"""
+
+    transition: str = ""
+    question: str = ""
 
 
 class DynamicTurnAnswerResponse(BaseModel):

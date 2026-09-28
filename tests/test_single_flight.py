@@ -102,6 +102,32 @@ async def test_single_flight_replays_cached_result_without_calling_fn(monkeypatc
     assert calls == 0
 
 
+async def test_single_flight_does_not_rerun_failed_fn(monkeypatch):
+    """fn 自身失败（LLM 超时等）不能触发降级重跑，否则同一请求会重复调用模型。"""
+    fake = _FakeRedis()
+
+    async def fake_get_redis():
+        return fake
+
+    monkeypatch.setattr("app.infrastructure.redis.redis_service.get_redis", fake_get_redis)
+
+    calls = 0
+
+    async def fn():
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("LLM timeout")
+
+    try:
+        await single_flight("fail|test", fn)
+    except RuntimeError:
+        pass
+    else:  # pragma: no cover
+        raise AssertionError("异常应向上抛出")
+
+    assert calls == 1
+
+
 async def test_single_flight_falls_back_when_redis_unavailable(monkeypatch):
     async def fake_get_redis():
         raise RuntimeError("redis down")
