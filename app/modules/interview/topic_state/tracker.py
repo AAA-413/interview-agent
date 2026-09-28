@@ -169,14 +169,26 @@ class TopicCoverageTracker:
                 # 拿不出逐字原文证据 → 不接受 PARTIAL/COVERED，保守降级
                 status = COVERAGE_STATUS_NOT_COVERED
 
+            # provenance 只看「当前轮是否真的提供了 positive coverage contribution」，
+            # 而不是 merged_status —— 否则 COVERED + 本轮 NOT_COVERED 会错误地
+            # 把本轮 turn_id 记进 source_turn_ids、把本轮没讲的 quote 混进去。
+            has_positive_contribution = status in {COVERAGE_STATUS_PARTIAL, COVERAGE_STATUS_COVERED} and bool(
+                valid_quotes
+            )
+
             merged_status = merge_coverage_status(point.status, status)
-            merged_quotes = self._append_quotes(point, valid_quotes)
+            merged_quotes = (
+                self._append_quotes(point, valid_quotes) if has_positive_contribution else list(point.evidence_quotes)
+            )
+            merged_turn_ids = (
+                self._append_turn_id(point, turn_id) if has_positive_contribution else list(point.source_turn_ids)
+            )
 
             points[contribution.target_key] = point.model_copy(
                 update={
                     "status": merged_status,
                     "evidence_quotes": merged_quotes,
-                    "source_turn_ids": self._append_turn_id(point, turn_id, merged_status),
+                    "source_turn_ids": merged_turn_ids,
                 }
             )
 
@@ -282,11 +294,9 @@ class TopicCoverageTracker:
         return merged[:MAX_EVIDENCE_PER_TARGET]
 
     @staticmethod
-    def _append_turn_id(point: TopicCoveragePointDTO, turn_id: int, merged_status: str) -> list[int]:
-        """只有状态确实高于本轮之前才记 source_turn_id（避免记录无贡献的轮次）。"""
+    def _append_turn_id(point: TopicCoveragePointDTO, turn_id: int) -> list[int]:
+        """追加 source_turn_id（调用方保证本轮确有 positive contribution）。"""
         ids = list(point.source_turn_ids or [])
-        if merged_status == COVERAGE_STATUS_NOT_COVERED:
-            return ids
         if turn_id is None or turn_id in ids:
             return ids
         ids.append(int(turn_id))

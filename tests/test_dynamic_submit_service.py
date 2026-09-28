@@ -464,6 +464,33 @@ async def test_follow_up_failure_keeps_next_question_consistent(monkeypatch):
     assert fake.lock_reads >= 1
 
 
+async def test_realizer_failure_fallback_aligns_with_policy_target(monkeypatch):
+    """P0-2 service-level：Policy target == Phase1 pending == Phase2 failure 后最终返回的问题 target。"""
+    session, topic, turns = _build_state()
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+
+    async def _timeout(*_args, **_kwargs):
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(question_realizer, "realize_follow_up", _timeout)
+
+    response = await _submit(_make_service(monkeypatch), _FakeDb(), turn_id=1)
+
+    # 兜底评价器（stub 走 HEURISTIC_FALLBACK）→ coverage 全 NOT_COVERED → 第一个 target = PROJECT_GOAL
+    assert response.decision.target_coverage_key == "PROJECT_GOAL"
+    expected_target_question = StrictInterviewPolicy._coverage_target_question(
+        persistence.topic_to_dto(topic), "PROJECT_GOAL"
+    )
+    assert expected_target_question, "PROJECT_GOAL 应有专属 fallback"
+    # Phase1 落库的 pending question、Phase2 失败后最终返回的问题、decision.next_question 三者一致，
+    # 且都等于 target 专属模板（而非 intent 通用模板 / 题型模板）
+    assert response.next_turn.question == expected_target_question
+    assert response.decision.next_question == expected_target_question
+    assert fake.reload_turn(response.next_turn.id)["question"] == expected_target_question
+
+
 # ---------------- Case 2：NEXT_TOPIC + transition failure ----------------
 
 
@@ -646,13 +673,14 @@ async def test_phase3_failure_falls_back_to_phase1_state(monkeypatch):
     response = await _submit(_make_service(monkeypatch), db, turn_id=1)
 
     assert response.decision.action == "FOLLOW_UP"
-    # PR3：fallback 必须与 Policy 的 intent 对齐（不再只看 followup number + gap）
+    # PR3：fallback 必须与 Policy 的 target + intent 对齐（不再是只看 followup number + gap）
     expected_fallback = StrictInterviewPolicy._followup_question(
         topic_dto,
         evaluation,
         followup_number=1,
         follow_up_intent=response.decision.follow_up_intent,
         target_gap=response.decision.target_gap,
+        target_coverage_key=response.decision.target_coverage_key,
     )
     assert response.next_turn.question == expected_fallback
     assert response.next_turn.question != enhanced, "rollback 后不得使用未落库的 enhancement"

@@ -91,8 +91,8 @@ PROJECT_COVERAGE_TARGETS: tuple[CoverageTargetDefinition, ...] = (
 KNOWLEDGE_COVERAGE_TARGETS: tuple[CoverageTargetDefinition, ...] = (
     CoverageTargetDefinition(
         key="KNOWLEDGE_DEFINITION",
-        label="能给出准确定义",
-        description="是否给出了准确的概念定义或边界界定",
+        label="能给出概念定义",
+        description="是否明确给出了概念定义或边界界定；这里只判断是否覆盖，不判断正误",
         intent=FollowUpIntent.VERIFY_IMPLEMENTATION.value,
         priority=1,
     ),

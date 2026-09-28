@@ -1357,15 +1357,25 @@ class StrictInterviewPolicy:
         *,
         follow_up_intent: str | None = None,
         target_gap: str | None = None,
+        target_coverage_key: str | None = None,
     ) -> str:
         """fallback 追问模板。
 
-        PR3 起优先按 Policy 给出的 ``follow_up_intent`` 生成 —— 保证
-        「Policy = VERIFY_METRIC 但 Realizer 超时」时，fallback 仍然在问
-        结果/指标/baseline，而不是突然跳回实现链路。
-        没有 intent 时退回按题型 + 缺口生成的旧模板（向后兼容）。
+        优先级（从具体到兜底）：
+
+        1. ``target_coverage_key`` 专属模板 —— canonical target 与 intent 不是 1:1
+           （例如 KNOWLEDGE_DEFINITION/MECHANISM/SCENARIO 都映射 VERIFY_IMPLEMENTATION，
+           但问题必须不同），因此先按 target 精确对齐，保证 fallback 自身 correctness。
+        2. ``follow_up_intent`` 模板 —— 六种 intent 全覆盖。
+        3. 题型 + 缺口的旧模板（向后兼容）。
+
+        不通过解析自由文本 ``target_gap`` 来猜 target。
         """
-        del target_gap  # 只用于 intent 选择之外的可读性，模板不拼接自由文本
+        del target_gap  # 只作可读性/日志用途，模板不拼接自由文本
+        target_question = StrictInterviewPolicy._coverage_target_question(topic, target_coverage_key)
+        if target_question:
+            return target_question
+
         intent_question = StrictInterviewPolicy._intent_question(topic, follow_up_intent)
         if intent_question:
             return intent_question
@@ -1383,6 +1393,32 @@ class StrictInterviewPolicy:
         if followup_number == 1:
             return f"我想确认你不是只记了概念。请用 3 步讲清楚「{topic.topic_title}」的核心机制，再补一个最容易踩错的边界。"
         return "最后只举一个工程场景：它什么时候适用，什么时候不适用？"
+
+    @staticmethod
+    def _coverage_target_question(topic: DynamicTopicDTO, target_coverage_key: str | None) -> str:
+        """按 canonical target 生成 fallback 追问。
+
+        只有那些「intent 与 target 不是 1:1、且会与默认模板冲突」的 target 才需要
+        专属模板；能复用 intent 模板的（OWNERSHIP / RESULT_VALIDATION / TRADEOFF /
+        BOUNDARY / RELIABILITY 等）返回空串，交由上层按 intent 处理。
+        """
+        if not target_coverage_key:
+            return ""
+
+        if target_coverage_key == "PROJECT_GOAL":
+            return "先不讲实现，先讲清楚这个项目要解决什么问题、面向什么用户、目标是什么。"
+        if target_coverage_key == "KNOWLEDGE_DEFINITION":
+            return f"先用一句话说清「{topic.topic_title}」是什么、怎么界定，先不展开内部原理。"
+        if target_coverage_key == "KNOWLEDGE_MECHANISM":
+            return f"讲一下「{topic.topic_title}」的核心机制或执行流程，用 3 步讲清楚。"
+        if target_coverage_key == "KNOWLEDGE_SCENARIO":
+            return f"举一个真实工程场景：什么时候用「{topic.topic_title}」？具体怎么落地？"
+        if target_coverage_key == "SYSTEM_COMPONENTS":
+            return "先不管数据流，先把这个系统拆成哪几个核心模块/组件？每个一句话说清职责。"
+        if target_coverage_key == "SYSTEM_DATA_FLOW":
+            return "讲一次请求或一条数据从进来到返回，依次经过哪些模块、每个环节做什么。"
+        # 其余 target 与 intent 1:1，复用 intent 模板
+        return ""
 
     @staticmethod
     def _intent_question(topic: DynamicTopicDTO, follow_up_intent: str | None) -> str:
@@ -2500,6 +2536,7 @@ class DynamicInterviewService:
                 followup_count + 1,
                 follow_up_intent=decision.follow_up_intent,
                 target_gap=decision.target_gap,
+                target_coverage_key=decision.target_coverage_key,
             )
 
         # Phase 1 落库的 decision 使用**确定性的兜底问题**作为 next_question（按 action 区分）：
@@ -2824,6 +2861,7 @@ class DynamicInterviewService:
             followup_count + 1,
             follow_up_intent=decision.follow_up_intent,
             target_gap=decision.target_gap,
+            target_coverage_key=decision.target_coverage_key,
         )
 
     async def _realize_topic_transition(

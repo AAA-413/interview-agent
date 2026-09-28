@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.modules.interview.schemas import DynamicTopicDTO, DynamicTurnDTO
 
@@ -163,6 +163,36 @@ class LLMEvaluationResult(BaseModel):
     risks: list[str] = Field(default_factory=list)
     # PR3：与 dimensions 共用同一次 structured output，不额外增加 LLM 调用
     coverage: list[LLMCoverageAssessment] = Field(default_factory=list)
+
+    @field_validator("coverage", mode="before")
+    @classmethod
+    def _tolerate_malformed_coverage(cls, value):
+        """把 coverage 的结构性错误与 dimensions 的严格校验隔离。
+
+        coverage 是 PR3 新增的「软」字段：它哪怕是结构性 malformed（不是 list、
+        元素不是 dict、元素 schema 不合法），也必须**保守降级为空**，而**绝不允许**
+        让整次 ``LLMEvaluationResult`` 的 Pydantic 校验失败，否则会连带把已经可信的
+        score（dimensions）打成 ``HEURISTIC_FALLBACK`` —— 这违反 PR3「score 与
+        coverage 是两个独立失败域」的核心原则。
+
+        dimensions 保持严格：本 validator 只作用于 coverage，不碰 dimensions。
+        """
+        if not isinstance(value, list):
+            return []
+        valid: list[LLMCoverageAssessment] = []
+        for item in value:
+            # 两种合法来源都要接受：raw JSON 解析出的 dict，以及代码内部直接构造的
+            # LLMCoverageAssessment 实例（测试 / 组合路径）。
+            if isinstance(item, LLMCoverageAssessment):
+                valid.append(item)
+                continue
+            if not isinstance(item, dict):
+                continue
+            try:
+                valid.append(LLMCoverageAssessment.model_validate(item))
+            except Exception:
+                continue
+        return valid
 
 
 # ---------------- snapshot / guard ----------------

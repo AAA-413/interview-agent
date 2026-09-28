@@ -941,3 +941,250 @@ def test_parse_state_missing_targets_is_normalized():
 
 def test_evaluator_version_is_v3():
     assert EVALUATOR_VERSION == "hybrid-evaluator-v3"
+
+
+# ---------------------------------------------------------------------------
+# P0-1：coverage structural malformed 与 dimensions 严格校验的失败域隔离
+# ---------------------------------------------------------------------------
+
+
+def _raw_valid_dimensions() -> list[dict]:
+    quote = "这个异步任务队列是我负责设计和落地的"
+    return [
+        {"dimension": "authenticity", "score": 80, "assessment": "职责清晰", "evidence_quotes": [quote], "gaps": []},
+        {
+            "dimension": "technical_depth",
+            "score": 82,
+            "assessment": "实现具体",
+            "evidence_quotes": ["生产端用 XADD 写入 Redis Streams"],
+            "gaps": [],
+        },
+        {
+            "dimension": "communication_structure",
+            "score": 78,
+            "assessment": "结构清楚",
+            "evidence_quotes": ["超时任务用 XPENDING 捞出来重新投递"],
+            "gaps": [],
+        },
+    ]
+
+
+def test_raw_coverage_string_does_not_break_parse():
+    """Case 1：coverage 是字符串 → LLMEvaluationResult 仍可解析，dimensions 保留。"""
+    raw = {"dimensions": _raw_valid_dimensions(), "risks": [], "coverage": "broken"}
+    parsed = LLMEvaluationResult.model_validate(raw)
+    assert len(parsed.dimensions) == 3
+    assert parsed.coverage == []
+
+
+def test_raw_coverage_malformed_items_do_not_break_parse():
+    """Case 2：coverage 里混入垃圾元素 / 坏 schema → 保守忽略，dimensions 保留。"""
+    raw = {
+        "dimensions": _raw_valid_dimensions(),
+        "risks": [],
+        "coverage": [
+            "garbage",
+            {"target_key": "PROJECT_GOAL", "status": {"bad": True}, "evidence_quotes": "bad"},
+            123,
+        ],
+    }
+    parsed = LLMEvaluationResult.model_validate(raw)
+    assert len(parsed.dimensions) == 3
+    assert parsed.coverage == []
+
+
+def test_raw_coverage_mixed_valid_and_invalid_keeps_valid_only():
+    raw = {
+        "dimensions": _raw_valid_dimensions(),
+        "risks": [],
+        "coverage": [
+            {
+                "target_key": "PROJECT_OWNERSHIP",
+                "status": "COVERED",
+                "evidence_quotes": ["这个异步任务队列是我负责设计和落地的"],
+            },
+            {"target_key": "PROJECT_GOAL", "status": "COVERED", "evidence_quotes": "bad-type"},
+            "junk",
+        ],
+    }
+    parsed = LLMEvaluationResult.model_validate(raw)
+    assert [item.target_key for item in parsed.coverage] == ["PROJECT_OWNERSHIP"]
+
+
+def test_dimensions_remain_strict_under_malformed_coverage():
+    """dimensions 仍严格：缺 dimension 仍会抛错，不受 coverage permissive 影响。"""
+    raw = {
+        "dimensions": [{"score": 80, "assessment": "a"}],  # 缺 dimension 字段
+        "risks": [],
+        "coverage": "broken",
+    }
+    with pytest.raises(Exception):
+        LLMEvaluationResult.model_validate(raw)
+
+
+async def test_evaluator_keeps_hybrid_score_on_raw_malformed_coverage(monkeypatch):
+    """raw malformed coverage → evaluator 仍 HYBRID_LLM，不回 HEURISTIC_FALLBACK。"""
+    raw = {"dimensions": _raw_valid_dimensions(), "risks": [], "coverage": "broken"}
+    parsed = LLMEvaluationResult.model_validate(raw)
+    service, _ = _service(monkeypatch, parsed)
+
+    outcome = await service.evaluate(_snapshot(), STRONG_ANSWER)
+
+    assert outcome.evaluation.evaluation_method == "HYBRID_LLM"
+    assert outcome.evaluation.ability_score >= 78, "score 使用正常 semantic 加权结果"
+
+
+# ---------------------------------------------------------------------------
+# P0-2：target-specific fallback（canonical target 与 intent 不是 1:1）
+# ---------------------------------------------------------------------------
+
+
+def _fallback(question_type: str, target_key: str, intent: str) -> str:
+    return StrictInterviewPolicy._followup_question(
+        _topic(question_type),
+        _evaluation(60),
+        followup_number=1,
+        follow_up_intent=intent,
+        target_coverage_key=target_key,
+    )
+
+
+def test_fallback_project_goal_asks_about_goal_not_minimal_chain():
+    question = _fallback("PROJECT", "PROJECT_GOAL", "VERIFY_IMPLEMENTATION")
+    assert "要解决什么问题" in question or "目标" in question
+    assert "最小闭环" not in question, "PROJECT_GOAL 不能退回技术最小链路"
+
+
+def test_fallback_knowledge_definition_asks_definition_not_mechanism():
+    question = _fallback("KNOWLEDGE", "KNOWLEDGE_DEFINITION", "VERIFY_IMPLEMENTATION")
+    assert "是什么" in question and "界定" in question
+    assert "机制" not in question, "KNOWLEDGE_DEFINITION 不能问核心机制"
+
+
+def test_fallback_knowledge_mechanism_asks_mechanism():
+    question = _fallback("KNOWLEDGE", "KNOWLEDGE_MECHANISM", "VERIFY_IMPLEMENTATION")
+    assert "机制" in question or "流程" in question
+
+
+def test_fallback_knowledge_scenario_asks_scenario_not_mechanism():
+    question = _fallback("KNOWLEDGE", "KNOWLEDGE_SCENARIO", "VERIFY_IMPLEMENTATION")
+    assert "场景" in question and "什么时候" in question
+    assert "核心机制" not in question, "KNOWLEDGE_SCENARIO 不能问核心机制"
+
+
+def test_fallback_system_data_flow_asks_flow():
+    question = _fallback("SYSTEM_DESIGN", "SYSTEM_DATA_FLOW", "VERIFY_IMPLEMENTATION")
+    assert "请求" in question or "数据" in question
+
+
+def test_fallback_system_components_asks_modules():
+    question = _fallback("SYSTEM_DESIGN", "SYSTEM_COMPONENTS", "VERIFY_IMPLEMENTATION")
+    assert "模块" in question or "组件" in question
+
+
+def test_fallback_project_result_validation_still_uses_metric_intent():
+    """PROJECT_RESULT_VALIDATION 没有专属 target 模板 → 复用 VERIFY_METRIC。"""
+    question = _fallback("PROJECT", "PROJECT_RESULT_VALIDATION", "VERIFY_METRIC")
+    assert "指标" in question and "baseline" in question
+
+
+# ---------------------------------------------------------------------------
+# P1：coverage evidence / source_turn_ids provenance
+# ---------------------------------------------------------------------------
+
+
+async def test_provenance_not_covered_turn_does_not_add_turn_id():
+    """turn1 COVERED + valid quote；turn2 NOT_COVERED → source_turn_ids 仍 [1]，quote 不变。"""
+    tracker = TopicCoverageTracker()
+    topic = _topic()
+    quote = "这个异步任务队列是我负责设计和落地的"
+    s1 = tracker.update(
+        topic=topic,
+        current_state=tracker.initial_state("PROJECT"),
+        turn_id=1,
+        answer=STRONG_ANSWER,
+        evaluation=_evaluation(coverage=[_assessment("PROJECT_OWNERSHIP", "COVERED", [quote])]),
+    )
+    assert s1.points["PROJECT_OWNERSHIP"].source_turn_ids == [1]
+
+    s2 = tracker.update(
+        topic=topic,
+        current_state=s1,
+        turn_id=2,
+        answer="这轮完全没讲职责，只讲了别的。",
+        evaluation=_evaluation(coverage=[_assessment("PROJECT_OWNERSHIP", "NOT_COVERED")]),
+    )
+    point = s2.points["PROJECT_OWNERSHIP"]
+    assert point.status == "COVERED", "状态仍 COVERED（单调）"
+    assert point.source_turn_ids == [1], "无贡献轮次不得记 source_turn_id"
+    assert point.evidence_quotes == [quote], "无贡献轮次不得追加 quote"
+
+
+async def test_provenance_not_covered_with_quote_is_ignored():
+    """NOT_COVERED + 附带 quote → quote 与 source_turn_id 都不保存。"""
+    tracker = TopicCoverageTracker()
+    topic = _topic()
+    state = tracker.update(
+        topic=topic,
+        current_state=tracker.initial_state("PROJECT"),
+        turn_id=1,
+        answer=STRONG_ANSWER,
+        evaluation=_evaluation(
+            coverage=[_assessment("PROJECT_OWNERSHIP", "NOT_COVERED", ["这个异步任务队列是我负责设计和落地的"])]
+        ),
+    )
+    point = state.points["PROJECT_OWNERSHIP"]
+    assert point.status == "NOT_COVERED"
+    assert point.evidence_quotes == []
+    assert point.source_turn_ids == []
+
+
+async def test_provenance_covered_then_partial_with_new_quote_accumulates():
+    """COVERED 已成立，下一轮 PARTIAL + 新 quote → 允许新 quote/turn_id 累积，状态仍 COVERED。"""
+    tracker = TopicCoverageTracker()
+    topic = _topic()
+    q1 = "这个异步任务队列是我负责设计和落地的"
+    q2 = "生产端用 XADD 写入 Redis Streams"
+    s1 = tracker.update(
+        topic=topic,
+        current_state=tracker.initial_state("PROJECT"),
+        turn_id=1,
+        answer=STRONG_ANSWER,
+        evaluation=_evaluation(coverage=[_assessment("PROJECT_OWNERSHIP", "COVERED", [q1])]),
+    )
+    s2 = tracker.update(
+        topic=topic,
+        current_state=s1,
+        turn_id=2,
+        answer=STRONG_ANSWER,
+        evaluation=_evaluation(coverage=[_assessment("PROJECT_OWNERSHIP", "PARTIAL", [q2])]),
+    )
+    point = s2.points["PROJECT_OWNERSHIP"]
+    assert point.status == "COVERED"
+    assert point.source_turn_ids == [1, 2]
+    assert point.evidence_quotes == [q1, q2]
+
+
+# ---------------------------------------------------------------------------
+# P1 semantic cleanup：KNOWLEDGE coverage 不得混入 correctness 词
+# ---------------------------------------------------------------------------
+
+
+def test_knowledge_coverage_definitions_avoid_correctness_wording():
+    """coverage 只判断「谈到没有」，不判断对错 —— 禁止把「正确/准确/错误」作为覆盖判定词。
+
+    「不判断正误」这类显式否定是允许的（正是解耦信号），
+    所以 banned 只锁定「把正确性当判定要求」的正向词，不含否定句式。
+    """
+    banned = ("正确", "准确", "错误", "对不对")
+    for target in COVERAGE_TARGETS_BY_QUESTION_TYPE["KNOWLEDGE"]:
+        assert not any(word in target.description for word in banned), f"{target.key} description 混入 correctness 词"
+        assert not any(word in target.label for word in banned), f"{target.key} label 混入 correctness 词"
+
+
+def test_knowledge_definition_label_renamed():
+    from app.modules.interview.topic_state.models import coverage_target_map
+
+    definition = coverage_target_map("KNOWLEDGE")["KNOWLEDGE_DEFINITION"]
+    assert definition.label == "能给出概念定义"
+    assert "正误" in definition.description and "只判断是否覆盖" in definition.description
