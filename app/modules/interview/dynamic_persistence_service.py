@@ -259,6 +259,31 @@ class DynamicInterviewPersistenceService:
             raise BusinessException(ErrorCode.INTERVIEW_QUESTION_NOT_FOUND, "动态面试 turn 不存在")
         return entity
 
+    async def find_turn_for_update_or_throw(
+        self, db: AsyncSession, turn_id: int, session_entity_id: int, user_id: int | None = None
+    ) -> InterviewTurnEntity:
+        """带行级锁读取 turn，用于「慢 LLM 评分之后」的重复提交再校验。
+
+        LLM evaluation 可能持续数秒，期间同一轮可能已被另一个请求提交；
+        因此真正落库前必须加锁重读并再次确认 ``answer is None``。
+        **锁只在 Phase 1 事务内短暂持有**，绝不在 LLM 等待期间持锁。
+        """
+        stmt = (
+            select(InterviewTurnEntity)
+            .where(
+                InterviewTurnEntity.id == turn_id,
+                InterviewTurnEntity.session_id == session_entity_id,
+            )
+            .with_for_update()
+        )
+        if user_id is not None:
+            stmt = stmt.where(InterviewTurnEntity.user_id == user_id)
+        result = await db.execute(stmt)
+        entity = result.scalar_one_or_none()
+        if entity is None:
+            raise BusinessException(ErrorCode.INTERVIEW_QUESTION_NOT_FOUND, "动态面试 turn 不存在")
+        return entity
+
     async def list_topics(self, db: AsyncSession, session_entity_id: int) -> list[InterviewTopicEntity]:
         result = await db.execute(
             select(InterviewTopicEntity)

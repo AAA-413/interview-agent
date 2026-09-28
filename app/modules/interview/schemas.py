@@ -131,11 +131,25 @@ class SubmitDynamicTurnAnswerRequest(BaseModel):
     answer: str = Field(..., min_length=1, max_length=10000)
 
 
+class EvaluationEvidenceDTO(BaseModel):
+    """评分证据：quote 必须是候选人回答原文片段（非总结、非改写）。"""
+
+    dimension: str
+    quote: str
+    assessment: Literal["SUPPORT", "RISK"] = "SUPPORT"
+
+
 class DynamicTurnEvaluationDTO(BaseModel):
     ability_score: int = Field(default=0, ge=0, le=100)
     feedback: str
     signals: dict[str, list[str]] = Field(default_factory=dict)
     dimension_scores: dict[str, int] = Field(default_factory=dict)
+
+    # ---- PR2 新增：可解释 / 可降级 / 证据驱动（全部带默认值，旧 evaluation_json 仍可解析） ----
+    evaluation_method: Literal["HYBRID_LLM", "HEURISTIC_FALLBACK", "RULE_ONLY"] = "HEURISTIC_FALLBACK"
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    evidence: list[EvaluationEvidenceDTO] = Field(default_factory=list)
+    guard_flags: list[str] = Field(default_factory=list)
 
 
 class DynamicDecisionDTO(BaseModel):

@@ -19,6 +19,22 @@ from app.config import settings
 from app.modules.interview.context.builder import InterviewContextBuilder
 from app.modules.interview.context.models import FollowUpIntent, InterviewContext
 from app.modules.interview.dynamic_persistence_service import dynamic_interview_persistence_service
+from app.modules.interview.evaluation.hybrid_evaluator import HybridAnswerEvaluationService
+from app.modules.interview.evaluation.models import (
+    GENERIC_CAP,
+    GUARD_EMPTY,
+    GUARD_GENERIC,
+    GUARD_OFF_TOPIC,
+    GUARD_SHORT,
+    GUARD_VERY_SHORT,
+    OFF_TOPIC_CAP,
+    SHORT_ANSWER_CHARS,
+    SHORT_CAP,
+    VERY_SHORT_ANSWER_CHARS,
+    VERY_SHORT_CAP,
+    EvaluationSnapshot,
+    GuardVerdict,
+)
 from app.modules.interview.jd_parse_service import jd_parse_service
 from app.modules.interview.models import (
     DecisionAction,
@@ -680,6 +696,19 @@ class DynamicAnswerEvaluationService:
         "beta=",
         "reference model",
     )
+    #: 真正「明显替换题目方案」的表述（hard guard 只认这些）。
+    #: OFF_TOPIC_MARKERS 里还有一批通用基建词（负载均衡 / 微服务架构 / CDN…），
+    #: 它们可能出现在完全切题的讨论里，绝不能据此 hard cap。
+    OFF_TOPIC_GUARD_MARKERS = (
+        "不需要引入 Redis",
+        "ThreadPoolExecutor",
+        "应该用多线程",
+        "不如直接写 Prompt",
+        "应该靠规则引擎",
+        "应该用 MongoDB",
+        "应该全部放到后端",
+        "前端只是展示层",
+    )
     GENERIC_WEAK_MARKERS = (
         "效果还不错",
         "很好用",
@@ -817,6 +846,60 @@ class DynamicAnswerEvaluationService:
             signals={key: self._dedupe(values)[:5] for key, values in signals.items()},
             dimension_scores=self._dimension_scores(topic.question_type, score, marker_hits),
         )
+
+    def detect_hard_guard(self, topic: DynamicTopicDTO, answer: str) -> GuardVerdict:
+        """Deterministic hard guard（PR2）。
+
+        只负责「跳过语义评分 / 硬上限 / 标记」三类硬约束，
+        **不参与正常路径的加权评分**：正常路径的最终分由 Hybrid Evaluator
+        按 LLM 的语义维度分加权后再被这里的 caps 收敛。
+
+        检测逻辑与 ``evaluate()`` 中的旧规则保持一致，避免两套阈值漂移。
+        """
+        text = (answer or "").strip()
+        if not text:
+            return GuardVerdict(
+                flags=[GUARD_EMPTY],
+                hard_caps=[0],
+                skip_semantic=True,
+                rule_only=True,
+                reason="空回答无法进行语义评分",
+            )
+
+        flags: list[str] = []
+        caps: list[int] = []
+
+        if len(text) <= VERY_SHORT_ANSWER_CHARS:
+            return GuardVerdict(
+                flags=[GUARD_VERY_SHORT],
+                hard_caps=[VERY_SHORT_CAP],
+                skip_semantic=True,
+                rule_only=False,
+                reason="回答过短，语义评分无有效信息，直接使用规则兜底评分",
+            )
+
+        concrete_hits = [term for term in self.CONCRETE_MARKERS if term.lower() in text.lower()]
+        generic_hits = [term for term in self.GENERIC_WEAK_MARKERS if term.lower() in text.lower()]
+        off_topic_hits = [term for term in self.OFF_TOPIC_GUARD_MARKERS if term.lower() in text.lower()]
+        markers = self._question_type_markers(topic.question_type)
+        marker_hits = [label for label, values in markers.items() if self._contains_any(text, values)]
+
+        if len(generic_hits) >= 2 and len(concrete_hits) < 3:
+            flags.append(GUARD_GENERIC)
+            caps.append(GENERIC_CAP)
+        elif generic_hits and not marker_hits and len(concrete_hits) < 2:
+            flags.append(GUARD_GENERIC)
+            caps.append(GENERIC_CAP)
+
+        if off_topic_hits and len(concrete_hits) < 3:
+            flags.append(GUARD_OFF_TOPIC)
+            caps.append(OFF_TOPIC_CAP)
+
+        if len(text) < SHORT_ANSWER_CHARS:
+            flags.append(GUARD_SHORT)
+            caps.append(SHORT_CAP)
+
+        return GuardVerdict(flags=flags, hard_caps=caps, skip_semantic=False, rule_only=False)
 
     def coach_hint(self, topic: DynamicTopicDTO, evaluation: DynamicTurnEvaluationDTO) -> dict:
         return self.fallback_coach_hint(topic, evaluation)
@@ -1330,6 +1413,11 @@ class DynamicInterviewReportService:
 
     @staticmethod
     def _ability_scores(turns: list[InterviewTurnEntity]) -> dict[str, int]:
+        """按维度聚合平均分。
+
+        PR2 起 dimension_scores 只含当前 question_type 的 active dimensions，
+        因此「没有该维度」就不参与聚合，**不补 45/50 这种假分**。
+        """
         buckets: dict[str, list[int]] = {
             "authenticity": [],
             "technical_depth": [],
@@ -1346,7 +1434,7 @@ class DynamicInterviewReportService:
                 value = dimension_scores.get(key)
                 if isinstance(value, int):
                     buckets[key].append(value)
-        return {key: int(sum(values) / len(values)) if values else 0 for key, values in buckets.items()}
+        return {key: int(sum(values) / len(values)) for key, values in buckets.items() if values}
 
     @staticmethod
     def _top_risks(topic_summaries: list[DynamicTopicSummaryDTO]) -> list[str]:
@@ -1631,6 +1719,8 @@ class DynamicInterviewService:
         self.report_service = DynamicInterviewReportService()
         self.rag_coach_service = DynamicRagCoachService()
         self.context_builder = InterviewContextBuilder()
+        # LLM 语义评分 + 确定性校准；heuristic evaluator 继续承担 guard / fallback / coach hint
+        self.hybrid_evaluator = HybridAnswerEvaluationService(heuristic_evaluator=self.evaluator)
 
     @staticmethod
     def _policy_for_mode(mode: str | None):
@@ -1922,6 +2012,112 @@ class DynamicInterviewService:
             )
             await bg_db.commit()
 
+    @staticmethod
+    def _assert_session_acceptable(session: InterviewSessionEntity) -> None:
+        if session.status == SessionStatus.COMPLETED:
+            raise BusinessException(ErrorCode.INTERVIEW_ALREADY_COMPLETED)
+        if session.status == SessionStatus.PLANNING:
+            raise BusinessException(ErrorCode.BAD_REQUEST, "面试计划仍在生成，请稍后刷新")
+        if session.status == SessionStatus.FAILED:
+            raise BusinessException(ErrorCode.BAD_REQUEST, "面试计划生成失败，请返回创建页重试")
+
+    async def _load_evaluation_snapshot(self, session_id: str, turn_id: int, user_id: int) -> EvaluationSnapshot:
+        """用独立短生命周期 session 读取评分快照，读完立即释放连接。
+
+        返回对象里只有 plain scalar 与 DTO，**不含任何 ORM entity**。
+        """
+        from app.database import get_db_context
+
+        async with get_db_context() as snapshot_db:
+            session = await dynamic_interview_persistence_service.find_session_or_throw(
+                snapshot_db, session_id, user_id
+            )
+            self._assert_session_acceptable(session)
+            turn = await dynamic_interview_persistence_service.find_turn_or_throw(
+                snapshot_db, turn_id, session.id, user_id
+            )
+            if turn.answer is not None:
+                raise BusinessException(ErrorCode.BAD_REQUEST, "该轮回答已提交，不能重复提交")
+
+            topic_entity = await dynamic_interview_persistence_service.find_topic_or_throw(
+                snapshot_db, turn.topic_id, user_id
+            )
+            topic = dynamic_interview_persistence_service.topic_to_dto(topic_entity)
+            previous_turns = [
+                dynamic_interview_persistence_service.turn_to_dto(item)
+                for item in await dynamic_interview_persistence_service.list_turns_by_topic(
+                    snapshot_db, topic_entity.id
+                )
+                if item.answer is not None
+            ]
+
+            return EvaluationSnapshot(
+                session_entity_id=session.id,
+                session_id=session.session_id,
+                user_id=session.user_id,
+                session_status=session.status.value if session.status else SessionStatus.INTERVIEWING.value,
+                interview_mode=session.interview_mode or InterviewMode.COACH.value,
+                llm_provider=session.llm_provider,
+                topic=topic,
+                turn=dynamic_interview_persistence_service.turn_to_dto(turn),
+                previous_turns=previous_turns,
+            )
+
+    async def _evaluate_answer(self, snapshot: EvaluationSnapshot, answer: str) -> DynamicTurnEvaluationDTO:
+        """Hybrid 评分 + 独立 metric。评分失败一律降级，绝不抛出。"""
+        start = time.perf_counter()
+        outcome = None
+        unexpected_error: str | None = None
+        try:
+            outcome = await self.hybrid_evaluator.evaluate(snapshot, answer, llm_provider=snapshot.llm_provider)
+        except Exception as exc:
+            # Hybrid evaluator 内部已兜底；这里再兜一层，保证 answer 一定能提交
+            unexpected_error = exc.__class__.__name__
+            logger.warning(
+                "Hybrid 评分异常，使用规则兜底评分: session_id=%s, turn_id=%s, error=%s",
+                snapshot.session_id,
+                snapshot.turn.id,
+                exc,
+            )
+
+        if outcome is None:
+            evaluation = self.evaluator.fallback_evaluation(snapshot.topic).model_copy(
+                update={"guard_flags": [f"FALLBACK:{unexpected_error}"]}
+            )
+            llm_attempted, llm_error = True, unexpected_error
+        else:
+            evaluation = outcome.evaluation
+            llm_attempted, llm_error = outcome.llm_attempted, outcome.llm_error
+
+        # 规则侧 metric（保留旧 dashboard 语义）
+        await self._record_operation_metric(
+            session_entity_id=snapshot.session_entity_id,
+            user_id=snapshot.user_id,
+            llm_provider=snapshot.llm_provider,
+            operation_type="ANSWER_EVALUATE",
+            topic_id=snapshot.topic.id,
+            turn_id=snapshot.turn.id,
+            latency_ms=self._latency_ms(start),
+            success=True,
+            error_type=None,
+        )
+
+        # LLM 语义评分 metric：success 与「HTTP 提交是否成功」是两个概念
+        if llm_attempted or evaluation.evaluation_method == "HYBRID_LLM":
+            await self._record_operation_metric(
+                session_entity_id=snapshot.session_entity_id,
+                user_id=snapshot.user_id,
+                llm_provider=snapshot.llm_provider,
+                operation_type="ANSWER_EVALUATE_LLM",
+                topic_id=snapshot.topic.id,
+                turn_id=snapshot.turn.id,
+                latency_ms=self._latency_ms(start),
+                success=evaluation.evaluation_method == "HYBRID_LLM",
+                error_type=None if evaluation.evaluation_method == "HYBRID_LLM" else llm_error,
+            )
+
+        return evaluation
+
     async def submit_turn_answer(
         self,
         db: AsyncSession,
@@ -1930,15 +2126,28 @@ class DynamicInterviewService:
         request: SubmitDynamicTurnAnswerRequest,
         user_id: int,
     ) -> DynamicTurnAnswerResponse:
-        session = await dynamic_interview_persistence_service.find_session_or_throw(db, session_id, user_id)
-        if session.status == SessionStatus.COMPLETED:
-            raise BusinessException(ErrorCode.INTERVIEW_ALREADY_COMPLETED)
-        if session.status == SessionStatus.PLANNING:
-            raise BusinessException(ErrorCode.BAD_REQUEST, "面试计划仍在生成，请稍后刷新")
-        if session.status == SessionStatus.FAILED:
-            raise BusinessException(ErrorCode.BAD_REQUEST, "面试计划生成失败，请返回创建页重试")
+        # =====================================================================
+        # Phase E0：在独立短生命周期 read session 内读取 immutable snapshot
+        # ---------------------------------------------------------------------
+        # 之后要调用 LLM 语义评分（最长 answer_evaluator_timeout_seconds），
+        # 绝不能让这段等待时间占用 endpoint 的业务 connection / transaction。
+        # snapshot 里只允许出现 plain scalar 与 Pydantic DTO，不能带出 ORM entity。
+        # =====================================================================
+        snapshot = await self._load_evaluation_snapshot(session_id, turn_id, user_id)
 
-        turn = await dynamic_interview_persistence_service.find_turn_or_throw(db, turn_id, session.id, user_id)
+        # =====================================================================
+        # Phase E1：LLM 语义评分（期间 0 个业务 DB transaction）
+        # =====================================================================
+        evaluation = await self._evaluate_answer(snapshot, request.answer)
+
+        # =====================================================================
+        # Phase 1 前：重新进入业务 transaction，加锁重读并再校验（防重复提交）
+        # =====================================================================
+        session = await dynamic_interview_persistence_service.find_session_or_throw(db, session_id, user_id)
+        self._assert_session_acceptable(session)
+        turn = await dynamic_interview_persistence_service.find_turn_for_update_or_throw(
+            db, turn_id, session.id, user_id
+        )
         if turn.answer is not None:
             raise BusinessException(ErrorCode.BAD_REQUEST, "该轮回答已提交，不能重复提交")
 
@@ -1950,20 +2159,6 @@ class DynamicInterviewService:
             if item.answer is not None
         ]
         turn_dto = dynamic_interview_persistence_service.turn_to_dto(turn)
-        try:
-            evaluation = await self._track_operation(
-                db,
-                session,
-                "ANSWER_EVALUATE",
-                lambda: self.evaluator.evaluate(topic, turn_dto, request.answer, previous_turns),
-                topic_id=topic_entity.id,
-                turn_id=turn.id,
-            )
-        except Exception as exc:
-            logger.warning(
-                "动态面试评分失败，使用兜底评分: session_id=%s, turn_id=%s, error=%s", session_id, turn_id, exc
-            )
-            evaluation = self.evaluator.fallback_evaluation(topic)
 
         try:
             coach_hint = None

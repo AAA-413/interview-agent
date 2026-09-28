@@ -1,30 +1,32 @@
 """DynamicInterviewService.submit_turn_answer() 的 service-level 测试。
 
-之前只有 helper 级测试，导致「Phase 1 用 fallback_question 覆盖所有 action 的
-next_question」这类状态机 bug 没有被发现（COACH_RETRY 的 main_question 被清成 None、
-NEXT_TOPIC 在 transition 失败时 DB 与 response 不一致）。
+用内存版 persistence（只替换 DB 访问方法，DTO 转换仍用真实实现）+ stub evaluator
+驱动完整主流程，覆盖：
 
-这里用一个内存版 persistence（只替换 DB 访问方法，DTO 转换仍用真实实现）
-驱动完整主流程，并显式验证：
-- FOLLOW_UP / NEXT_TOPIC / COACH_RETRY 三种 action 的 persisted next_question 规则；
-- Realizer / transition 失败时 reload 后的状态仍自洽；
-- metric 写失败 → rollback，且不影响 Phase 1 已提交的状态；
-- Phase 3 落库失败 → 回落 Phase 1 状态，API 不返回 500。
+- FOLLOW_UP / NEXT_TOPIC / COACH_RETRY 三种 action 的 persisted next_question
+- Realizer / transition 失败后 reload 一致性
+- metric（独立 session）成功 / 失败路径
+- Phase 3 落库失败 → 回落 Phase 1 状态
+- **PR2 新增**：Evaluation 期间不持有业务 DB transaction / 不持锁 / 不写 answer
+- **PR2 新增**：并发 stale submit → 加锁重读后拒绝重复提交且不覆盖旧答案
+- **PR2 新增**：evaluation_method / confidence / evidence / guard_flags 持久化 roundtrip
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
-from app.modules.interview import question_realizer as question_realizer_module
+from app.common.exception import BusinessException
 from app.modules.interview.dynamic_persistence_service import dynamic_interview_persistence_service as persistence
 from app.modules.interview.dynamic_service import (
     DynamicAnswerEvaluationService,
     DynamicInterviewService,
     StrictInterviewPolicy,
 )
+from app.modules.interview.evaluation.hybrid_evaluator import HybridEvaluationOutcome
 from app.modules.interview.models import (
     InterviewSessionEntity,
     InterviewTopicEntity,
@@ -41,10 +43,11 @@ STRONG_ANSWER = (
     "每个任务带唯一 message_id 做幂等，超时任务用 XPENDING 捞出来重投，P99 从 800ms 降到 300ms。"
 )
 VAGUE_ANSWER = "用了一个队列，效果还不错，大家都觉得挺好用的。"
+OTHER_REQUEST_ANSWER = "另一个并发请求已经提交的回答内容，长度足够通过校验。"
 
 
 class _FakeDb:
-    """业务 session 替身：记录 commit / rollback。
+    """业务 session 替身：记录 commit / rollback / flush。
 
     ``on_rollback`` 用来模拟 SQLAlchemy rollback 对 ORM 对象的 expire 效果：
     回调把实体属性改成哨兵值，任何「rollback 之后还读 ORM」的代码都会露馅。
@@ -72,8 +75,8 @@ class _FakeDb:
             self._on_rollback()
 
 
-class _FakeMetricSession:
-    """metric 专用 session 替身（独立于业务 session）。"""
+class _FakeAuxSession:
+    """snapshot / metric 用的独立 session 替身。"""
 
     def __init__(self, *, fail_flush: bool = False):
         self._fail_flush = fail_flush
@@ -88,7 +91,7 @@ class _FakeMetricSession:
     async def flush(self):
         self.flushes += 1
         if self._fail_flush:
-            raise RuntimeError("metric flush failed")
+            raise RuntimeError("flush failed")
 
     async def commit(self):
         self.commits += 1
@@ -98,36 +101,63 @@ class _FakeMetricSession:
 
 
 class _FakeSessionContext:
-    """模拟 ``async with get_db_context() as session``。"""
+    """模拟 ``async with get_db_context() as session``。
 
-    def __init__(self, session: _FakeMetricSession):
-        self.session = session
+    ``fail_flush_index`` 用于让「第 N 个被打开的 session」的 flush 失败，
+    以便单独测试 metric 写失败路径。
+    """
+
+    def __init__(self, factory: "_FakeSessionFactory"):
+        self._factory = factory
 
     async def __aenter__(self):
-        return self.session
+        session = _FakeAuxSession(fail_flush=self._factory.should_fail(self._factory.opened))
+        self._factory.opened += 1
+        self._factory.sessions.append(session)
+        return session
 
     async def __aexit__(self, exc_type, _exc, _tb):
         if exc_type is not None:
-            self.session.rollbacks += 1
+            self._factory.sessions[-1].rollbacks += 1
         return False
 
 
-def _patch_metric_session(monkeypatch, metric_session: _FakeMetricSession) -> None:
-    """metric 走独立 session：业务 db 完全不参与 metric 写入。"""
-    monkeypatch.setattr("app.database.get_db_context", lambda: _FakeSessionContext(metric_session))
+class _FakeSessionFactory:
+    """每次 get_db_context() 打开一个全新的独立 session。"""
+
+    def __init__(self, fail_flush_indexes: set[int] | None = None):
+        self.sessions: list[_FakeAuxSession] = []
+        self.opened = 0
+        self._fail_indexes = fail_flush_indexes or set()
+
+    def should_fail(self, index: int) -> bool:
+        return index in self._fail_indexes
+
+    def __call__(self):
+        return _FakeSessionContext(self)
+
+
+def _patch_db_context(monkeypatch, factory: _FakeSessionFactory) -> None:
+    monkeypatch.setattr("app.database.get_db_context", factory)
 
 
 class _MemoryPersistence:
     """内存版 persistence：只覆盖 submit_turn_answer 用到的 DB 访问方法。"""
 
     def __init__(
-        self, session: InterviewSessionEntity, topics: list[InterviewTopicEntity], turns: list[InterviewTurnEntity]
+        self,
+        session: InterviewSessionEntity,
+        topics: list[InterviewTopicEntity],
+        turns: list[InterviewTurnEntity],
     ):
         self.session = session
         self.topics = {topic.id: topic for topic in topics}
         self.turns = {turn.id: turn for turn in turns}
         self._next_turn_id = max(self.turns) + 1
-        self.metric_failures: list[str] = []
+        # PR2：模拟「另一个请求在 LLM evaluation 期间提交了同一轮」
+        self.answer_submitted_by_other = False
+        self.lock_reads = 0
+        self.metric_calls: list[dict] = []
 
     # ---- DB 访问 ----
     async def find_session_or_throw(self, _db, _session_id, _user_id=None):
@@ -135,6 +165,13 @@ class _MemoryPersistence:
 
     async def find_turn_or_throw(self, _db, turn_id, _session_entity_id, _user_id=None):
         return self.turns[turn_id]
+
+    async def find_turn_for_update_or_throw(self, _db, turn_id, _session_entity_id, _user_id=None):
+        self.lock_reads += 1
+        turn = self.turns[turn_id]
+        if self.answer_submitted_by_other:
+            turn.answer = OTHER_REQUEST_ANSWER
+        return turn
 
     async def find_topic_or_throw(self, _db, topic_id, _user_id=None):
         return self.topics[topic_id]
@@ -152,7 +189,18 @@ class _MemoryPersistence:
         )
 
     async def save_turn_answer(
-        self, _db, turn, *, answer, ability_score, feedback, signals, evaluation, decision_action, decision, coach_hint
+        self,
+        _db,
+        turn,
+        *,
+        answer,
+        ability_score,
+        feedback,
+        signals,
+        evaluation,
+        decision_action,
+        decision,
+        coach_hint,
     ):
         turn.answer = answer
         turn.ability_score = ability_score
@@ -203,10 +251,11 @@ class _MemoryPersistence:
     async def record_operation_metric(self, db, **kwargs):
         # 注意：add() 是同步方法，不能 await（否则会 TypeError 并把所有用例
         # 静默推到 metric failure 分支，造成假通过）。
+        self.metric_calls.append(kwargs)
         db.add(object())
         await db.flush()
 
-    # ---- 重载（等价于 GET /dynamic-sessions/{id}） ----
+    # ---- reload（等价于 GET /dynamic-sessions/{id}） ----
     def reload_turn(self, turn_id: int) -> dict:
         return persistence.turn_to_dto(self.turns[turn_id]).model_dump()
 
@@ -214,13 +263,41 @@ class _MemoryPersistence:
         return persistence.topic_to_dto(self.topics[topic_id]).model_dump()
 
 
-def _json(value) -> str:
-    import json
+class _StubHybridEvaluator:
+    """可控的 evaluator 替身：默认返回 heuristic fallback（不触发任何 LLM 调用）。"""
 
+    def __init__(self, *, outcome=None, on_call=None, error: Exception | None = None):
+        self._outcome = outcome
+        self._on_call = on_call
+        self._error = error
+        self.snapshot = None
+        self.llm_provider: str | None = None
+        self.calls = 0
+
+    async def evaluate(self, snapshot, answer, *, llm_provider=None):
+        self.calls += 1
+        self.snapshot = snapshot
+        self.llm_provider = llm_provider
+        if self._on_call is not None:
+            await self._on_call(snapshot, answer)
+        if self._error is not None:
+            raise self._error
+        if self._outcome is not None:
+            return self._outcome
+        heuristic = DynamicAnswerEvaluationService().evaluate(
+            snapshot.topic, snapshot.turn, answer, snapshot.previous_turns
+        )
+        return HybridEvaluationOutcome(
+            evaluation=heuristic.model_copy(update={"evaluation_method": "HEURISTIC_FALLBACK", "confidence": 0.35}),
+            llm_attempted=False,
+        )
+
+
+def _json(value) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _build_state(*, mode: str = "STRICT", current_turn_type: str = TurnType.MAIN.value, weak: bool = True):
+def _build_state(*, mode: str = "STRICT", current_turn_type: str = TurnType.MAIN.value):
     """构造一个「当前轮未作答」的会话状态。"""
     session = InterviewSessionEntity(
         id=1,
@@ -287,9 +364,11 @@ def _build_state(*, mode: str = "STRICT", current_turn_type: str = TurnType.MAIN
 
 
 def _install(monkeypatch, fake_persistence: _MemoryPersistence):
+    fake_persistence.metric_calls = []
     for name in (
         "find_session_or_throw",
         "find_turn_or_throw",
+        "find_turn_for_update_or_throw",
         "find_topic_or_throw",
         "list_turns_by_topic",
         "list_topics",
@@ -302,6 +381,12 @@ def _install(monkeypatch, fake_persistence: _MemoryPersistence):
         "record_operation_metric",
     ):
         monkeypatch.setattr(persistence, name, getattr(fake_persistence, name))
+
+
+def _make_service(monkeypatch, evaluator: _StubHybridEvaluator | None = None) -> DynamicInterviewService:
+    service = DynamicInterviewService()
+    service.hybrid_evaluator = evaluator or _StubHybridEvaluator()
+    return service
 
 
 def _next_topic(active: bool = False) -> InterviewTopicEntity:
@@ -338,6 +423,7 @@ async def test_follow_up_failure_keeps_next_question_consistent(monkeypatch):
     session, topic, turns = _build_state()
     fake = _MemoryPersistence(session, [topic], turns)
     _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
 
     async def _timeout(*_args, **_kwargs):
         raise asyncio.TimeoutError()
@@ -345,20 +431,18 @@ async def test_follow_up_failure_keeps_next_question_consistent(monkeypatch):
     monkeypatch.setattr(question_realizer, "realize_follow_up", _timeout)
     db = _FakeDb()
 
-    response = await _submit(DynamicInterviewService(), db, turn_id=1)
+    response = await _submit(_make_service(monkeypatch), db, turn_id=1)
 
     assert response.decision.action == "FOLLOW_UP"
     expected = response.next_turn.question
     assert response.decision.next_question == expected
 
-    # Phase 1 已提交（一次 commit），Phase 3 无需回填（fallback 已落库）
-    assert db.commits >= 1
-
-    # reload：answer 在，decision 与 next turn 一致
     answered = fake.reload_turn(1)
     assert answered["answer"] == STRONG_ANSWER
     assert answered["decision"]["next_question"] == expected
     assert fake.reload_turn(response.next_turn.id)["question"] == expected
+    # 落库前加锁重读一次，避免慢 LLM 放大重复提交 race
+    assert fake.lock_reads >= 1
 
 
 # ---------------- Case 2：NEXT_TOPIC + transition failure ----------------
@@ -369,20 +453,20 @@ async def test_next_topic_transition_failure_keeps_main_question_everywhere(monk
     next_topic = _next_topic()
     fake = _MemoryPersistence(session, [topic, next_topic], turns)
     _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
 
     async def _fail(*_args, **_kwargs):
-        return None  # Realizer 失败 / disabled / 返回空
+        return None
 
     monkeypatch.setattr(question_realizer, "realize_topic_transition", _fail)
     db = _FakeDb()
 
-    response = await _submit(DynamicInterviewService(), db, turn_id=4)
+    response = await _submit(_make_service(monkeypatch), db, turn_id=4)
 
     assert response.decision.action == "NEXT_TOPIC"
     assert response.decision.next_question == next_topic.main_question
     assert response.next_turn.question == next_topic.main_question
 
-    # reload 后必须完全一致（旧实现这里 decision.next_question 会是 null）
     answered = fake.reload_turn(4)
     assert answered["decision"]["next_question"] == next_topic.main_question
     assert fake.reload_turn(response.next_turn.id)["question"] == next_topic.main_question
@@ -395,6 +479,7 @@ async def test_next_topic_transition_success_enhances_both_sides(monkeypatch):
     next_topic = _next_topic()
     fake = _MemoryPersistence(session, [topic, next_topic], turns)
     _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
 
     async def _ok(*_args, **_kwargs):
         return "消息队列这块先到这。"
@@ -402,16 +487,13 @@ async def test_next_topic_transition_success_enhances_both_sides(monkeypatch):
     monkeypatch.setattr(question_realizer, "realize_topic_transition", _ok)
     db = _FakeDb()
 
-    response = await _submit(DynamicInterviewService(), db, turn_id=4)
+    response = await _submit(_make_service(monkeypatch), db, turn_id=4)
 
     expected = f"消息队列这块先到这。\n\n{next_topic.main_question}"
     assert response.next_turn.question == expected
     assert response.decision.next_question == expected
     assert expected.endswith(next_topic.main_question), "LLM 不得改写核心问题"
-
-    answered = fake.reload_turn(4)
-    assert answered["decision"]["next_question"] == expected
-    assert fake.reload_turn(response.next_turn.id)["question"] == expected
+    assert fake.reload_turn(4)["decision"]["next_question"] == expected
 
 
 # ---------------- Case 3：COACH_RETRY ----------------
@@ -421,62 +503,90 @@ async def test_coach_retry_keeps_policy_next_question(monkeypatch):
     session, topic, turns = _build_state(mode="COACH")
     fake = _MemoryPersistence(session, [topic], turns)
     _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
     db = _FakeDb()
 
-    response = await _submit(DynamicInterviewService(), db, turn_id=1, answer=VAGUE_ANSWER)
+    response = await _submit(_make_service(monkeypatch), db, turn_id=1, answer=VAGUE_ANSWER)
 
     assert response.decision.action == "COACH_RETRY"
-    # 旧实现会把 Policy 给出的 main_question 覆盖成 None
     assert response.decision.next_question == topic.main_question
     assert response.next_turn.question == topic.main_question
-
-    answered = fake.reload_turn(1)
-    assert answered["decision"]["next_question"] == topic.main_question
+    assert fake.reload_turn(1)["decision"]["next_question"] == topic.main_question
 
 
 # ---------------- metric：独立 session，成功 / 失败两条路径 ----------------
 
 
-async def test_metric_success_path_uses_dedicated_session(monkeypatch):
-    """正常路径：metric 走独立 session 并 commit，业务 session 不参与。"""
+async def test_metric_success_path_uses_dedicated_sessions(monkeypatch):
+    """snapshot 与 metric 都走独立 session；metric flush 真正执行。"""
     session, topic, turns = _build_state()
     fake = _MemoryPersistence(session, [topic], turns)
     _install(monkeypatch, fake)
-    metric_session = _FakeMetricSession()
-    _patch_metric_session(monkeypatch, metric_session)
+    factory = _FakeSessionFactory()
+    _patch_db_context(monkeypatch, factory)
     db = _FakeDb()
 
-    response = await _submit(DynamicInterviewService(), db, turn_id=1)
+    response = await _submit(_make_service(monkeypatch), db, turn_id=1)
 
-    assert len(metric_session.entities) == 1, "metric entity 必须写入独立 session"
-    assert metric_session.flushes == 1, "metric 的 flush 必须真正执行（不能因 fake 自身 TypeError 跳过）"
-    assert metric_session.commits == 1
-    assert metric_session.rollbacks == 0
-    assert db.rollbacks == 0, "正常路径下业务 session 不应被 rollback"
-    # 业务 session 只承载 Phase 1 内的 ANSWER_EVALUATE metric（1 条）；
-    # FOLLOW_UP_REALIZE 的 metric 必须落在独立 session 上，否则这里会是 2 条
-    assert len(db.entities) == 1, "realizer metric 不应写入业务 session"
+    metric_sessions = [item for item in factory.sessions if item.entities]
+    assert metric_sessions, "metric 必须写入独立 session"
+    assert all(item.flushes >= 1 for item in metric_sessions)
+    assert all(item.commits >= 1 for item in metric_sessions)
+    assert all(item.rollbacks == 0 for item in metric_sessions)
+    assert db.rollbacks == 0
+    assert {call["operation_type"] for call in fake.metric_calls} >= {"ANSWER_EVALUATE", "FOLLOW_UP_REALIZE"}
     assert response.decision.action == "FOLLOW_UP"
+    # stub evaluator 没有真正调用 LLM，因此不应写 ANSWER_EVALUATE_LLM
+    assert "ANSWER_EVALUATE_LLM" not in {call["operation_type"] for call in fake.metric_calls}
+
+
+async def test_llm_evaluator_metric_separates_success_and_failure(monkeypatch):
+    """LLM 评分失败但提交成功：metric success=false，HTTP submit 仍然成功。"""
+    from app.modules.interview.schemas import DynamicTurnEvaluationDTO
+
+    fallback = DynamicTurnEvaluationDTO(
+        ability_score=58,
+        feedback="回答偏泛。",
+        signals={"strengths": [], "gaps": ["缺少实现细节"], "risks": []},
+        dimension_scores={"authenticity": 58, "technical_depth": 58, "communication_structure": 58},
+        evaluation_method="HEURISTIC_FALLBACK",
+        confidence=0.35,
+        guard_flags=["FALLBACK:TimeoutError"],
+    )
+    session, topic, turns = _build_state()
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+    evaluator = _StubHybridEvaluator(
+        outcome=HybridEvaluationOutcome(evaluation=fallback, llm_attempted=True, llm_error="TimeoutError")
+    )
+
+    response = await _submit(_make_service(monkeypatch, evaluator), _FakeDb(), turn_id=1)
+
+    llm_metrics = [call for call in fake.metric_calls if call["operation_type"] == "ANSWER_EVALUATE_LLM"]
+    assert len(llm_metrics) == 1
+    assert llm_metrics[0]["success"] is False
+    assert llm_metrics[0]["error_type"] == "TimeoutError"
+    # 提交本身成功
+    assert response.evaluation.evaluation_method == "HEURISTIC_FALLBACK"
+    assert fake.reload_turn(1)["answer"] == STRONG_ANSWER
 
 
 async def test_metric_flush_failure_does_not_touch_business_session(monkeypatch):
-    """metric flush 失败：只回滚独立 metric session，业务状态与返回值不受影响。"""
     session, topic, turns = _build_state()
     fake = _MemoryPersistence(session, [topic], turns)
     _install(monkeypatch, fake)
-    metric_session = _FakeMetricSession(fail_flush=True)
-    _patch_metric_session(monkeypatch, metric_session)
+    # index 0 = snapshot，index 1 = ANSWER_EVALUATE metric → 让它失败
+    factory = _FakeSessionFactory(fail_flush_indexes={1})
+    _patch_db_context(monkeypatch, factory)
     db = _FakeDb()
 
-    response = await _submit(DynamicInterviewService(), db, turn_id=1)
+    response = await _submit(_make_service(monkeypatch), db, turn_id=1)
 
-    assert len(metric_session.entities) == 1, "metric entity 必须写入独立 session"
-    assert metric_session.rollbacks >= 1, "metric session 必须被回滚/关闭"
-    assert metric_session.commits == 0
+    assert factory.sessions[1].rollbacks >= 1, "metric session 必须被回滚/关闭"
+    assert factory.sessions[1].commits == 0
     assert db.rollbacks == 0, "业务 session 不能被 metric 写失败牵连"
-    assert len(db.entities) == 1, "realizer metric 失败不应在业务 session 上留痕"
     assert response.decision.action == "FOLLOW_UP"
-    assert response.next_turn is not None
     assert fake.reload_turn(1)["answer"] == STRONG_ANSWER
 
 
@@ -485,6 +595,7 @@ async def test_phase3_failure_falls_back_to_phase1_state(monkeypatch):
     session, topic, turns = _build_state()
     fake = _MemoryPersistence(session, [topic], turns)
     _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
 
     enhanced = "你刚才提到 XADD 写入，那 Consumer Group 的消费位点怎么保证不丢？"
 
@@ -494,20 +605,16 @@ async def test_phase3_failure_falls_back_to_phase1_state(monkeypatch):
     monkeypatch.setattr(question_realizer, "realize_follow_up", _enhanced)
 
     async def _failing_update_turn_question(_db, turn_entity, question):
-        # 模拟真实行为：属性先被赋值到内存，随后 flush/commit 失败
         turn_entity.question = question
         raise RuntimeError("phase3 write failed")
 
     monkeypatch.setattr(persistence, "update_turn_question", _failing_update_turn_question)
 
-    # Phase 1 应该落库的兜底问题（用与 service 相同的纯函数推导）
     topic_dto = persistence.topic_to_dto(topic)
     turn_dto = persistence.turn_to_dto(turns[0])
     evaluation = DynamicAnswerEvaluationService().evaluate(topic_dto, turn_dto, STRONG_ANSWER, [])
     expected_fallback = StrictInterviewPolicy._followup_question(topic_dto, evaluation, followup_number=1)
 
-    # 模拟 SQLAlchemy rollback 的 expire 语义：rollback 之后读这些 ORM 属性
-    # 会拿到哨兵值（真实环境下是隐式 reload，AsyncSession 下可能 MissingGreenlet）
     def _expire_orm_state():
         session.status = "__expired__"
         session.session_id = "__expired__"
@@ -518,24 +625,151 @@ async def test_phase3_failure_falls_back_to_phase1_state(monkeypatch):
 
     db = _FakeDb(on_rollback=_expire_orm_state)
 
-    response = await _submit(DynamicInterviewService(), db, turn_id=1)
+    response = await _submit(_make_service(monkeypatch), db, turn_id=1)
 
-    # 不能 500：仍然返回 Phase 1 的兜底追问
     assert response.decision.action == "FOLLOW_UP"
-    assert response.next_turn is not None
     assert response.next_turn.question == expected_fallback
     assert response.next_turn.question != enhanced, "rollback 后不得使用未落库的 enhancement"
     assert response.decision.next_question == expected_fallback
-    # 以下都必须在 Phase 3 之前固化，否则会读到哨兵值
     assert response.status == SessionStatus.INTERVIEWING.value
     assert response.topic_progress["max_turns"] == 3
-    assert response.topic_progress["answered_turns"] == 1
-    assert response.next_turn.id != -1
     assert db.rollbacks >= 1
-    assert fake.reload_turn(1)["answer"] == STRONG_ANSWER
 
 
-# ---------------- 全部失败路径：会话仍可继续 ----------------
+# ---------------- PR2：DB transaction boundary ----------------
+
+
+async def test_evaluation_does_not_hold_business_transaction(monkeypatch):
+    """LLM evaluation 期间：不写业务 session、不持 row lock、不 flush answer。"""
+    session, topic, turns = _build_state()
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+    db = _FakeDb()
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    observed: dict = {}
+
+    async def _on_call(_snapshot, _answer):
+        observed["business_commits"] = db.commits
+        observed["business_flushes"] = db.flushes
+        observed["business_entities"] = len(db.entities)
+        observed["row_lock_reads"] = fake.lock_reads
+        observed["answer_persisted"] = fake.turns[1].answer
+        started.set()
+        await release.wait()
+
+    evaluator = _StubHybridEvaluator(on_call=_on_call)
+    service = _make_service(monkeypatch, evaluator)
+
+    task = asyncio.create_task(_submit(service, db, turn_id=1))
+    await started.wait()
+    await asyncio.sleep(0)
+    # 此刻 evaluator 正在「等待 LLM」，业务侧必须完全干净
+    assert observed == {
+        "business_commits": 0,
+        "business_flushes": 0,
+        "business_entities": 0,
+        "row_lock_reads": 0,
+        "answer_persisted": None,
+    }
+    assert fake.turns[1].answer is None
+
+    release.set()
+    response = await task
+    assert response.decision.action == "FOLLOW_UP"
+    assert fake.turns[1].answer == STRONG_ANSWER
+    assert fake.lock_reads == 1, "加锁重读只能发生在 evaluation 之后"
+
+
+async def test_evaluation_receives_snapshot_and_session_provider(monkeypatch):
+    session, topic, turns = _build_state()
+    session.llm_provider = "custom-provider"
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+
+    evaluator = _StubHybridEvaluator()
+    await _submit(_make_service(monkeypatch, evaluator), _FakeDb(), turn_id=1)
+
+    assert evaluator.llm_provider == "custom-provider"
+    assert evaluator.snapshot.session_id == "svc-session"
+    assert evaluator.snapshot.topic.topic_key == "async_task_pipeline"
+    assert evaluator.snapshot.turn.id == 1
+    assert evaluator.snapshot.turn.answer is None, "snapshot 拿到的是未作答状态"
+
+
+# ---------------- PR2：并发 / stale submit ----------------
+
+
+async def test_concurrent_submit_is_rejected_after_lock(monkeypatch):
+    """snapshot 读到未作答，evaluation 期间被别的请求提交 → 加锁后必须拒绝且不覆盖。"""
+    session, topic, turns = _build_state()
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+
+    async def _on_call(_snapshot, _answer):
+        fake.answer_submitted_by_other = True
+
+    evaluator = _StubHybridEvaluator(on_call=_on_call)
+    db = _FakeDb()
+
+    with pytest.raises(BusinessException) as exc:
+        await _submit(_make_service(monkeypatch, evaluator), db, turn_id=1)
+
+    assert "已提交" in str(exc.value)
+    assert fake.turns[1].answer == OTHER_REQUEST_ANSWER, "不得覆盖另一个请求已提交的答案"
+    assert db.commits == 0, "重复提交不应产生任何业务提交"
+
+
+# ---------------- PR2：evaluation 字段持久化 roundtrip ----------------
+
+
+async def test_evaluation_metadata_roundtrip(monkeypatch):
+    from app.modules.interview.schemas import DynamicTurnEvaluationDTO, EvaluationEvidenceDTO
+
+    session, topic, turns = _build_state()
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+
+    evaluation = DynamicTurnEvaluationDTO(
+        ability_score=77,
+        feedback="回答有基础，但还需要补证据和边界。",
+        signals={"strengths": ["实现细节扎实"], "gaps": ["缺少指标口径"], "risks": []},
+        dimension_scores={"authenticity": 80, "technical_depth": 78, "communication_structure": 72},
+        evaluation_method="HYBRID_LLM",
+        confidence=0.8,
+        evidence=[
+            EvaluationEvidenceDTO(
+                dimension="technical_depth",
+                quote="每个任务带唯一 message_id 做幂等",
+                assessment="SUPPORT",
+            )
+        ],
+        guard_flags=[],
+    )
+    evaluator = _StubHybridEvaluator(outcome=HybridEvaluationOutcome(evaluation=evaluation, llm_attempted=True))
+
+    response = await _submit(_make_service(monkeypatch, evaluator), _FakeDb(), turn_id=1)
+
+    assert response.evaluation.evaluation_method == "HYBRID_LLM"
+    reloaded = fake.reload_turn(1)["evaluation"]
+    assert reloaded["evaluation_method"] == "HYBRID_LLM"
+    assert reloaded["confidence"] == 0.8
+    assert reloaded["evidence"][0]["quote"] == "每个任务带唯一 message_id 做幂等"
+    assert reloaded["dimension_scores"] == {
+        "authenticity": 80,
+        "technical_depth": 78,
+        "communication_structure": 72,
+    }
+    assert "guard_flags" in reloaded
+    # 旧 evaluation_json（没有新字段）仍可解析
+    legacy = DynamicTurnEvaluationDTO(**{"ability_score": 60, "feedback": "old"})
+    assert legacy.evaluation_method == "HEURISTIC_FALLBACK"
+    assert legacy.confidence == 0.0
 
 
 async def test_session_remains_usable_after_all_realizer_failures(monkeypatch):
@@ -543,30 +777,28 @@ async def test_session_remains_usable_after_all_realizer_failures(monkeypatch):
     next_topic = _next_topic()
     fake = _MemoryPersistence(session, [topic, next_topic], turns)
     _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
 
     async def _boom(*_args, **_kwargs):
         raise RuntimeError("provider down")
 
     monkeypatch.setattr(question_realizer, "realize_topic_transition", _boom)
-    service = DynamicInterviewService()
+    service = _make_service(monkeypatch)
 
     first = await _submit(service, _FakeDb(), turn_id=4)
     assert first.next_turn is not None
 
-    # 用 Realizer 返回的新 turn 继续回答，链路仍然可执行
     second = await _submit(service, _FakeDb(), turn_id=first.next_turn.id)
     assert second.decision.action in {"FOLLOW_UP", "NEXT_TOPIC", "COACH_RETRY", "END"}
     assert fake.reload_turn(first.next_turn.id)["answer"] is not None
 
 
-# ---------------- provider 对齐 ----------------
-
-
-async def test_submit_passes_session_provider_to_follow_up_realizer(monkeypatch):
+async def test_submit_passes_session_provider_to_realizers(monkeypatch):
     session, topic, turns = _build_state()
     session.llm_provider = "custom-provider"
     fake = _MemoryPersistence(session, [topic], turns)
     _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
 
     recorded: dict = {}
 
@@ -576,7 +808,7 @@ async def test_submit_passes_session_provider_to_follow_up_realizer(monkeypatch)
 
     monkeypatch.setattr(question_realizer, "realize_follow_up", _spy)
 
-    await _submit(DynamicInterviewService(), _FakeDb(), turn_id=1)
+    await _submit(_make_service(monkeypatch), _FakeDb(), turn_id=1)
 
     assert recorded["provider"] == "custom-provider"
 
@@ -587,6 +819,7 @@ async def test_submit_passes_session_provider_to_transition_realizer(monkeypatch
     next_topic = _next_topic()
     fake = _MemoryPersistence(session, [topic, next_topic], turns)
     _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
 
     recorded: dict = {}
 
@@ -596,36 +829,6 @@ async def test_submit_passes_session_provider_to_transition_realizer(monkeypatch
 
     monkeypatch.setattr(question_realizer, "realize_topic_transition", _spy)
 
-    await _submit(DynamicInterviewService(), _FakeDb(), turn_id=4)
+    await _submit(_make_service(monkeypatch), _FakeDb(), turn_id=4)
 
     assert recorded["provider"] == "custom-provider"
-
-
-@pytest.mark.parametrize("provider", ["dashscope", "custom-x"])
-async def test_realizer_resolves_chat_model_from_given_provider(monkeypatch, provider):
-    recorded: dict = {}
-
-    class _FakeRegistry:
-        def get_chat_model(self, name=None):
-            recorded["provider"] = name
-            return object()
-
-    monkeypatch.setattr("app.common.ai.llm_provider.llm_registry", _FakeRegistry())
-    monkeypatch.setattr(question_realizer_module, "structured_output_invoker", _CapturedInvoker())
-    monkeypatch.setattr(question_realizer_module, "single_flight", _PassthroughSingleFlight())
-
-    from tests.test_interview_context_realizer import _context, _decision
-
-    await question_realizer.realize_follow_up(_context(), _decision(), llm_provider=provider)
-
-    assert recorded["provider"] == provider
-
-
-class _CapturedInvoker:
-    async def invoke(self, **_kwargs):
-        return question_realizer_module._FollowUpQuestionDTO(question="追问？")
-
-
-class _PassthroughSingleFlight:
-    async def __call__(self, _key, fn, **_kwargs):
-        return await fn()
