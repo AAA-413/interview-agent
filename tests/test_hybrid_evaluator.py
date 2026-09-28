@@ -93,7 +93,11 @@ def _topic(question_type: str = "PROJECT", topic_key: str = "async_task_pipeline
         topic_order=1,
         followup_goals=["验证个人职责是否清晰", "验证指标或结果是否可证明"],
         exit_criteria=["能说清项目目标", "能说明个人贡献", "能给出结果或验证方式"],
-        rubric={"authenticity": "个人职责是否可信", "technical_depth": "实现细节是否扎实"},
+        rubric={
+            "authenticity": "个人职责是否可信",
+            "technical_depth": "实现细节是否扎实",
+            "communication_structure": "是否结构清晰",
+        },
     )
 
 
@@ -165,7 +169,12 @@ async def test_very_short_answer_skips_semantic_and_caps(monkeypatch):
 
 
 async def test_generic_answer_is_capped(monkeypatch):
-    quotes = {"technical_depth": ["主要是把热点数据放在 Redis 里"]}
+    # 每个正向维度都必须有自己的原文证据（P0-3），否则整次语义结果会被拒绝
+    quotes = {
+        "authenticity": ["我们项目里很多地方都用了"],
+        "technical_depth": ["主要是把热点数据放在 Redis 里"],
+        "communication_structure": ["缓存可以大幅提升性能"],
+    }
     llm = _assessments({"authenticity": 90, "technical_depth": 92, "communication_structure": 88}, quotes)
     service, _, _ = _service(monkeypatch, llm)
 
@@ -177,10 +186,13 @@ async def test_generic_answer_is_capped(monkeypatch):
 
 
 async def test_off_topic_answer_is_capped(monkeypatch):
-    quote = "不需要引入 Redis 这么重的组件"
     llm = _assessments(
         {"authenticity": 85, "technical_depth": 90, "communication_structure": 85},
-        {"technical_depth": [quote]},
+        {
+            "authenticity": ["异步任务应该用多线程"],
+            "technical_depth": ["不需要引入 Redis 这么重的组件"],
+            "communication_structure": ["Python 的 ThreadPoolExecutor 就能搞定"],
+        },
     )
     service, _, _ = _service(monkeypatch, llm)
 
@@ -188,6 +200,7 @@ async def test_off_topic_answer_is_capped(monkeypatch):
 
     assert "OFF_TOPIC" in outcome.evaluation.guard_flags
     assert outcome.evaluation.ability_score <= 45
+    assert outcome.evaluation.evaluation_method == "HYBRID_LLM"
 
 
 async def test_generic_infra_word_does_not_trigger_off_topic_guard(monkeypatch):
@@ -198,13 +211,18 @@ async def test_generic_infra_word_does_not_trigger_off_topic_guard(monkeypatch):
     )
     llm = _assessments(
         {"authenticity": 80, "technical_depth": 82, "communication_structure": 78},
-        {"technical_depth": ["做不到多实例负载均衡"]},
+        {
+            "authenticity": ["我们最看重的是至少一次投递 + 可回溯这两个约束"],
+            "technical_depth": ["做不到多实例负载均衡"],
+            "communication_structure": ["当时主要考虑的是消费语义"],
+        },
     )
     service, _, _ = _service(monkeypatch, llm)
 
     outcome = await service.evaluate(_snapshot(), answer)
 
     assert "OFF_TOPIC" not in outcome.evaluation.guard_flags
+    assert outcome.evaluation.evaluation_method == "HYBRID_LLM"
     assert outcome.evaluation.ability_score >= 70
 
 
@@ -307,17 +325,46 @@ async def test_low_dimension_evidence_is_marked_risk(monkeypatch):
 
 
 async def test_high_score_without_enough_evidence_is_capped(monkeypatch):
+    """同一句 quote 挂在三个维度上 → unique span 只有 1 → 必须触发 HIGH_SCORE_EVIDENCE_CAP。"""
     single_quote = "每个任务带唯一 message_id 做幂等"
     llm = _assessments(
         {"authenticity": 95, "technical_depth": 95, "communication_structure": 92},
-        {"technical_depth": [single_quote]},
+        {
+            "authenticity": [single_quote],
+            "technical_depth": [single_quote],
+            "communication_structure": [single_quote],
+        },
     )
     service, _, _ = _service(monkeypatch, llm)
 
     outcome = await service.evaluate(_snapshot(), STRONG_PROJECT_ANSWER)
 
+    assert len(outcome.evaluation.evidence) == 3, "展示层保留「同一句支持多个维度」的映射"
+    assert len({_normalize_for_evidence(item.quote) for item in outcome.evaluation.evidence}) == 1
     assert outcome.evaluation.ability_score <= 84
     assert "HIGH_SCORE_EVIDENCE_CAP" in outcome.evaluation.guard_flags
+    assert outcome.evaluation.confidence == 0.65, "unique span 只有 1 条，不得给到 0.90"
+
+
+async def test_duplicate_quotes_in_one_dimension_do_not_inflate_confidence(monkeypatch):
+    """同一句 quote 在同一个维度重复 3 次 → 只能算 1 条 unique span。"""
+    repeated = "每个任务带唯一 message_id 做幂等"
+    llm = _assessments(
+        {"authenticity": 70, "technical_depth": 70, "communication_structure": 70},
+        {
+            "authenticity": [repeated, repeated, repeated],
+            "technical_depth": [repeated],
+            "communication_structure": [repeated],
+        },
+    )
+    service, _, _ = _service(monkeypatch, llm)
+
+    outcome = await service.evaluate(_snapshot("PROJECT"), STRONG_PROJECT_ANSWER)
+
+    unique = {_normalize_for_evidence(item.quote) for item in outcome.evaluation.evidence}
+    assert len(unique) == 1
+    assert outcome.evaluation.confidence == 0.65
+    assert outcome.evaluation.confidence != 0.90, "重复 quote 不得把置信度刷到最高档"
 
 
 async def test_high_score_with_sufficient_evidence_is_kept(monkeypatch):
@@ -335,6 +382,7 @@ async def test_high_score_with_sufficient_evidence_is_kept(monkeypatch):
 
     outcome = await service.evaluate(_snapshot(), STRONG_PROJECT_ANSWER)
 
+    assert len({_normalize_for_evidence(item.quote) for item in outcome.evaluation.evidence}) >= 4
     assert outcome.evaluation.ability_score >= 85
     assert "HIGH_SCORE_EVIDENCE_CAP" not in outcome.evaluation.guard_flags
 
@@ -353,24 +401,88 @@ async def test_no_valid_evidence_falls_back_to_heuristic(monkeypatch):
     assert outcome.evaluation.confidence == 0.35
 
 
+async def test_positive_dimension_without_own_evidence_is_rejected(monkeypatch):
+    """P0-3：technical_depth=80 但没有自己的原文证据 → 整次语义结果作废，不得参与总分。"""
+    llm = _assessments(
+        {"authenticity": 80, "technical_depth": 80, "communication_structure": 78},
+        {
+            "authenticity": ["这个异步任务队列是我负责设计和落地的"],
+            "communication_structure": ["消费端用 Consumer Group + XREADGROUP 多实例并行消费"],
+        },
+    )
+    service, _, _ = _service(monkeypatch, llm)
+
+    outcome = await service.evaluate(_snapshot(), STRONG_PROJECT_ANSWER)
+
+    assert outcome.evaluation.evaluation_method == "HEURISTIC_FALLBACK"
+    assert "FALLBACK:UNGROUNDED_POSITIVE_DIMENSION" in outcome.evaluation.guard_flags
+    assert outcome.evaluation.evidence == []
+    # 无证据的 80 分不得成为最终分
+    assert outcome.evaluation.ability_score != 80
+
+
+async def test_low_dimension_without_evidence_is_allowed(monkeypatch):
+    """低分维度不要求证据：它本来就是在说明「这里不足」。"""
+    llm = _assessments(
+        {"authenticity": 80, "technical_depth": 40, "communication_structure": 78},
+        {
+            "authenticity": ["这个异步任务队列是我负责设计和落地的"],
+            "technical_depth": [],
+            "communication_structure": ["消费端用 Consumer Group + XREADGROUP 多实例并行消费"],
+        },
+    )
+    service, _, _ = _service(monkeypatch, llm)
+
+    outcome = await service.evaluate(_snapshot(), STRONG_PROJECT_ANSWER)
+
+    assert outcome.evaluation.evaluation_method == "HYBRID_LLM"
+    assert outcome.evaluation.dimension_scores["technical_depth"] == 40
+
+
 # ---------------- D. Confidence ----------------
 
 
-@pytest.mark.parametrize("evidence_count,expected", [(3, 0.90), (2, 0.80), (1, 0.65)])
-async def test_confidence_tiers(monkeypatch, evidence_count, expected):
-    quotes = [
-        "生产端用 XADD 写入 Redis Streams",
-        "消费端用 Consumer Group + XREADGROUP 多实例并行消费",
-        "每个任务带唯一 message_id 做幂等",
-    ][:evidence_count]
+_Q_STRONG_1 = "生产端用 XADD 写入 Redis Streams"
+_Q_STRONG_2 = "每个任务带唯一 message_id 做幂等"
+_Q_STRONG_3 = "超时任务用 XPENDING 捞出来重新投递"
+
+
+@pytest.mark.parametrize(
+    "evidence,expected",
+    [
+        # unique span = 3
+        (
+            {"authenticity": [_Q_STRONG_1], "technical_depth": [_Q_STRONG_2], "communication_structure": [_Q_STRONG_3]},
+            0.90,
+        ),
+        # unique span = 2（q1 复用在两个维度上仍只算 1 条）
+        (
+            {
+                "authenticity": [_Q_STRONG_1],
+                "technical_depth": [_Q_STRONG_1, _Q_STRONG_2],
+                "communication_structure": [_Q_STRONG_2],
+            },
+            0.80,
+        ),
+        # unique span = 1（同一句挂在三个维度上）
+        (
+            {"authenticity": [_Q_STRONG_1], "technical_depth": [_Q_STRONG_1], "communication_structure": [_Q_STRONG_1]},
+            0.65,
+        ),
+    ],
+)
+async def test_confidence_tiers(monkeypatch, evidence, expected):
     llm = _assessments(
         {"authenticity": 70, "technical_depth": 70, "communication_structure": 70},
-        {"technical_depth": quotes},
+        evidence,
     )
     service, _, _ = _service(monkeypatch, llm)
 
     outcome = await service.evaluate(_snapshot("PROJECT"), STRONG_PROJECT_ANSWER)
 
+    assert outcome.evaluation.evaluation_method == "HYBRID_LLM"
+    unique = {_normalize_for_evidence(item.quote) for item in outcome.evaluation.evidence}
+    assert len(unique) == (3 if expected == 0.90 else 2 if expected == 0.80 else 1)
     assert outcome.evaluation.confidence == expected
 
 
@@ -404,10 +516,14 @@ async def test_rule_only_and_fallback_confidence(monkeypatch):
 
 
 async def test_evaluator_uses_given_provider_and_provider_in_key(monkeypatch):
-    quotes = ["生产端用 XADD 写入 Redis Streams", "每个任务带唯一 message_id 做幂等"]
+    quotes = {
+        "authenticity": ["这个异步任务队列是我负责设计和落地的"],
+        "technical_depth": ["每个任务带唯一 message_id 做幂等"],
+        "communication_structure": ["消费端用 Consumer Group + XREADGROUP 多实例并行消费"],
+    }
     llm = _assessments(
         {"authenticity": 80, "technical_depth": 80, "communication_structure": 80},
-        {"technical_depth": quotes},
+        quotes,
     )
     service, invoker, single_flight = _service(monkeypatch, llm)
     registry = _StubRegistry()
@@ -426,7 +542,11 @@ async def test_evaluator_uses_given_provider_and_provider_in_key(monkeypatch):
 async def test_single_flight_key_differs_by_provider(monkeypatch):
     llm = _assessments(
         {"authenticity": 70, "technical_depth": 70, "communication_structure": 70},
-        {"technical_depth": ["每个任务带唯一 message_id 做幂等"]},
+        {
+            "authenticity": ["这个异步任务队列是我负责设计和落地的"],
+            "technical_depth": ["每个任务带唯一 message_id 做幂等"],
+            "communication_structure": ["消费端用 Consumer Group + XREADGROUP 多实例并行消费"],
+        },
     )
     service, _, single_flight = _service(monkeypatch, llm)
     monkeypatch.setattr("app.common.ai.llm_provider.llm_registry", _StubRegistry())
@@ -490,6 +610,79 @@ async def test_evaluator_disabled_uses_fallback(monkeypatch):
     assert outcome.evaluation.confidence == 0.35
 
 
+# ---------------- P0-1：所有 evaluation_method 都必须 active-dimension only ----------------
+
+ALL_DIMENSIONS = {"authenticity", "technical_depth", "knowledge_accuracy", "system_thinking", "communication_structure"}
+
+
+def _assert_only_active_dims(evaluation, question_type: str):
+    active = set(active_dimension_weights(question_type))
+    assert set(evaluation.dimension_scores) == active, (
+        f"{question_type} 只允许 {active}，实际 {set(evaluation.dimension_scores)}"
+    )
+    assert not (set(evaluation.dimension_scores) - active)
+    assert set(evaluation.dimension_scores) != ALL_DIMENSIONS, "不得把 5 个维度原样带出去"
+
+
+async def test_rule_only_empty_answer_is_active_dimension_only(monkeypatch):
+    service, _, _ = _service(monkeypatch, LLMEvaluationResult())
+
+    outcome = await service.evaluate(_snapshot("PROJECT"), "")
+
+    assert outcome.evaluation.evaluation_method == "RULE_ONLY"
+    _assert_only_active_dims(outcome.evaluation, "PROJECT")
+
+
+@pytest.mark.parametrize("question_type", ["PROJECT", "KNOWLEDGE", "SYSTEM_DESIGN"])
+async def test_very_short_and_disabled_timeout_are_active_dimension_only(monkeypatch, question_type):
+    from app.config import settings
+
+    service, _, _ = _service(monkeypatch, LLMEvaluationResult())
+
+    # VERY_SHORT
+    outcome = await service.evaluate(_snapshot(question_type), "用过 Redis")
+    assert "VERY_SHORT" in outcome.evaluation.guard_flags
+    _assert_only_active_dims(outcome.evaluation, question_type)
+
+    # evaluator disabled
+    monkeypatch.setattr(settings.interview, "answer_evaluator_enabled", False)
+    disabled = await service.evaluate(_snapshot(question_type), STRONG_PROJECT_ANSWER)
+    assert disabled.evaluation.evaluation_method == "HEURISTIC_FALLBACK"
+    assert "FALLBACK:DISABLED" in disabled.evaluation.guard_flags
+    _assert_only_active_dims(disabled.evaluation, question_type)
+    monkeypatch.setattr(settings.interview, "answer_evaluator_enabled", True)
+
+    # timeout
+    service2, _, _ = _service(monkeypatch, LLMEvaluationResult())
+    monkeypatch.setattr(service2, "_timeout_seconds", staticmethod(lambda: 0.01))
+
+    class _SlowInvoker:
+        async def invoke(self, **_kwargs):
+            await asyncio.sleep(0.5)
+            return LLMEvaluationResult()
+
+    monkeypatch.setattr(evaluation_module.hybrid_evaluator, "structured_output_invoker", _SlowInvoker())
+    timed_out = await service2.evaluate(_snapshot(question_type), STRONG_PROJECT_ANSWER)
+
+    assert timed_out.evaluation.evaluation_method == "HEURISTIC_FALLBACK"
+    assert "FALLBACK:TimeoutError" in timed_out.evaluation.guard_flags
+    _assert_only_active_dims(timed_out.evaluation, question_type)
+
+
+@pytest.mark.parametrize("question_type", ["PROJECT", "KNOWLEDGE", "SYSTEM_DESIGN"])
+async def test_rejected_semantic_result_is_active_dimension_only(monkeypatch, question_type):
+    """dimension 不匹配被拒绝后，fallback 也必须是 active-dimension only。"""
+    invalid = LLMEvaluationResult(
+        dimensions=[LLMDimensionAssessment(dimension="authenticity", score=90, evidence_quotes=[])],
+    )
+    service, _, _ = _service(monkeypatch, invalid)
+
+    outcome = await service.evaluate(_snapshot(question_type), STRONG_PROJECT_ANSWER)
+
+    assert outcome.evaluation.evaluation_method == "HEURISTIC_FALLBACK"
+    _assert_only_active_dims(outcome.evaluation, question_type)
+
+
 # ---------------- signals / feedback 约束 ----------------
 
 
@@ -514,7 +707,8 @@ async def test_signals_are_bounded_and_avoid_banned_wording(monkeypatch):
                 dimension="communication_structure",
                 score=72,
                 assessment="层次清楚",
-                evidence_quotes=[],
+                # score >= 60 的维度必须有真实 quote（P0-3）
+                evidence_quotes=["消费端用 Consumer Group + XREADGROUP 多实例并行消费"],
                 gaps=[],
             ),
         ],
@@ -525,6 +719,7 @@ async def test_signals_are_bounded_and_avoid_banned_wording(monkeypatch):
     outcome = await service.evaluate(_snapshot(), STRONG_PROJECT_ANSWER)
     signals = outcome.evaluation.signals
 
+    assert outcome.evaluation.evaluation_method == "HYBRID_LLM"
     for key in ("strengths", "gaps", "risks"):
         assert len(signals[key]) <= 5
         assert all(len(item) <= 60 for item in signals[key])
@@ -551,11 +746,70 @@ async def test_previous_turn_comparison_does_not_anchor_score(monkeypatch):
         {
             "authenticity": ["这个异步任务队列是我负责设计和落地的"],
             "technical_depth": ["每个任务带唯一 message_id 做幂等", "超时任务用 XPENDING 捞出来重新投递"],
+            "communication_structure": ["消费端用 Consumer Group + XREADGROUP 多实例并行消费"],
         },
     )
-    service, _, _ = _service(monkeypatch, llm)
+    service, invoker, _ = _service(monkeypatch, llm)
 
     outcome = await service.evaluate(_snapshot("PROJECT", previous_turns=previous), STRONG_PROJECT_ANSWER)
 
     assert outcome.evaluation.ability_score >= 85, "上一轮 50 分不得把本轮压回 55~65"
     assert "重答后有明显补充" in outcome.evaluation.signals["strengths"]
+
+    # P1-1：历史分数绝不能进入 LLM prompt（只有代码侧 compare 用得到）
+    user_prompt = invoker.calls[0]["user_prompt"]
+    assert "该轮历史分数" not in user_prompt
+    assert "（该轮历史分数：50）" not in user_prompt
+    # 历史问答仍然必须给模型（用于判断是否补齐缺口 / 是否矛盾）
+    assert "上一题" in user_prompt
+    assert "上一轮回答" in user_prompt
+
+
+async def test_prompt_keeps_dimension_rubric_mapping(monkeypatch):
+    """P1-2：rubric 必须保留 dimension → description 映射，且只输出 active dimensions。"""
+    llm = _assessments(
+        {"authenticity": 80, "technical_depth": 80, "communication_structure": 80},
+        {
+            "authenticity": ["这个异步任务队列是我负责设计和落地的"],
+            "technical_depth": ["每个任务带唯一 message_id 做幂等"],
+            "communication_structure": ["消费端用 Consumer Group + XREADGROUP 多实例并行消费"],
+        },
+    )
+    service, invoker, _ = _service(monkeypatch, llm)
+
+    await service.evaluate(_snapshot("PROJECT"), STRONG_PROJECT_ANSWER)
+
+    user_prompt = invoker.calls[0]["user_prompt"]
+    assert "- authenticity: 个人职责是否可信" in user_prompt
+    assert "- technical_depth: 实现细节是否扎实" in user_prompt
+    assert "- communication_structure: 是否结构清晰" in user_prompt
+    # PROJECT 题不应渲染与本题无关的维度
+    assert "knowledge_accuracy" not in user_prompt
+    assert "system_thinking" not in user_prompt
+
+
+async def test_prompt_renders_rubric_for_other_question_types(monkeypatch):
+    llm = _assessments(
+        {"knowledge_accuracy": 78, "technical_depth": 76, "communication_structure": 74},
+        {
+            "knowledge_accuracy": ["生产端用 XADD 写入 Redis Streams"],
+            "technical_depth": ["每个任务带唯一 message_id 做幂等"],
+            "communication_structure": ["超时任务用 XPENDING 捞出来重新投递"],
+        },
+        "KNOWLEDGE",
+    )
+    service, invoker, _ = _service(monkeypatch, llm)
+    snapshot = _snapshot("KNOWLEDGE")
+    snapshot.topic.rubric = {
+        "knowledge_accuracy": "概念和机制是否准确",
+        "technical_depth": "是否能讲到工程边界",
+        "communication_structure": "是否结构清晰",
+    }
+
+    await service.evaluate(snapshot, STRONG_PROJECT_ANSWER)
+
+    user_prompt = invoker.calls[0]["user_prompt"]
+    assert "- knowledge_accuracy: 概念和机制是否准确" in user_prompt
+    assert "- technical_depth: 是否能讲到工程边界" in user_prompt
+    assert "- communication_structure: 是否结构清晰" in user_prompt
+    assert "authenticity" not in user_prompt

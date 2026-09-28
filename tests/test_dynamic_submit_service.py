@@ -772,6 +772,102 @@ async def test_evaluation_metadata_roundtrip(monkeypatch):
     assert legacy.confidence == 0.0
 
 
+async def test_catastrophic_evaluator_failure_uses_real_heuristic_score(monkeypatch):
+    """hybrid_evaluator.evaluate() 直接抛异常 → 提交仍成功，且 metadata 自洽。
+
+    P1-3：不允许退化成「固定 50 分 + confidence 0.0 + 5 个维度」。
+    """
+    session, topic, turns = _build_state()
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+
+    evaluator = _StubHybridEvaluator(error=RuntimeError("hybrid exploded"))
+
+    response = await _submit(_make_service(monkeypatch, evaluator), _FakeDb(), turn_id=1)
+
+    # HTTP 提交成功，answer 正常落库
+    assert fake.reload_turn(1)["answer"] == STRONG_ANSWER
+    # metadata 统一
+    assert response.evaluation.evaluation_method == "HEURISTIC_FALLBACK"
+    assert response.evaluation.confidence == 0.35
+    assert response.evaluation.evidence == []
+    assert "FALLBACK:RuntimeError" in response.evaluation.guard_flags
+    # active dimensions only（PROJECT）
+    assert set(response.evaluation.dimension_scores) == {
+        "authenticity",
+        "technical_depth",
+        "communication_structure",
+    }
+    # 用的是真实 heuristic 分数，而不是固定紧急分
+    topic_dto = persistence.topic_to_dto(topic)
+    turn_dto = persistence.turn_to_dto(turns[0])
+    expected = DynamicAnswerEvaluationService().evaluate(topic_dto, turn_dto, STRONG_ANSWER, [])
+    assert response.evaluation.ability_score == expected.ability_score
+    assert response.evaluation.ability_score != 50, "不应无条件退化成固定 50 分"
+
+
+async def test_catastrophic_fallback_when_heuristic_also_fails(monkeypatch):
+    """连 heuristic 也失败 → 固定紧急分，但 metadata 仍然自洽。"""
+    session, topic, turns = _build_state()
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+
+    class _BrokenHeuristic:
+        def evaluate(self, *_args, **_kwargs):
+            raise RuntimeError("heuristic exploded")
+
+        def fallback_evaluation(self, _topic):
+            return DynamicAnswerEvaluationService().fallback_evaluation(_topic)
+
+    service = _make_service(monkeypatch, _StubHybridEvaluator(error=RuntimeError("hybrid exploded")))
+    service.evaluator = _BrokenHeuristic()
+
+    response = await _submit(service, _FakeDb(), turn_id=1)
+
+    assert fake.reload_turn(1)["answer"] == STRONG_ANSWER
+    assert response.evaluation.evaluation_method == "HEURISTIC_FALLBACK"
+    assert response.evaluation.confidence == 0.35
+    assert response.evaluation.evidence == []
+    assert "FALLBACK:RuntimeError" in response.evaluation.guard_flags
+    assert set(response.evaluation.dimension_scores) == {
+        "authenticity",
+        "technical_depth",
+        "communication_structure",
+    }
+
+
+async def test_persisted_fallback_never_carries_inactive_dimensions(monkeypatch):
+    """P0-1：落库的 fallback evaluation 不得带 PROJECT 的无关维度分。
+
+    这里刻意用**真实**的 HybridAnswerEvaluationService（stub 会绕开内部过滤），
+    只关掉 LLM 开关让它走 deterministic fallback 路径。
+    """
+    from app.config import settings
+    from app.modules.interview.evaluation.hybrid_evaluator import HybridAnswerEvaluationService
+
+    session, topic, turns = _build_state()
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+    monkeypatch.setattr(settings.interview, "answer_evaluator_enabled", False)
+
+    service = DynamicInterviewService()
+    service.hybrid_evaluator = HybridAnswerEvaluationService(heuristic_evaluator=DynamicAnswerEvaluationService())
+
+    response = await _submit(service, _FakeDb(), turn_id=1)
+
+    active = {"authenticity", "technical_depth", "communication_structure"}
+    assert response.evaluation.evaluation_method == "HEURISTIC_FALLBACK"
+    assert set(response.evaluation.dimension_scores) == active
+    assert response.evaluation.confidence == 0.35
+    persisted = fake.reload_turn(1)["evaluation"]
+    assert set(persisted["dimension_scores"]) == active
+    assert "knowledge_accuracy" not in persisted["dimension_scores"]
+    assert "system_thinking" not in persisted["dimension_scores"]
+
+
 async def test_session_remains_usable_after_all_realizer_failures(monkeypatch):
     session, topic, turns = _build_state(current_turn_type=TurnType.FOLLOW_UP.value)
     next_topic = _next_topic()

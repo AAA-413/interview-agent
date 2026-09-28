@@ -21,6 +21,7 @@ from app.modules.interview.context.models import FollowUpIntent, InterviewContex
 from app.modules.interview.dynamic_persistence_service import dynamic_interview_persistence_service
 from app.modules.interview.evaluation.hybrid_evaluator import HybridAnswerEvaluationService
 from app.modules.interview.evaluation.models import (
+    FALLBACK_CONFIDENCE,
     GENERIC_CAP,
     GUARD_EMPTY,
     GUARD_GENERIC,
@@ -34,6 +35,7 @@ from app.modules.interview.evaluation.models import (
     VERY_SHORT_CAP,
     EvaluationSnapshot,
     GuardVerdict,
+    filter_active_dimension_scores,
 )
 from app.modules.interview.jd_parse_service import jd_parse_service
 from app.modules.interview.models import (
@@ -2081,9 +2083,7 @@ class DynamicInterviewService:
             )
 
         if outcome is None:
-            evaluation = self.evaluator.fallback_evaluation(snapshot.topic).model_copy(
-                update={"guard_flags": [f"FALLBACK:{unexpected_error}"]}
-            )
+            evaluation = self._catastrophic_fallback(snapshot, answer, unexpected_error or "UNEXPECTED")
             llm_attempted, llm_error = True, unexpected_error
         else:
             evaluation = outcome.evaluation
@@ -2117,6 +2117,41 @@ class DynamicInterviewService:
             )
 
         return evaluation
+
+    def _catastrophic_fallback(
+        self, snapshot: EvaluationSnapshot, answer: str, error_type: str
+    ) -> DynamicTurnEvaluationDTO:
+        """Hybrid evaluator 整体抛异常时的最后兜底。
+
+        原则：**能拿到真实 heuristic 分数就不要退化成固定 50 分**——丢掉候选人的
+        整个回答信息是没有必要的。只有在 heuristic 自身也失败时才用固定紧急分。
+
+        metadata 必须与其它降级路径自洽：
+        ``HEURISTIC_FALLBACK`` / confidence ``0.35`` / active dimensions only /
+        ``evidence=[]`` / ``guard_flags`` 含 ``FALLBACK:<ErrorType>``。
+        """
+        try:
+            heuristic = self.evaluator.evaluate(snapshot.topic, snapshot.turn, answer, snapshot.previous_turns)
+        except Exception as exc:
+            logger.warning(
+                "heuristic 兜底评分也失败，使用固定紧急分: session_id=%s, turn_id=%s, error=%s",
+                snapshot.session_id,
+                snapshot.turn.id,
+                exc,
+            )
+            heuristic = self.evaluator.fallback_evaluation(snapshot.topic)
+
+        return heuristic.model_copy(
+            update={
+                "dimension_scores": filter_active_dimension_scores(
+                    snapshot.topic.question_type, heuristic.dimension_scores
+                ),
+                "evaluation_method": "HEURISTIC_FALLBACK",
+                "confidence": FALLBACK_CONFIDENCE,
+                "evidence": [],
+                "guard_flags": [f"FALLBACK:{error_type}"],
+            }
+        )
 
     async def submit_turn_answer(
         self,

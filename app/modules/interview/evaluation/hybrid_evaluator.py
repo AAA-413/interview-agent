@@ -51,6 +51,7 @@ from app.modules.interview.evaluation.models import (
     GuardVerdict,
     LLMEvaluationResult,
     active_dimension_weights,
+    filter_active_dimension_scores,
 )
 from app.modules.interview.schemas import DynamicTurnEvaluationDTO, EvaluationEvidenceDTO
 
@@ -115,7 +116,11 @@ class HybridAnswerEvaluationService:
             confidence = RULE_ONLY_CONFIDENCE if guard.rule_only else FALLBACK_CONFIDENCE
             return HybridEvaluationOutcome(
                 evaluation=self._deterministic_evaluation(
-                    heuristic=heuristic, guard=guard, method=method, confidence=confidence
+                    question_type=topic.question_type,
+                    heuristic=heuristic,
+                    guard=guard,
+                    method=method,
+                    confidence=confidence,
                 ),
                 llm_attempted=False,
             )
@@ -123,7 +128,9 @@ class HybridAnswerEvaluationService:
         if not settings.interview.answer_evaluator_enabled:
             logger.info("Answer Evaluator 已关闭，使用 heuristic fallback: session=%s", snapshot.session_id)
             return HybridEvaluationOutcome(
-                evaluation=self._fallback_evaluation(heuristic, guard, "DISABLED"), llm_attempted=False, llm_error=None
+                evaluation=self._fallback_evaluation(topic.question_type, heuristic, guard, "DISABLED"),
+                llm_attempted=False,
+                llm_error=None,
             )
 
         try:
@@ -137,7 +144,7 @@ class HybridAnswerEvaluationService:
                 exc,
             )
             return HybridEvaluationOutcome(
-                evaluation=self._fallback_evaluation(heuristic, guard, error_type),
+                evaluation=self._fallback_evaluation(topic.question_type, heuristic, guard, error_type),
                 llm_attempted=True,
                 llm_error=error_type,
             )
@@ -153,7 +160,7 @@ class HybridAnswerEvaluationService:
                 turn.id,
             )
             return HybridEvaluationOutcome(
-                evaluation=self._fallback_evaluation(heuristic, guard, reason),
+                evaluation=self._fallback_evaluation(topic.question_type, heuristic, guard, reason),
                 llm_attempted=True,
                 llm_error=reason,
             )
@@ -177,7 +184,7 @@ class HybridAnswerEvaluationService:
                 "mainQuestion": _untrusted(snapshot.topic.main_question),
                 "currentQuestion": _untrusted(snapshot.turn.question),
                 "activeDimensions": _render_active_dimensions(weights),
-                "rubric": _render_list(_safe_items(snapshot.topic.rubric.values())),
+                "rubric": _render_rubric(snapshot.topic.rubric, weights),
                 "exitCriteria": _render_list(_safe_items(snapshot.topic.exit_criteria)),
                 "followupGoals": _render_list(_safe_items(snapshot.topic.followup_goals)),
                 "resumeEvidence": _untrusted(snapshot.topic.evidence_snippet) or "（无）",
@@ -224,6 +231,13 @@ class HybridAnswerEvaluationService:
         return max(1.0, float(settings.interview.answer_evaluator_timeout_seconds))
 
     def _render_previous_turns(self, previous_turns) -> str:
+        """历史轮次**只**给 LLM 看 question / answer。
+
+        刻意不输出 ``ability_score``：历史分数会变成锚点，让模型倾向于把本轮
+        压在上一轮分数附近。历史分数的用途只有一个 —— 代码侧的
+        ``_apply_previous_turn_comparison()``（比较本轮是否补齐缺口 / 是否退步），
+        它不经过 LLM。
+        """
         if not previous_turns:
             return "（这是本 topic 的第一轮回答）"
         lines: list[str] = []
@@ -232,8 +246,6 @@ class HybridAnswerEvaluationService:
             answer = ContextBudget.sanitize(turn.answer or "")[:MAX_PREVIOUS_ANSWER_CHARS]
             lines.append(f"- 面试官：{question}")
             lines.append(f"  候选人：{answer}")
-            if turn.ability_score is not None:
-                lines.append(f"  （该轮历史分数：{turn.ability_score}）")
         return "\n".join(lines)
 
     # -------------------------------------------------- validate & compose
@@ -255,15 +267,20 @@ class HybridAnswerEvaluationService:
         gaps: list[str] = []
         strengths: list[str] = []
         dimension_scores: dict[str, int] = {}
+        grounded_dimensions: set[str] = set()
 
         for dimension, assessment in assessments.items():
             dimension_scores[dimension] = assessment.score
-            if assessment.score >= EVIDENCE_SUPPORT_THRESHOLD:
-                strengths.append(_clip(assessment.assessment or DIMENSION_LABELS.get(dimension, dimension)))
             for gap in assessment.gaps:
                 gaps.append(_clip(gap))
 
             valid_quotes = self._validate_quotes(assessment.evidence_quotes, answer_norm)
+            if valid_quotes:
+                # 只有拿到「该维度自己的」原文证据，才允许这个维度算作有据可依
+                grounded_dimensions.add(dimension)
+            if assessment.score >= EVIDENCE_SUPPORT_THRESHOLD and dimension in grounded_dimensions:
+                strengths.append(_clip(assessment.assessment or DIMENSION_LABELS.get(dimension, dimension)))
+
             for quote in valid_quotes:
                 if len(evidence) >= MAX_EVIDENCE_TOTAL:
                     break
@@ -279,12 +296,27 @@ class HybridAnswerEvaluationService:
         if not evidence and len(answer.strip()) >= MIN_ANSWER_CHARS_FOR_EVIDENCE:
             raise _EvaluationRejectedError("NO_VALID_EVIDENCE")
 
+        # 正向判断（score >= EVIDENCE_SUPPORT_THRESHOLD）必须有该维度自己的原文证据。
+        # 同一句 quote 挂在多个维度上不能同时给多个维度「背书」以外的豁免：
+        # 只要某个正向维度拿不出自己的 quote，就说明本次语义结果不完整。
+        ungrounded_positive = sorted(
+            dimension
+            for dimension, assessment in assessments.items()
+            if assessment.score >= EVIDENCE_SUPPORT_THRESHOLD and dimension not in grounded_dimensions
+        )
+        if ungrounded_positive:
+            raise _EvaluationRejectedError("UNGROUNDED_POSITIVE_DIMENSION")
+
+        # 全局唯一原文证据数：同一句 quote 即使挂在两个维度上，也只能算 1 条。
+        # confidence 与高分门槛都必须用它，否则模型重复同一句就能刷高置信度。
+        unique_evidence_count = len({_normalize_for_evidence(item.quote) for item in evidence})
+
         semantic_score = int(round(sum(score * weights[dim] for dim, score in dimension_scores.items())))
 
         caps: list[int] = list(guard.hard_caps)
         covered_dimensions = len({item.dimension for item in evidence})
         if semantic_score >= HIGH_SCORE_THRESHOLD and (
-            len(evidence) < HIGH_SCORE_MIN_EVIDENCE or covered_dimensions < HIGH_SCORE_MIN_DIMENSIONS
+            unique_evidence_count < HIGH_SCORE_MIN_EVIDENCE or covered_dimensions < HIGH_SCORE_MIN_DIMENSIONS
         ):
             caps.append(HIGH_SCORE_CAP)
             guard = GuardVerdict(flags=[*guard.flags, "HIGH_SCORE_EVIDENCE_CAP"], hard_caps=guard.hard_caps)
@@ -299,13 +331,13 @@ class HybridAnswerEvaluationService:
 
         strengths, risks = self._apply_previous_turn_comparison(strengths, risks, final_score, previous_turns)
 
-        confidence = self._confidence(topic.question_type, evidence_count=len(evidence))
+        confidence = self._confidence(topic.question_type, unique_evidence_count=unique_evidence_count)
 
         return DynamicTurnEvaluationDTO(
             ability_score=final_score,
             feedback=_build_feedback(final_score, strengths, gaps),
             signals={"strengths": strengths, "gaps": gaps, "risks": risks},
-            dimension_scores=dimension_scores,
+            dimension_scores=filter_active_dimension_scores(topic.question_type, dimension_scores),
             evaluation_method="HYBRID_LLM",
             confidence=confidence,
             evidence=evidence,
@@ -352,10 +384,15 @@ class HybridAnswerEvaluationService:
         return strengths, risks
 
     @staticmethod
-    def _confidence(question_type: str, *, evidence_count: int) -> float:
+    def _confidence(question_type: str, *, unique_evidence_count: int) -> float:
+        """置信度由代码产生，不采信模型自报值。
+
+        ``unique_evidence_count`` 是**去重后**的唯一原文证据条数：同一句 quote
+        重复出现或同时挂在两个维度上，都只能算 1 条。
+        """
         confidence = FALLBACK_CONFIDENCE
         for minimum, value in CONFIDENCE_TIERS:
-            if evidence_count >= minimum:
+            if unique_evidence_count >= minimum:
                 confidence = value
                 break
         if (question_type or "").upper() == "KNOWLEDGE":
@@ -368,6 +405,7 @@ class HybridAnswerEvaluationService:
     def _deterministic_evaluation(
         self,
         *,
+        question_type: str,
         heuristic: DynamicTurnEvaluationDTO,
         guard: GuardVerdict,
         method: str,
@@ -381,16 +419,23 @@ class HybridAnswerEvaluationService:
                 "evaluation_method": method,
                 "confidence": round(confidence, 2),
                 "evidence": [],
+                # 旧 heuristic evaluator 会返回 5 个维度；RULE_ONLY / HEURISTIC_FALLBACK
+                # 同样必须只暴露当前 question_type 的 active dimensions
+                "dimension_scores": filter_active_dimension_scores(question_type, heuristic.dimension_scores),
                 "guard_flags": guard.flags,
             }
         )
 
     def _fallback_evaluation(
-        self, heuristic: DynamicTurnEvaluationDTO, guard: GuardVerdict, reason: str
+        self, question_type: str, heuristic: DynamicTurnEvaluationDTO, guard: GuardVerdict, reason: str
     ) -> DynamicTurnEvaluationDTO:
         """heuristic fallback：明确标注来源，绝不假装是 LLM 结果。"""
         capped = self._deterministic_evaluation(
-            heuristic=heuristic, guard=guard, method="HEURISTIC_FALLBACK", confidence=FALLBACK_CONFIDENCE
+            question_type=question_type,
+            heuristic=heuristic,
+            guard=guard,
+            method="HEURISTIC_FALLBACK",
+            confidence=FALLBACK_CONFIDENCE,
         )
         return capped.model_copy(update={"guard_flags": [*guard.flags, f"FALLBACK:{reason}"]})
 
@@ -408,6 +453,21 @@ def _render_list(items: list[str]) -> str:
     if not items:
         return "（topic 未提供）"
     return "\n".join(f"- {item}" for item in items)
+
+
+def _render_rubric(rubric: dict[str, str], active_dimensions) -> str:
+    """渲染 rubric，**保留 dimension → description 映射**。
+
+    旧实现直接取 ``rubric.values()`` 会把 key 丢掉，模型只能看到一堆没有归属的
+    描述句；这里只输出当前 active dimensions 对应的条目，格式为 ``- <dim>: <desc>``。
+    """
+    rubric = rubric or {}
+    lines: list[str] = []
+    for dimension in active_dimensions:
+        description = rubric.get(dimension)
+        if description:
+            lines.append(f"- {dimension}: {_untrusted(description)}")
+    return "\n".join(lines) if lines else "（topic 未提供）"
 
 
 def _render_active_dimensions(weights: dict[str, float]) -> str:

@@ -43,6 +43,24 @@ def active_dimension_weights(question_type: str) -> dict[str, float]:
     return QUESTION_TYPE_DIMENSION_WEIGHTS.get((question_type or "").upper(), FALLBACK_DIMENSION_WEIGHTS)
 
 
+def filter_active_dimension_scores(question_type: str, scores: dict[str, int]) -> dict[str, int]:
+    """只保留当前 question_type 真正 active 的维度分。
+
+    **所有** evaluation_method（HYBRID_LLM / HEURISTIC_FALLBACK / RULE_ONLY）都必须
+    满足「dimension_scores 恰好等于 active dimensions」：
+
+    - 旧 heuristic evaluator 为了兼容历史 dashboard 会同时返回 5 个维度；
+    - 若 fallback 路径把它原样带出去，PROJECT 题就会凭空多出
+      ``knowledge_accuracy`` / ``system_thinking`` 这类与本轮无关的假分，
+      并且污染 report 的维度聚合。
+
+    因此 deterministic / fallback / catastrophic fallback 一律经过这里收敛。
+    """
+
+    active = active_dimension_weights(question_type)
+    return {dimension: int(scores[dimension]) for dimension in active if dimension in scores}
+
+
 # ---------------- evidence ----------------
 
 MAX_EVIDENCE_QUOTE_CHARS = 120
