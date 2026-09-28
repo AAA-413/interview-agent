@@ -20,7 +20,11 @@ import pytest
 
 from app.modules.interview import question_realizer as question_realizer_module
 from app.modules.interview.dynamic_persistence_service import dynamic_interview_persistence_service as persistence
-from app.modules.interview.dynamic_service import DynamicInterviewService
+from app.modules.interview.dynamic_service import (
+    DynamicAnswerEvaluationService,
+    DynamicInterviewService,
+    StrictInterviewPolicy,
+)
 from app.modules.interview.models import (
     InterviewSessionEntity,
     InterviewTopicEntity,
@@ -40,28 +44,77 @@ VAGUE_ANSWER = "用了一个队列，效果还不错，大家都觉得挺好用�
 
 
 class _FakeDb:
-    """最小 AsyncSession 替身：记录 commit / rollback，可指定第 N 次 flush 失败。"""
+    """业务 session 替身：记录 commit / rollback。
 
-    def __init__(self, fail_flush_on: int | None = None):
+    ``on_rollback`` 用来模拟 SQLAlchemy rollback 对 ORM 对象的 expire 效果：
+    回调把实体属性改成哨兵值，任何「rollback 之后还读 ORM」的代码都会露馅。
+    """
+
+    def __init__(self, *, on_rollback=None):
         self.commits = 0
         self.rollbacks = 0
         self.flushes = 0
-        self._fail_flush_on = fail_flush_on
         self.entities: list[object] = []
+        self._on_rollback = on_rollback
 
     def add(self, entity):
         self.entities.append(entity)
 
     async def flush(self):
         self.flushes += 1
-        if self._fail_flush_on is not None and self.flushes == self._fail_flush_on:
-            raise RuntimeError("flush failed")
 
     async def commit(self):
         self.commits += 1
 
     async def rollback(self):
         self.rollbacks += 1
+        if self._on_rollback is not None:
+            self._on_rollback()
+
+
+class _FakeMetricSession:
+    """metric 专用 session 替身（独立于业务 session）。"""
+
+    def __init__(self, *, fail_flush: bool = False):
+        self._fail_flush = fail_flush
+        self.entities: list[object] = []
+        self.flushes = 0
+        self.commits = 0
+        self.rollbacks = 0
+
+    def add(self, entity):
+        self.entities.append(entity)
+
+    async def flush(self):
+        self.flushes += 1
+        if self._fail_flush:
+            raise RuntimeError("metric flush failed")
+
+    async def commit(self):
+        self.commits += 1
+
+    async def rollback(self):
+        self.rollbacks += 1
+
+
+class _FakeSessionContext:
+    """模拟 ``async with get_db_context() as session``。"""
+
+    def __init__(self, session: _FakeMetricSession):
+        self.session = session
+
+    async def __aenter__(self):
+        return self.session
+
+    async def __aexit__(self, exc_type, _exc, _tb):
+        if exc_type is not None:
+            self.session.rollbacks += 1
+        return False
+
+
+def _patch_metric_session(monkeypatch, metric_session: _FakeMetricSession) -> None:
+    """metric 走独立 session：业务 db 完全不参与 metric 写入。"""
+    monkeypatch.setattr("app.database.get_db_context", lambda: _FakeSessionContext(metric_session))
 
 
 class _MemoryPersistence:
@@ -148,7 +201,9 @@ class _MemoryPersistence:
         turn.decision_json = _json(decision)
 
     async def record_operation_metric(self, db, **kwargs):
-        await db.add(object())
+        # 注意：add() 是同步方法，不能 await（否则会 TypeError 并把所有用例
+        # 静默推到 metric failure 分支，造成假通过）。
+        db.add(object())
         await db.flush()
 
     # ---- 重载（等价于 GET /dynamic-sessions/{id}） ----
@@ -379,47 +434,103 @@ async def test_coach_retry_keeps_policy_next_question(monkeypatch):
     assert answered["decision"]["next_question"] == topic.main_question
 
 
-# ---------------- metric 失败 / Phase 3 失败 ----------------
+# ---------------- metric：独立 session，成功 / 失败两条路径 ----------------
 
 
-async def test_metric_flush_failure_rolls_back_and_still_returns_result(monkeypatch):
+async def test_metric_success_path_uses_dedicated_session(monkeypatch):
+    """正常路径：metric 走独立 session 并 commit，业务 session 不参与。"""
     session, topic, turns = _build_state()
     fake = _MemoryPersistence(session, [topic], turns)
     _install(monkeypatch, fake)
-    db = _FakeDb(fail_flush_on=1)  # metric 的 flush 失败
+    metric_session = _FakeMetricSession()
+    _patch_metric_session(monkeypatch, metric_session)
+    db = _FakeDb()
 
     response = await _submit(DynamicInterviewService(), db, turn_id=1)
 
-    assert db.rollbacks >= 1, "metric flush 失败后必须 rollback，否则 session 不可继续使用"
+    assert len(metric_session.entities) == 1, "metric entity 必须写入独立 session"
+    assert metric_session.flushes == 1, "metric 的 flush 必须真正执行（不能因 fake 自身 TypeError 跳过）"
+    assert metric_session.commits == 1
+    assert metric_session.rollbacks == 0
+    assert db.rollbacks == 0, "正常路径下业务 session 不应被 rollback"
+    # 业务 session 只承载 Phase 1 内的 ANSWER_EVALUATE metric（1 条）；
+    # FOLLOW_UP_REALIZE 的 metric 必须落在独立 session 上，否则这里会是 2 条
+    assert len(db.entities) == 1, "realizer metric 不应写入业务 session"
+    assert response.decision.action == "FOLLOW_UP"
+
+
+async def test_metric_flush_failure_does_not_touch_business_session(monkeypatch):
+    """metric flush 失败：只回滚独立 metric session，业务状态与返回值不受影响。"""
+    session, topic, turns = _build_state()
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    metric_session = _FakeMetricSession(fail_flush=True)
+    _patch_metric_session(monkeypatch, metric_session)
+    db = _FakeDb()
+
+    response = await _submit(DynamicInterviewService(), db, turn_id=1)
+
+    assert len(metric_session.entities) == 1, "metric entity 必须写入独立 session"
+    assert metric_session.rollbacks >= 1, "metric session 必须被回滚/关闭"
+    assert metric_session.commits == 0
+    assert db.rollbacks == 0, "业务 session 不能被 metric 写失败牵连"
+    assert len(db.entities) == 1, "realizer metric 失败不应在业务 session 上留痕"
     assert response.decision.action == "FOLLOW_UP"
     assert response.next_turn is not None
-    # Phase 1 的 answer 不受影响
     assert fake.reload_turn(1)["answer"] == STRONG_ANSWER
 
 
 async def test_phase3_failure_falls_back_to_phase1_state(monkeypatch):
+    """Phase 3 写失败 → rollback → 不再读 ORM → 正常返回 Phase 1 状态。"""
     session, topic, turns = _build_state()
     fake = _MemoryPersistence(session, [topic], turns)
     _install(monkeypatch, fake)
 
-    async def _boom(*_args, **_kwargs):
-        return "你刚才提到 XADD 写入，那 Consumer Group 的消费位点怎么保证不丢？"
+    enhanced = "你刚才提到 XADD 写入，那 Consumer Group 的消费位点怎么保证不丢？"
 
-    monkeypatch.setattr(question_realizer, "realize_follow_up", _boom)
+    async def _enhanced(*_args, **_kwargs):
+        return enhanced
 
-    async def _failing_update_turn_question(_db, _turn, _question):
+    monkeypatch.setattr(question_realizer, "realize_follow_up", _enhanced)
+
+    async def _failing_update_turn_question(_db, turn_entity, question):
+        # 模拟真实行为：属性先被赋值到内存，随后 flush/commit 失败
+        turn_entity.question = question
         raise RuntimeError("phase3 write failed")
 
     monkeypatch.setattr(persistence, "update_turn_question", _failing_update_turn_question)
-    db = _FakeDb()
+
+    # Phase 1 应该落库的兜底问题（用与 service 相同的纯函数推导）
+    topic_dto = persistence.topic_to_dto(topic)
+    turn_dto = persistence.turn_to_dto(turns[0])
+    evaluation = DynamicAnswerEvaluationService().evaluate(topic_dto, turn_dto, STRONG_ANSWER, [])
+    expected_fallback = StrictInterviewPolicy._followup_question(topic_dto, evaluation, followup_number=1)
+
+    # 模拟 SQLAlchemy rollback 的 expire 语义：rollback 之后读这些 ORM 属性
+    # 会拿到哨兵值（真实环境下是隐式 reload，AsyncSession 下可能 MissingGreenlet）
+    def _expire_orm_state():
+        session.status = "__expired__"
+        session.session_id = "__expired__"
+        topic.max_turns = -1
+        topic.best_score = -1
+        topic.final_score = -1
+        turns[0].id = -1
+
+    db = _FakeDb(on_rollback=_expire_orm_state)
 
     response = await _submit(DynamicInterviewService(), db, turn_id=1)
 
     # 不能 500：仍然返回 Phase 1 的兜底追问
     assert response.decision.action == "FOLLOW_UP"
-    persisted = fake.reload_turn(response.next_turn.id)["question"]
-    assert response.next_turn.question == persisted, "对外返回必须等于库里已提交的状态"
-    assert response.decision.next_question == persisted
+    assert response.next_turn is not None
+    assert response.next_turn.question == expected_fallback
+    assert response.next_turn.question != enhanced, "rollback 后不得使用未落库的 enhancement"
+    assert response.decision.next_question == expected_fallback
+    # 以下都必须在 Phase 3 之前固化，否则会读到哨兵值
+    assert response.status == SessionStatus.INTERVIEWING.value
+    assert response.topic_progress["max_turns"] == 3
+    assert response.topic_progress["answered_turns"] == 1
+    assert response.next_turn.id != -1
     assert db.rollbacks >= 1
     assert fake.reload_turn(1)["answer"] == STRONG_ANSWER
 

@@ -50,17 +50,48 @@ REDIS_STREAMS_ANSWER = (
 )
 
 
-class _FakeDb:
-    """只满足 record_operation_metric 需要的最小 AsyncSession 替身。"""
+class _FakeMetricSession:
+    """metric 专用 session 替身（独立于业务 session）。"""
 
-    def __init__(self):
-        self.flushed = False
+    def __init__(self, *, fail_flush: bool = False):
+        self._fail_flush = fail_flush
+        self.entities: list[object] = []
+        self.flushes = 0
+        self.commits = 0
+        self.rollbacks = 0
 
-    def add(self, _entity):
-        return None
+    def add(self, entity):
+        self.entities.append(entity)
 
     async def flush(self):
-        self.flushed = True
+        self.flushes += 1
+        if self._fail_flush:
+            raise RuntimeError("metric flush failed")
+
+    async def commit(self):
+        self.commits += 1
+
+    async def rollback(self):
+        self.rollbacks += 1
+
+
+class _FakeSessionContext:
+    """模拟 ``async with get_db_context() as session``。"""
+
+    def __init__(self, session: _FakeMetricSession):
+        self._session = session
+
+    async def __aenter__(self):
+        return self._session
+
+    async def __aexit__(self, exc_type, _exc, _tb):
+        if exc_type is not None:
+            self._session.rollbacks += 1
+        return False
+
+
+def _patch_metric_session(monkeypatch, session: _FakeMetricSession) -> None:
+    monkeypatch.setattr("app.database.get_db_context", lambda: _FakeSessionContext(session))
 
 
 def _topic() -> DynamicTopicDTO:
@@ -252,7 +283,6 @@ async def _realize_with_fake(monkeypatch, fake):
     service, session = _service_and_session()
     monkeypatch.setattr(question_realizer, "realize_follow_up", fake)
     return await service._realize_follow_up_question(
-        _FakeDb(),
         session,
         topic=_topic(),
         evaluation=_evaluation(),
@@ -356,7 +386,6 @@ async def test_topic_transition_uses_main_question_when_realizer_fails(monkeypat
 
     monkeypatch.setattr(question_realizer, "realize_topic_transition", _boom)
     result = await service._realize_topic_transition(
-        _FakeDb(),
         session,
         previous_topic=_topic(),
         previous_question="你们为什么最后选了 Redis Streams？",
@@ -380,7 +409,6 @@ async def test_topic_transition_keeps_canonical_main_question(monkeypatch):
 
     monkeypatch.setattr(question_realizer, "realize_topic_transition", _ok)
     result = await service._realize_topic_transition(
-        _FakeDb(),
         session,
         previous_topic=_topic(),
         previous_question="你们为什么最后选了 Redis Streams？",
@@ -639,60 +667,62 @@ async def test_realizer_timeout_releases_single_flight_lock(monkeypatch):
     assert [key for key in redis._store if key.startswith("sf:run:")] == []
 
 
-async def test_realizer_runs_before_any_db_write():
-    """Phase 2：LLM 调用期间不得打开 DB 事务；metric 在调用结束后才写。"""
-
-    class _RecordingDb:
-        def __init__(self):
-            self.events: list[str] = []
-
-        def add(self, _entity):
-            self.events.append("add")
-
-        async def flush(self):
-            self.events.append("flush")
-
-    db = _RecordingDb()
+async def test_realizer_runs_before_any_metric_write(monkeypatch):
+    """Phase 2：LLM 调用期间不得写 metric；metric 用独立 session 且只写一次。"""
+    metric_session = _FakeMetricSession()
+    _patch_metric_session(monkeypatch, metric_session)
     service, session = _service_and_session()
     observed: dict = {}
 
     async def invoke():
-        observed["events"] = list(db.events)
+        observed["flushes_during_call"] = metric_session.flushes
         await asyncio.sleep(0)
         return "生成的追问"
 
     result = await service._run_realizer_outside_transaction(
-        db, session, "FOLLOW_UP_REALIZE", invoke, topic_id=1, turn_id=1
+        session, "FOLLOW_UP_REALIZE", invoke, topic_id=1, turn_id=1
     )
 
     assert result == "生成的追问"
-    assert observed["events"] == [], "LLM 调用期间不能持有 DB 事务"
-    assert db.events == ["add", "flush"], "metric 必须在调用结束后写入"
+    assert observed["flushes_during_call"] == 0, "LLM 调用期间不能写 metric"
+    assert metric_session.flushes == 1
+    assert metric_session.commits == 1
+    assert metric_session.rollbacks == 0
 
 
-async def test_realizer_failure_still_records_metric_and_returns_none():
-    class _RecordingDb:
-        def __init__(self):
-            self.events: list[str] = []
-
-        def add(self, _entity):
-            self.events.append("add")
-
-        async def flush(self):
-            self.events.append("flush")
-
-    db = _RecordingDb()
+async def test_realizer_failure_still_records_metric_and_returns_none(monkeypatch):
+    metric_session = _FakeMetricSession()
+    _patch_metric_session(monkeypatch, metric_session)
     service, session = _service_and_session()
 
     async def invoke():
         raise RuntimeError("provider down")
 
     result = await service._run_realizer_outside_transaction(
-        db, session, "FOLLOW_UP_REALIZE", invoke, topic_id=1, turn_id=1
+        session, "FOLLOW_UP_REALIZE", invoke, topic_id=1, turn_id=1
     )
 
     assert result is None
-    assert db.events == ["add", "flush"]
+    assert metric_session.flushes == 1
+    assert metric_session.commits == 1
+
+
+async def test_metric_failure_does_not_break_realizer_result(monkeypatch):
+    """metric flush 失败：独立 session 回滚，业务返回值不受影响。"""
+    metric_session = _FakeMetricSession(fail_flush=True)
+    _patch_metric_session(monkeypatch, metric_session)
+    service, session = _service_and_session()
+
+    async def invoke():
+        return "生成的追问"
+
+    result = await service._run_realizer_outside_transaction(
+        session, "FOLLOW_UP_REALIZE", invoke, topic_id=1, turn_id=1
+    )
+
+    assert result == "生成的追问"
+    assert metric_session.rollbacks == 1, "metric session 必须被回滚/关闭"
+    assert metric_session.commits == 0
 
 
 async def test_follow_up_fallback_never_raises_and_uses_template(monkeypatch):
@@ -704,7 +734,6 @@ async def test_follow_up_fallback_never_raises_and_uses_template(monkeypatch):
 
     monkeypatch.setattr(question_realizer, "realize_follow_up", _boom)
     result = await service._realize_follow_up_question(
-        _FakeDb(),
         session,
         topic=_topic(),
         evaluation=_evaluation(),

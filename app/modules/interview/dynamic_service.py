@@ -2129,7 +2129,6 @@ class DynamicInterviewService:
         realized_transition: str | None = None
         if decision.action == DecisionAction.FOLLOW_UP.value:
             realized_question = await self._realize_follow_up_question(
-                db,
                 session,
                 topic=topic,
                 evaluation=evaluation,
@@ -2141,7 +2140,6 @@ class DynamicInterviewService:
             )
         elif decision.action == DecisionAction.NEXT_TOPIC.value and next_topic_entity is not None:
             realized_transition = await self._realize_topic_transition(
-                db,
                 session,
                 previous_topic=topic,
                 previous_question=turn.question,
@@ -2159,7 +2157,23 @@ class DynamicInterviewService:
         # 措辞替换成更自然的一版，**不允许**因为它的 DB 写失败而让整个 submit 失败
         # （否则用户会看到 500，重试时又收到「该轮回答已提交」）。
         # =====================================================================
+        # 返回所需的普通数据必须在 Phase 3 之前固化：
+        # 一旦 Phase 3 rollback，SQLAlchemy 会 expire 本次 session 中的 ORM 对象
+        # （expire_on_commit=False 不影响 rollback 语义），此后再读
+        # session.status / topic_entity.* / next_turn_entity.question 会触发隐式
+        # reload，在 AsyncSession 下可能直接抛 MissingGreenlet。
+        response_status = session.status.value if session.status else SessionStatus.INTERVIEWING.value
+        topic_progress = {
+            "answered_turns": len(answered_turns),
+            "max_turns": topic_entity.max_turns,
+            "best_score": topic_entity.best_score,
+            "final_score": topic_entity.final_score,
+        }
+        session_id_value = session.session_id
+        answer_turn_id = turn.id
         persisted_question = next_turn_entity.question if next_turn_entity is not None else None
+        phase1_next_turn = next_turn
+
         final_question: str | None = None
         if decision.action == DecisionAction.FOLLOW_UP.value:
             final_question = realized_question or fallback_question or topic_entity.main_question
@@ -2179,36 +2193,31 @@ class DynamicInterviewService:
             except Exception as exc:
                 logger.warning(
                     "Phase 3 持久化失败，保留 Phase 1 兜底状态: session_id=%s, turn_id=%s, error=%s",
-                    session.session_id,
-                    turn.id,
+                    session_id_value,
+                    answer_turn_id,
                     exc,
                 )
                 await self._safe_rollback(db)
-                # 对外声明的下一题回落到 Phase 1 已提交的兜底问题
+                # rollback 后不再触碰 ORM：全部回落到 Phase 1 的普通数据/DTO
                 final_question = persisted_question
+                next_turn = phase1_next_turn
 
         response_decision = decision
         if final_question:
             response_decision = decision.model_copy(update={"next_question": final_question})
 
         return DynamicTurnAnswerResponse(
-            status=session.status.value if session.status else SessionStatus.INTERVIEWING.value,
+            status=response_status,
             evaluation=evaluation,
             decision=response_decision,
             next_turn=next_turn,
             current_topic=current_topic,
-            topic_progress={
-                "answered_turns": len(answered_turns),
-                "max_turns": topic_entity.max_turns,
-                "best_score": topic_entity.best_score,
-                "final_score": topic_entity.final_score,
-            },
+            topic_progress=topic_progress,
             report=report,
         )
 
     async def _run_realizer_outside_transaction(
         self,
-        db: AsyncSession,
         session: InterviewSessionEntity,
         operation_type: str,
         invoke,
@@ -2220,10 +2229,18 @@ class DynamicInterviewService:
 
         QuestionRealizer 最长可能等待 ``question_realizer_timeout_seconds``（默认 25s）。
         若用 ``_track_operation`` 包裹，metric 的 insert 会在 LLM 等待期间打开一个新的
-        DB transaction 并占用连接；这里改为「先调用、后写 metric」，
+        DB transaction 并占用连接；这里改为「先调用、后写 metric（独立 session）」，
         保证 Phase 2 期间 endpoint 的 session 上没有打开的事务。
 
-        只捕获 ``Exception``：外部取消（CancelledError）仍然向上抛，不吞掉。
+        metric 使用**独立短生命周期 session**，不再复用业务 session：
+        SQLAlchemy 的 ``Session.rollback()`` 会 expire 当前 session 中的 ORM 对象
+        （``expire_on_commit=False`` 也救不了），在 AsyncSession 下后续属性访问可能
+        触发隐式 reload 甚至 MissingGreenlet。业务 session 不应因为 metric 写失败
+        而被污染。
+
+        注意：这里只读 ``session`` 上不会变化的标量字段（id / user_id / provider /
+        session_id），不触发懒加载。只捕获 ``Exception``：外部取消（CancelledError）
+        仍然向上抛，不吞掉。
         """
         start = time.perf_counter()
         error_type: str | None = None
@@ -2241,26 +2258,56 @@ class DynamicInterviewService:
             )
             result = None
 
-        try:
-            await dynamic_interview_persistence_service.record_operation_metric(
-                db,
-                session_entity_id=session.id,
-                user_id=session.user_id,
-                operation_type=operation_type,
-                topic_id=topic_id,
-                turn_id=turn_id,
-                llm_provider=session.llm_provider,
-                latency_ms=self._latency_ms(start),
-                success=error_type is None,
-                error_type=error_type,
-            )
-        except Exception as exc:
-            # flush 失败会让 Session 进入 failed transaction 状态，仅仅 catch 住异常
-            # 并不能让 session 继续可用；必须 rollback。Phase 1 已经 commit，
-            # 因此这里的 rollback 不会影响候选人已保存的 answer。
-            logger.warning("记录 %s metric 失败，回滚本次 metric 事务（不影响链路）: %s", operation_type, exc)
-            await self._safe_rollback(db)
+        await self._record_operation_metric(
+            session_entity_id=session.id,
+            user_id=session.user_id,
+            llm_provider=session.llm_provider,
+            operation_type=operation_type,
+            topic_id=topic_id,
+            turn_id=turn_id,
+            latency_ms=self._latency_ms(start),
+            success=error_type is None,
+            error_type=error_type,
+        )
         return result
+
+    @staticmethod
+    async def _record_operation_metric(
+        *,
+        session_entity_id: int,
+        user_id: int,
+        llm_provider: str | None,
+        operation_type: str,
+        topic_id: int | None,
+        turn_id: int | None,
+        latency_ms: int,
+        success: bool,
+        error_type: str | None,
+    ) -> None:
+        """用独立 DB session 写 operation metric，失败只记日志。
+
+        独立 session 隔离了 metric 写失败（例如 flush 报错）对业务 session 的影响，
+        业务状态由 Phase 1 的 commit 保证。
+        """
+        try:
+            from app.database import get_db_context
+
+            async with get_db_context() as metric_db:
+                await dynamic_interview_persistence_service.record_operation_metric(
+                    metric_db,
+                    session_entity_id=session_entity_id,
+                    user_id=user_id,
+                    operation_type=operation_type,
+                    topic_id=topic_id,
+                    turn_id=turn_id,
+                    llm_provider=llm_provider,
+                    latency_ms=latency_ms,
+                    success=success,
+                    error_type=error_type,
+                )
+                await metric_db.commit()
+        except Exception as exc:
+            logger.warning("记录 %s metric 失败（独立 session，不影响主链路）: %s", operation_type, exc)
 
     @staticmethod
     async def _safe_rollback(db: AsyncSession) -> None:
@@ -2272,7 +2319,6 @@ class DynamicInterviewService:
 
     async def _realize_follow_up_question(
         self,
-        db: AsyncSession,
         session: InterviewSessionEntity,
         *,
         topic: DynamicTopicDTO,
@@ -2283,9 +2329,11 @@ class DynamicInterviewService:
         topic_id: int,
         turn_id: int,
     ) -> str:
-        """LLM 生成追问；任何失败都回退到 StrictInterviewPolicy 的模板追问。"""
+        """LLM 生成追问；任何失败都回退到 StrictInterviewPolicy 的模板追问。
+
+        不需要业务 ``db``：Phase 2 期间不访问数据库，metric 走独立 session。
+        """
         realized = await self._run_realizer_outside_transaction(
-            db,
             session,
             "FOLLOW_UP_REALIZE",
             lambda: question_realizer.realize_follow_up(context, decision, llm_provider=session.llm_provider),
@@ -2298,7 +2346,6 @@ class DynamicInterviewService:
 
     async def _realize_topic_transition(
         self,
-        db: AsyncSession,
         session: InterviewSessionEntity,
         *,
         previous_topic: DynamicTopicDTO,
@@ -2321,7 +2368,6 @@ class DynamicInterviewService:
             next_topic=next_topic,
         )
         return await self._run_realizer_outside_transaction(
-            db,
             session,
             "TOPIC_TRANSITION_REALIZE",
             lambda: question_realizer.realize_topic_transition(context, llm_provider=session.llm_provider),

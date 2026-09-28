@@ -89,14 +89,6 @@ class _StubInvoker:
         return self.payload
 
 
-class _FakeDb:
-    async def flush(self):
-        return None
-
-    def add(self, _entity):
-        return None
-
-
 async def _passthrough_single_flight(key, fn, **kwargs):
     return await fn()
 
@@ -284,7 +276,6 @@ async def check_fallback_available() -> list[dict]:
         question_realizer.realize_follow_up = _boom
         try:
             realized = await service._realize_follow_up_question(
-                _FakeDb(),
                 session,
                 topic=topic,
                 evaluation=evaluation,
