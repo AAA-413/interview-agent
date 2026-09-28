@@ -72,8 +72,16 @@ class QuestionRealizerService:
         self,
         context: InterviewContext,
         decision: DynamicDecisionDTO,
+        *,
+        llm_provider: str | None = None,
     ) -> str | None:
-        """根据上下文 + 追问意图生成追问原话；失败返回 ``None``（调用方回退模板）。"""
+        """根据上下文 + 追问意图生成追问原话；失败返回 ``None``（调用方回退模板）。
+
+        Args:
+            llm_provider: 由 orchestrator（DynamicInterviewService）按 session 选择，
+                保证「实际调用的 provider」与 telemetry 记录的 provider 一致。
+                Realizer 自身不猜测 provider。
+        """
         if not self._enabled():
             return None
         if not context.current_answer.strip():
@@ -104,11 +112,12 @@ class QuestionRealizerService:
             *context.fingerprint_parts(),
             intent,
             decision.target_gap or "",
+            self._provider_key(llm_provider),
         )
 
         async def _invoke() -> str:
             dto = await structured_output_invoker.invoke(
-                chat_model=self._chat_model(),
+                chat_model=self._chat_model(llm_provider),
                 system_prompt=self._system_prompt(context.interview_mode),
                 user_prompt=user_prompt,
                 output_model=_FollowUpQuestionDTO,
@@ -140,11 +149,15 @@ class QuestionRealizerService:
     async def realize_topic_transition(
         self,
         context: TopicTransitionContext,
+        *,
+        llm_provider: str | None = None,
     ) -> str | None:
         """只生成「转场语」；失败返回 ``None``（调用方使用 main_question）。
 
         下一题本身由 Topic Planner / Policy 决定（``next_topic.main_question``），
         LLM 不得改写核心问题语义，只允许负责怎么衔接。
+
+        ``llm_provider`` 语义与 :meth:`realize_follow_up` 一致，由 orchestrator 传入。
         """
         if not self._enabled():
             return None
@@ -166,11 +179,15 @@ class QuestionRealizerService:
             },
         )
 
-        key = build_single_flight_key("topic-transition-realize", *context.fingerprint_parts())
+        key = build_single_flight_key(
+            "topic-transition-realize",
+            *context.fingerprint_parts(),
+            self._provider_key(llm_provider),
+        )
 
         async def _invoke() -> str:
             dto = await structured_output_invoker.invoke(
-                chat_model=self._chat_model(),
+                chat_model=self._chat_model(llm_provider),
                 system_prompt=self._transition_system_prompt,
                 user_prompt=user_prompt,
                 output_model=_TransitionDTO,
@@ -200,11 +217,19 @@ class QuestionRealizerService:
         return f"{base}\n\n# 当前模式\nCOACH：可以稍微具体一点地提示追问方向，但依然不给答案。"
 
     @staticmethod
-    def _chat_model():
-        # 延迟导入：避免模块加载时就初始化 LLM provider
+    def _chat_model(llm_provider: str | None):
+        """按调用方指定的 provider 取模型（与 session.llm_provider 一致）。
+
+        延迟导入：避免模块加载时就初始化 LLM provider。
+        """
         from app.common.ai.llm_provider import llm_registry
 
-        return llm_registry.get_chat_model(None)
+        return llm_registry.get_chat_model(llm_provider)
+
+    @staticmethod
+    def _provider_key(llm_provider: str | None) -> str:
+        """SingleFlight key 里的 provider 标识；provider 不同不能复用同一结果。"""
+        return (llm_provider or "").strip().lower() or "__default__"
 
     @staticmethod
     def _enabled() -> bool:

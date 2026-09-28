@@ -48,7 +48,9 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
     "httpx>=0.28.0",
-    "ruff>=0.8.0",
+    # ruff 固定版本：formatter 输出随版本变化，CI 与本地必须一致
+    # 0.16.9 = 当前 CI 实际安装并验证通过的版本
+    "ruff==0.16.9",
     "mypy>=1.13.0",
 ]
 

@@ -1638,6 +1638,31 @@ class DynamicInterviewService:
             return StrictInterviewPolicy()
         return CoachInterviewPolicy()
 
+    @staticmethod
+    def _resolve_pending_next_question(
+        *,
+        action: str,
+        decision: DynamicDecisionDTO,
+        topic_entity: InterviewTopicEntity,
+        fallback_question: str,
+        next_topic_entity: InterviewTopicEntity | None,
+    ) -> str | None:
+        """Phase 1 落库时每个 action 对应的「确定性下一题」。
+
+        必须按 action 区分，不能用单一兜底值覆盖所有分支：
+        - FOLLOW_UP   -> 规则模板追问
+        - COACH_RETRY -> Policy 已经给出的 next_question（重答同一题）
+        - NEXT_TOPIC  -> 下一个 topic 的 main_question（转场语只是增强）
+        - END         -> None
+        """
+        if action == DecisionAction.FOLLOW_UP.value:
+            return fallback_question or topic_entity.main_question
+        if action == DecisionAction.COACH_RETRY.value:
+            return decision.next_question or topic_entity.main_question
+        if action == DecisionAction.NEXT_TOPIC.value:
+            return next_topic_entity.main_question if next_topic_entity is not None else None
+        return None
+
     async def create_session(
         self,
         db: AsyncSession,
@@ -2002,11 +2027,19 @@ class DynamicInterviewService:
         if decision.action == DecisionAction.FOLLOW_UP.value:
             fallback_question = StrictInterviewPolicy._followup_question(topic, evaluation, followup_count + 1)
 
-        # Phase 1 落库的 decision 使用**确定性的兜底问题**作为 next_question：
-        # - 即使 Phase 2/3 整体失败，库里的 decision 与已创建的 turn 也是自洽的；
-        # - 重新 GET session 时 decision.next_question 与 submit 返回值语义一致；
-        # - Phase 3 拿到 LLM 生成的问题后再回填覆盖。
-        pending_decision = decision.model_copy(update={"next_question": fallback_question or None})
+        # Phase 1 落库的 decision 使用**确定性的兜底问题**作为 next_question（按 action 区分）：
+        # - FOLLOW_UP：模板追问；COACH_RETRY：Policy 给的 main_question；
+        #   NEXT_TOPIC：下一个 topic 的 main_question；END：None。
+        # 这样即使 Phase 2/3 全部失败，库里的 decision 与已创建的 turn 依然自洽，
+        # 且重新 GET session 时 decision.next_question 与 submit 返回值语义一致。
+        pending_question = self._resolve_pending_next_question(
+            action=decision.action,
+            decision=decision,
+            topic_entity=topic_entity,
+            fallback_question=fallback_question,
+            next_topic_entity=next_topic_entity,
+        )
+        pending_decision = decision.model_copy(update={"next_question": pending_question})
 
         await dynamic_interview_persistence_service.save_turn_answer(
             db,
@@ -2057,7 +2090,7 @@ class DynamicInterviewService:
                 user_id=user_id,
                 turn_type=TurnType.FOLLOW_UP.value,
                 turn_order=len(refreshed_turns) + 1,
-                question=fallback_question,
+                question=fallback_question or topic_entity.main_question,
             )
         elif decision.action == DecisionAction.NEXT_TOPIC.value and next_topic_entity is not None:
             await dynamic_interview_persistence_service.activate_topic(db, next_topic_entity.id, session.id)
@@ -2119,21 +2152,40 @@ class DynamicInterviewService:
             )
 
         # =====================================================================
-        # Phase 3：把生成结果落库（失败则保留 Phase 1 的兜底状态）
+        # Phase 3：把生成结果落库（best-effort）
+        # ---------------------------------------------------------------------
+        # Phase 1 已经决定了 correctness：answer / evaluation / decision /
+        # topic 状态 / 下一轮兜底 turn 全部提交完成。Phase 3 只是把 LLM 生成的
+        # 措辞替换成更自然的一版，**不允许**因为它的 DB 写失败而让整个 submit 失败
+        # （否则用户会看到 500，重试时又收到「该轮回答已提交」）。
         # =====================================================================
+        persisted_question = next_turn_entity.question if next_turn_entity is not None else None
         final_question: str | None = None
         if decision.action == DecisionAction.FOLLOW_UP.value:
-            final_question = realized_question or fallback_question
+            final_question = realized_question or fallback_question or topic_entity.main_question
         elif decision.action == DecisionAction.NEXT_TOPIC.value and next_topic_entity is not None:
             final_question = resolve_topic_opening(realized_transition, next_topic_entity.main_question)
 
-        if next_turn_entity is not None and final_question and next_turn_entity.question != final_question:
-            await dynamic_interview_persistence_service.update_turn_question(db, next_turn_entity, final_question)
-            await dynamic_interview_persistence_service.update_turn_decision(
-                db, turn, decision.model_copy(update={"next_question": final_question}).model_dump()
-            )
-            next_turn = dynamic_interview_persistence_service.turn_to_dto(next_turn_entity)
-            await db.commit()
+        if persisted_question is not None and final_question and persisted_question != final_question:
+            try:
+                await dynamic_interview_persistence_service.update_turn_question(db, next_turn_entity, final_question)
+                await dynamic_interview_persistence_service.update_turn_decision(
+                    db,
+                    turn,
+                    decision.model_copy(update={"next_question": final_question}).model_dump(),
+                )
+                await db.commit()
+                next_turn = dynamic_interview_persistence_service.turn_to_dto(next_turn_entity)
+            except Exception as exc:
+                logger.warning(
+                    "Phase 3 持久化失败，保留 Phase 1 兜底状态: session_id=%s, turn_id=%s, error=%s",
+                    session.session_id,
+                    turn.id,
+                    exc,
+                )
+                await self._safe_rollback(db)
+                # 对外声明的下一题回落到 Phase 1 已提交的兜底问题
+                final_question = persisted_question
 
         response_decision = decision
         if final_question:
@@ -2203,8 +2255,20 @@ class DynamicInterviewService:
                 error_type=error_type,
             )
         except Exception as exc:
-            logger.warning("记录 %s metric 失败（不影响链路）: %s", operation_type, exc)
+            # flush 失败会让 Session 进入 failed transaction 状态，仅仅 catch 住异常
+            # 并不能让 session 继续可用；必须 rollback。Phase 1 已经 commit，
+            # 因此这里的 rollback 不会影响候选人已保存的 answer。
+            logger.warning("记录 %s metric 失败，回滚本次 metric 事务（不影响链路）: %s", operation_type, exc)
+            await self._safe_rollback(db)
         return result
+
+    @staticmethod
+    async def _safe_rollback(db: AsyncSession) -> None:
+        """best-effort 回滚：回滚本身失败也不能影响调用方。"""
+        try:
+            await db.rollback()
+        except Exception as exc:
+            logger.warning("rollback 失败（不影响返回结果）: %s", exc)
 
     async def _realize_follow_up_question(
         self,
@@ -2224,7 +2288,7 @@ class DynamicInterviewService:
             db,
             session,
             "FOLLOW_UP_REALIZE",
-            lambda: question_realizer.realize_follow_up(context, decision),
+            lambda: question_realizer.realize_follow_up(context, decision, llm_provider=session.llm_provider),
             topic_id=topic_id,
             turn_id=turn_id,
         )
@@ -2260,7 +2324,7 @@ class DynamicInterviewService:
             db,
             session,
             "TOPIC_TRANSITION_REALIZE",
-            lambda: question_realizer.realize_topic_transition(context),
+            lambda: question_realizer.realize_topic_transition(context, llm_provider=session.llm_provider),
             topic_id=topic_id,
             turn_id=turn_id,
         )
