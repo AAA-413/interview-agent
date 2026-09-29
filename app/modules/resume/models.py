@@ -31,6 +31,15 @@ class ResumeEntity(Base):
     )
     analyze_error: Mapped[str | None] = mapped_column(String(500))
 
+    # ---- PR4：Canonical Resume（简历事实抽取的 derived artifact） ----
+    # Canonical 的生命周期跟 resume_text 绑定，与 resume_analyses 的评分历史不同，
+    # 因此放在 resumes 上而不是 resume_analyses.profile_json；全部 nullable，旧数据无需 backfill。
+    canonical_profile_json: Mapped[str | None] = mapped_column(Text)
+    canonical_schema_version: Mapped[str | None] = mapped_column(String(64))
+    canonical_source_hash: Mapped[str | None] = mapped_column(String(64))
+    canonical_extract_error: Mapped[str | None] = mapped_column(String(500))
+    canonical_extracted_at: Mapped[datetime | None] = mapped_column(DateTime)
+
     analyses: Mapped[list["ResumeAnalysisEntity"]] = relationship(
         back_populates="resume", cascade="all, delete-orphan", lazy="selectin"
     )

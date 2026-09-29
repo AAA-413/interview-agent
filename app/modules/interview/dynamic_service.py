@@ -36,6 +36,7 @@ from app.modules.interview.evaluation.models import (
     EvaluationSnapshot,
     GuardVerdict,
     filter_active_dimension_scores,
+    normalize_evidence_text,
 )
 from app.modules.interview.jd_parse_service import jd_parse_service
 from app.modules.interview.models import (
@@ -72,10 +73,21 @@ from app.modules.interview.topic_state.models import canonical_exit_criteria, ta
 from app.modules.interview.topic_state.tracker import topic_coverage_tracker
 from app.modules.knowledge_base.models import KnowledgeBaseEntity, KnowledgeChunkEntity
 from app.modules.knowledge_base.persistence_service import knowledge_base_persistence_service
+from app.modules.resume.canonical.models import (
+    ResumeCanonicalProfileDTO,
+    ResumeCanonicalStatus,
+    ResumeEvidenceRefDTO,
+)
+from app.modules.resume.canonical.selector import resume_evidence_selector
 from app.modules.resume.history_service import resume_history_service
 from app.modules.resume.schemas import ProjectInfo, ResumeDetailDTO, ResumeProfile
 
 logger = logging.getLogger(__name__)
+
+# PR4：Planner 本次使用的简历事实来源（写进 plan_summary 便于排查）
+RESUME_EVIDENCE_MODE_CANONICAL = "CANONICAL"
+RESUME_EVIDENCE_MODE_LEGACY = "LEGACY_PROFILE"
+RESUME_EVIDENCE_MODE_NONE = "NONE"
 
 
 @dataclass(frozen=True)
@@ -85,6 +97,9 @@ class _TopicCandidate:
     evidence: str | None
     source_type: str
     weight: float
+    # PR4：本 topic 引用的简历事实。JD topic 与 legacy resume topic 为 ()；
+    # canonical resume topic 才非空。
+    resume_evidence_refs: tuple[ResumeEvidenceRefDTO, ...] = ()
 
 
 class InterviewPlanService:
@@ -101,10 +116,29 @@ class InterviewPlanService:
         target_role = request.target_role or structured_jd.role_title or "目标技术岗位"
         seed = variation_seed or target_role
         profile = self._latest_profile(resume_detail)
+        canonical = self._canonical_profile(resume_detail)
         recent_keys = {item["topic_key"] for item in (recent_topic_keys or [])}
         low_score_keys = set(user_topic_profile.get("low_score_topics", []) if user_topic_profile else [])
 
-        project_candidates = self._project_candidates(profile, structured_jd, target_role, request.skill_id)
+        # PR4：Planner 优先消费 Canonical（source-validated facts）。
+        # canonical READY 时即便 projects 为空也不回退 legacy —— Canonical 已经说明
+        # 「基于 source validation 没有可信项目事实」，回退 legacy 等于把未校验的
+        # LLM 总结重新当成事实。
+        #
+        # `settings.resume.canonical_extractor_enabled` 是完整 rollback switch：
+        # 关掉后即使 DB 里已有 READY canonical，Planner 也走 legacy compatibility path，
+        # 线上不需要清 DB 就能关掉整条 PR4 Canonical 路径。
+        if settings.resume.canonical_extractor_enabled and canonical is not None:
+            resume_evidence_mode = RESUME_EVIDENCE_MODE_CANONICAL
+            project_candidates = self._canonical_project_candidates(
+                canonical, structured_jd, target_role, request.skill_id
+            )
+        elif profile is not None:
+            resume_evidence_mode = RESUME_EVIDENCE_MODE_LEGACY
+            project_candidates = self._project_candidates(profile, structured_jd, target_role, request.skill_id)
+        else:
+            resume_evidence_mode = RESUME_EVIDENCE_MODE_NONE
+            project_candidates = []
         knowledge_candidate = self._knowledge_candidate(
             structured_jd, target_role, request.skill_id, project_candidates
         )
@@ -140,6 +174,7 @@ class InterviewPlanService:
             "recent_topic_keys": sorted(recent_keys),
             "low_score_retry_topics": sorted(low_score_keys),
             "variation_seed": seed,
+            "resume_evidence_mode": resume_evidence_mode,
             "topics": [
                 {
                     "topic_key": topic.topic_key,
@@ -154,10 +189,26 @@ class InterviewPlanService:
 
     @staticmethod
     def _latest_profile(resume_detail: ResumeDetailDTO | None) -> ResumeProfile | None:
+        """Legacy ResumeProfile —— 只在 canonical 不可用时才作为兜底事实来源。"""
         if not resume_detail or not resume_detail.analyses:
             return None
         latest = max(resume_detail.analyses, key=lambda item: item.analyzed_at)
         return latest.profile
+
+    @staticmethod
+    def _canonical_profile(resume_detail: ResumeDetailDTO | None) -> ResumeCanonicalProfileDTO | None:
+        """Canonical 可用（READY）时返回 source-validated profile，否则 None。
+
+        READY 的判定在 persistence 层完成（JSON 可解析 + schema 版本匹配 + source hash 匹配），
+        Planner 只信任 READY 的 canonical。
+        """
+        if not resume_detail:
+            return None
+        if resume_detail.canonical_profile is None:
+            return None
+        if resume_detail.canonical_status != ResumeCanonicalStatus.READY.value:
+            return None
+        return resume_detail.canonical_profile
 
     def _project_candidates(
         self,
@@ -166,126 +217,397 @@ class InterviewPlanService:
         target_role: str,
         skill_id: str | None,
     ) -> list[_TopicCandidate]:
+        """Legacy 路径：ResumeProfile（LLM 总结）→ topic candidates。
+
+        只在 canonical 不可用（NOT_EXTRACTED / FAILED）时使用，
+        保证 migration 后老用户不会因为还没有 canonical 就无法面试。
+        """
         projects = profile.projects if profile and profile.projects else []
         candidates: list[_TopicCandidate] = []
 
         for project in projects[:4]:
-            evidence = self._project_evidence(project)
-            normalized = topic_registry_service.normalize(
+            self._append_project_candidates(
+                candidates,
+                structured_jd,
+                target_role,
+                skill_id,
+                evidence=self._project_evidence(project),
                 raw_topic=" ".join(project.tech_stack) or project.description,
-                evidence_snippet=evidence,
-                question_type="PROJECT",
-                target_role=target_role,
-                skill_id=skill_id,
-                role_domain=structured_jd.role_domain,
+                resume_evidence_refs=(),
             )
-            topic = topic_registry_service.get_topic(normalized.topic_key)
-            if topic is None or normalized.fallback_reason:
-                topic = topic_registry_service.get_topic("project_role_ownership")
-            elif topic.topic_key == "multi_agent_collaboration" and not self._has_multi_agent_evidence(evidence):
-                topic = None
-            if topic:
-                candidates.append(
-                    _TopicCandidate(
-                        topic=topic,
-                        question_type="PROJECT",
-                        evidence=evidence,
-                        source_type="resume",
-                        weight=structured_jd.topic_weights.get(topic.topic_key, 0.52) + 0.12,
-                    )
-                )
-
-            evidence_lower = evidence.lower()
-            for topic_key, weight in structured_jd.topic_weights.items():
-                weighted_topic = topic_registry_service.get_topic(topic_key)
-                if weighted_topic is None or "PROJECT" not in weighted_topic.supported_question_types:
-                    continue
-                if weighted_topic.skill_key in {"typescript", "fastapi"}:
-                    continue
-                aliases = (
-                    weighted_topic.topic_key,
-                    weighted_topic.label,
-                    weighted_topic.skill_key,
-                    *weighted_topic.aliases,
-                )
-                if not any(alias and alias.lower() in evidence_lower for alias in aliases):
-                    continue
-                candidates.append(
-                    _TopicCandidate(
-                        topic=weighted_topic,
-                        question_type="PROJECT",
-                        evidence=evidence,
-                        source_type="resume",
-                        weight=min(weight + 0.18, 1.0),
-                    )
-                )
-
-            evidence_priority_topics = (
-                "frontend_performance_optimization",
-                "async_task_pipeline",
-                "idempotency_design",
-                "redis_cache_penetration_hotkey",
-                "mysql_index_optimization",
-                "mcp_tool_integration",
-            )
-            for topic_key in evidence_priority_topics:
-                priority_topic = topic_registry_service.get_topic(topic_key)
-                if priority_topic is None:
-                    continue
-                aliases = (priority_topic.topic_key, priority_topic.label, *priority_topic.aliases)
-                if not any(alias and alias.lower() in evidence_lower for alias in aliases):
-                    continue
-                candidates.append(
-                    _TopicCandidate(
-                        topic=priority_topic,
-                        question_type="PROJECT",
-                        evidence=evidence,
-                        source_type="resume",
-                        weight=0.96,
-                    )
-                )
-
-            metric_topic = topic_registry_service.get_topic("project_metric_validation")
-            if metric_topic:
-                candidates.append(
-                    _TopicCandidate(
-                        topic=metric_topic,
-                        question_type="PROJECT",
-                        evidence=evidence,
-                        source_type="resume",
-                        weight=structured_jd.topic_weights.get(metric_topic.topic_key, 0.5),
-                    )
-                )
 
         if not candidates:
-            fallback_topic = topic_registry_service.get_topic("custom_project_topic")
-            if fallback_topic:
-                candidates.append(
-                    _TopicCandidate(
-                        topic=fallback_topic,
-                        question_type="PROJECT",
-                        evidence="简历中未识别到明确项目证据，请先用一个最能证明岗位匹配度的核心项目作答。",
-                        source_type="resume",
-                        weight=0.4,
-                    )
-                )
-            ownership_topic = topic_registry_service.get_topic("project_role_ownership")
-            if ownership_topic:
-                candidates.append(
-                    _TopicCandidate(
-                        topic=ownership_topic,
-                        question_type="PROJECT",
-                        evidence="简历项目证据不足，本题用于补齐个人贡献和项目真实性表达。",
-                        source_type="resume",
-                        weight=0.38,
-                    )
-                )
-
+            self._append_project_fallbacks(candidates)
         candidates.sort(
             key=lambda item: (item.weight, self._project_topic_priority(item.topic.topic_key)),
             reverse=True,
         )
         return self._dedupe_candidates(candidates, "PROJECT")
+
+    def _canonical_project_candidates(
+        self,
+        canonical: ResumeCanonicalProfileDTO,
+        structured_jd,
+        target_role: str,
+        skill_id: str | None,
+    ) -> list[_TopicCandidate]:
+        """Canonical 路径：source-validated resume facts → topic candidates。
+
+        两阶段（PR4 review）：
+
+        ```text
+        Canonical Project
+              ↓  Candidate Discovery（用 searchable canonical text 做 alias 匹配）
+           确定 TopicDef
+              ↓  Topic-specific Evidence Selection（每个 topic 单独 select）
+            Candidate（自带该 topic 的 refs）
+        ```
+
+        ``skill_id ≠ topic_key``，因此**不能**先选一次 bundle 再让该 project 生成的
+        所有 topic 共用 —— 否则 MySQL topic 会拿到 Redis 的 provenance。
+        """
+        candidates: list[_TopicCandidate] = []
+
+        for project in canonical.projects[:4]:
+            # ---- 阶段一：Candidate Discovery（只用已校验的 claim value 做匹配） ----
+            discovered = self._discover_canonical_topics(project, structured_jd, target_role, skill_id)
+            for topic, weight, requires_support in discovered:
+                # ---- 阶段二：Topic-specific Evidence Selection ----
+                bundle = resume_evidence_selector.for_project(
+                    canonical,
+                    project,
+                    topic_key=topic.topic_key,
+                    skill_key=topic.skill_key,
+                    keywords=(topic.label, *topic.aliases),
+                )
+                if requires_support:
+                    if not self._has_supporting_ref(bundle, topic):
+                        # provenance 脱节：不允许「Topic=MySQL 索引优化，refs=负责后端接口」
+                        logger.info("canonical topic 缺少 supporting evidence，跳过: topic=%s", topic.topic_key)
+                        continue
+                elif not bundle.refs:
+                    # 通用 project topic（role_ownership 等）没有专属证据时退回通用选择，
+                    # 仍不回退 legacy ResumeProfile。
+                    bundle = resume_evidence_selector.for_project(canonical, project)
+                candidates.append(
+                    _TopicCandidate(
+                        topic=topic,
+                        question_type="PROJECT",
+                        evidence=bundle.rendered_text or "简历项目证据不足。",
+                        source_type="resume",
+                        weight=weight,
+                        resume_evidence_refs=tuple(bundle.refs),
+                    )
+                )
+
+            # project_metric_validation 只在确有结果/验证类证据时才新增
+            self._append_canonical_metric_candidate(candidates, canonical, project, structured_jd)
+
+        if not candidates:
+            # canonical READY 但 projects 为空（或所有 topic 都缺 supporting evidence）
+            # → deterministic fallback，**不回退 legacy ResumeProfile**（§54）。
+            self._append_project_fallbacks(candidates)
+        candidates.sort(
+            key=lambda item: (item.weight, self._project_topic_priority(item.topic.topic_key)),
+            reverse=True,
+        )
+        return self._dedupe_candidates(candidates, "PROJECT")
+
+    # ------------------------------------------------------------------
+    # PR4 review：canonical 两阶段选题
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _canonical_searchable_text(project) -> str:
+        """由**已通过 source validation** 的 claim value 拼出可检索文本。
+
+        只用于 TopicRegistry normalize / alias 匹配，**不能**当作 evidence_snippet ——
+        最终展示给模型/用户的证据必须是 Evidence Selector 选出的原文 quote。
+        """
+        parts: list[str] = []
+        for claim in [
+            project.name,
+            project.role,
+            *project.technologies,
+            *project.responsibilities,
+            *project.achievements,
+            *project.metrics,
+        ]:
+            if claim is not None and claim.value:
+                parts.append(claim.value)
+        return " ".join(parts)
+
+    def _discover_canonical_topics(
+        self,
+        project,
+        structured_jd,
+        target_role: str,
+        skill_id: str | None,
+    ) -> list[tuple]:
+        """阶段一：从 canonical project 发现候选 TopicDef（不做 evidence budget）。
+
+        返回 ``(topic, weight, requires_support)``：
+
+        - ``requires_support=True``：由 canonical 技术/职责/成果 alias 命中的
+          evidence-driven topic，最终 refs 里必须有 supporting claim，否则丢弃；
+        - ``requires_support=False``：通用 project topic（normalize 兜底出来的
+          ``project_role_ownership``），允许没有专属 supporting claim。
+        """
+        searchable = self._canonical_searchable_text(project)
+        if not searchable:
+            return []
+        haystack = searchable.lower()
+        found: list[tuple] = []
+
+        normalized = topic_registry_service.normalize(
+            raw_topic=searchable,
+            evidence_snippet=searchable,
+            question_type="PROJECT",
+            target_role=target_role,
+            skill_id=skill_id,
+            role_domain=structured_jd.role_domain,
+        )
+        topic = topic_registry_service.get_topic(normalized.topic_key)
+        requires_support = True
+        if topic is None or normalized.fallback_reason:
+            topic = topic_registry_service.get_topic("project_role_ownership")
+            requires_support = False
+        elif topic.topic_key == "multi_agent_collaboration" and not self._has_multi_agent_evidence(searchable):
+            topic = None
+        if topic is not None:
+            found.append((topic, structured_jd.topic_weights.get(topic.topic_key, 0.52) + 0.12, requires_support))
+
+        for topic_key, weight in structured_jd.topic_weights.items():
+            weighted_topic = topic_registry_service.get_topic(topic_key)
+            if weighted_topic is None or "PROJECT" not in weighted_topic.supported_question_types:
+                continue
+            if weighted_topic.skill_key in {"typescript", "fastapi"}:
+                continue
+            aliases = (
+                weighted_topic.topic_key,
+                weighted_topic.label,
+                weighted_topic.skill_key,
+                *weighted_topic.aliases,
+            )
+            if not any(alias and alias.lower() in haystack for alias in aliases):
+                continue
+            found.append((weighted_topic, min(weight + 0.18, 1.0), True))
+
+        evidence_priority_topics = (
+            "frontend_performance_optimization",
+            "async_task_pipeline",
+            "idempotency_design",
+            "redis_cache_penetration_hotkey",
+            "mysql_index_optimization",
+            "mcp_tool_integration",
+        )
+        for topic_key in evidence_priority_topics:
+            priority_topic = topic_registry_service.get_topic(topic_key)
+            if priority_topic is None:
+                continue
+            aliases = (priority_topic.topic_key, priority_topic.label, *priority_topic.aliases)
+            if not any(alias and alias.lower() in haystack for alias in aliases):
+                continue
+            found.append((priority_topic, 0.96, True))
+
+        return found
+
+    @staticmethod
+    def _supporting_keywords(topic) -> tuple[str, ...]:
+        """判断某个 claim 是否支撑该 topic 的关键词集合（deterministic）。"""
+        parts: list[str] = []
+        for chunk in str(topic.topic_key).replace("-", "_").split("_"):
+            if len(chunk) > 2:
+                parts.append(chunk)
+        for item in (topic.label, topic.skill_key, *topic.aliases):
+            text = str(item or "").strip()
+            if len(text) > 2:
+                parts.append(text)
+        return tuple(dict.fromkeys(parts))
+
+    @staticmethod
+    def _has_supporting_ref(bundle, topic) -> bool:
+        """refs 中必须至少有一条 claim 与 topic_key / skill_key / label / aliases 匹配。
+
+        不允许出现「Topic = MySQL 索引优化，refs 却是『负责后端接口』」这种
+        provenance 脱节。
+        """
+        keywords = InterviewPlanService._supporting_keywords(topic)
+        if not keywords:
+            return True
+        for ref in bundle.refs:
+            blob = normalize_evidence_text(f"{ref.value} {ref.quote}")
+            if any(keyword in blob for keyword in keywords):
+                return True
+        return False
+
+    @staticmethod
+    def _has_metric_evidence(project) -> bool:
+        """canonical path 下 project_metric_validation 的前置条件。
+
+        必须有 METRIC claim，或 achievement 里带量化数字；否则不无条件新增，
+        避免每个 project 都硬塞一个指标题。
+        """
+        if project.metrics:
+            return True
+        return any(any(char.isdigit() for char in claim.value) for claim in project.achievements or [])
+
+    def _append_canonical_metric_candidate(
+        self,
+        candidates: list[_TopicCandidate],
+        canonical,
+        project,
+        structured_jd,
+    ) -> None:
+        metric_topic = topic_registry_service.get_topic("project_metric_validation")
+        if metric_topic is None or not self._has_metric_evidence(project):
+            return
+        bundle = resume_evidence_selector.for_project(
+            canonical,
+            project,
+            topic_key=metric_topic.topic_key,
+            skill_key=metric_topic.skill_key,
+            keywords=(metric_topic.label, *metric_topic.aliases),
+        )
+        if not bundle.refs:
+            return
+        candidates.append(
+            _TopicCandidate(
+                topic=metric_topic,
+                question_type="PROJECT",
+                evidence=bundle.rendered_text,
+                source_type="resume",
+                weight=structured_jd.topic_weights.get(metric_topic.topic_key, 0.5),
+                resume_evidence_refs=tuple(bundle.refs),
+            )
+        )
+
+    def _append_project_candidates(
+        self,
+        candidates: list[_TopicCandidate],
+        structured_jd,
+        target_role: str,
+        skill_id: str | None,
+        *,
+        evidence: str,
+        raw_topic: str,
+        resume_evidence_refs: tuple[ResumeEvidenceRefDTO, ...],
+    ) -> None:
+        """按一份 project evidence 生成 topic candidates（legacy / canonical 共用）。"""
+        normalized = topic_registry_service.normalize(
+            raw_topic=raw_topic,
+            evidence_snippet=evidence,
+            question_type="PROJECT",
+            target_role=target_role,
+            skill_id=skill_id,
+            role_domain=structured_jd.role_domain,
+        )
+        topic = topic_registry_service.get_topic(normalized.topic_key)
+        if topic is None or normalized.fallback_reason:
+            topic = topic_registry_service.get_topic("project_role_ownership")
+        elif topic.topic_key == "multi_agent_collaboration" and not self._has_multi_agent_evidence(evidence):
+            topic = None
+        if topic:
+            candidates.append(
+                _TopicCandidate(
+                    topic=topic,
+                    question_type="PROJECT",
+                    evidence=evidence,
+                    source_type="resume",
+                    weight=structured_jd.topic_weights.get(topic.topic_key, 0.52) + 0.12,
+                    resume_evidence_refs=resume_evidence_refs,
+                )
+            )
+
+        evidence_lower = evidence.lower()
+        for topic_key, weight in structured_jd.topic_weights.items():
+            weighted_topic = topic_registry_service.get_topic(topic_key)
+            if weighted_topic is None or "PROJECT" not in weighted_topic.supported_question_types:
+                continue
+            if weighted_topic.skill_key in {"typescript", "fastapi"}:
+                continue
+            aliases = (
+                weighted_topic.topic_key,
+                weighted_topic.label,
+                weighted_topic.skill_key,
+                *weighted_topic.aliases,
+            )
+            if not any(alias and alias.lower() in evidence_lower for alias in aliases):
+                continue
+            candidates.append(
+                _TopicCandidate(
+                    topic=weighted_topic,
+                    question_type="PROJECT",
+                    evidence=evidence,
+                    source_type="resume",
+                    weight=min(weight + 0.18, 1.0),
+                    resume_evidence_refs=resume_evidence_refs,
+                )
+            )
+
+        evidence_priority_topics = (
+            "frontend_performance_optimization",
+            "async_task_pipeline",
+            "idempotency_design",
+            "redis_cache_penetration_hotkey",
+            "mysql_index_optimization",
+            "mcp_tool_integration",
+        )
+        for topic_key in evidence_priority_topics:
+            priority_topic = topic_registry_service.get_topic(topic_key)
+            if priority_topic is None:
+                continue
+            aliases = (priority_topic.topic_key, priority_topic.label, *priority_topic.aliases)
+            if not any(alias and alias.lower() in evidence_lower for alias in aliases):
+                continue
+            candidates.append(
+                _TopicCandidate(
+                    topic=priority_topic,
+                    question_type="PROJECT",
+                    evidence=evidence,
+                    source_type="resume",
+                    weight=0.96,
+                    resume_evidence_refs=resume_evidence_refs,
+                )
+            )
+
+        metric_topic = topic_registry_service.get_topic("project_metric_validation")
+        if metric_topic:
+            candidates.append(
+                _TopicCandidate(
+                    topic=metric_topic,
+                    question_type="PROJECT",
+                    evidence=evidence,
+                    source_type="resume",
+                    weight=structured_jd.topic_weights.get(metric_topic.topic_key, 0.5),
+                    resume_evidence_refs=resume_evidence_refs,
+                )
+            )
+
+    @staticmethod
+    def _append_project_fallbacks(candidates: list[_TopicCandidate]) -> None:
+        fallback_topic = topic_registry_service.get_topic("custom_project_topic")
+        if fallback_topic:
+            candidates.append(
+                _TopicCandidate(
+                    topic=fallback_topic,
+                    question_type="PROJECT",
+                    evidence="简历中未识别到明确项目证据，请先用一个最能证明岗位匹配度的核心项目作答。",
+                    source_type="resume",
+                    weight=0.4,
+                )
+            )
+        ownership_topic = topic_registry_service.get_topic("project_role_ownership")
+        if ownership_topic:
+            candidates.append(
+                _TopicCandidate(
+                    topic=ownership_topic,
+                    question_type="PROJECT",
+                    evidence="简历项目证据不足，本题用于补齐个人贡献和项目真实性表达。",
+                    source_type="resume",
+                    weight=0.38,
+                )
+            )
 
     @staticmethod
     def _select_project_candidates(
@@ -489,6 +811,8 @@ class InterviewPlanService:
             followup_goals=self._followup_goals(candidate),
             exit_criteria=self._exit_criteria(candidate),
             rubric=self._rubric(candidate.question_type),
+            # PR4：canonical topic 带上简历事实 refs；JD / legacy topic 为空列表
+            resume_evidence_refs=list(candidate.resume_evidence_refs),
         )
 
     @staticmethod
@@ -2170,7 +2494,7 @@ class DynamicInterviewService:
                     user_id=user_id,
                     resume_id=request.resume_id,
                     topic=topic,
-                    evidence_hash=self._evidence_hash(topic.evidence_snippet),
+                    evidence_hash=self._evidence_hash(topic.evidence_snippet, topic.resume_evidence_refs),
                 )
                 topic_entities.append(topic_entity)
 
@@ -3061,7 +3385,18 @@ class DynamicInterviewService:
         )
 
     @staticmethod
-    def _evidence_hash(evidence: str | None) -> str | None:
+    @staticmethod
+    def _evidence_hash(evidence: str | None, refs: list[ResumeEvidenceRefDTO] | None = None) -> str | None:
+        """Topic evidence hash。
+
+        PR4：canonical topic 优先基于 ``sorted(claim_id) + quote`` 生成 ——
+        同一组事实 refs 得到稳定 hash，而不是去 hash 用户可见的拼接文本
+        （拼接文本会随 selector 预算 / 截断策略变化）。
+        legacy / JD path 保留原有逻辑。
+        """
+        if refs:
+            payload = "|".join(f"{ref.claim_id}:{ref.quote}" for ref in sorted(refs, key=lambda item: item.claim_id))
+            return hashlib.sha256(payload.encode("utf-8")).hexdigest()
         if not evidence:
             return None
         return hashlib.sha256(evidence.strip().encode("utf-8")).hexdigest()

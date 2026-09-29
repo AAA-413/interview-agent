@@ -26,6 +26,7 @@ from app.modules.interview.schemas import (
     TopicCoverageStateDTO,
 )
 from app.modules.interview.topic_state.tracker import topic_coverage_tracker
+from app.modules.resume.persistence_service import resume_persistence_service
 
 
 def _json_dumps(value: object) -> str:
@@ -170,6 +171,9 @@ class DynamicInterviewPersistenceService:
             source_type=topic.source_type,
             evidence_snippet=topic.evidence_snippet,
             evidence_hash=evidence_hash,
+            resume_evidence_refs_json=_json_dumps([ref.model_dump() for ref in topic.resume_evidence_refs])
+            if topic.resume_evidence_refs
+            else None,
             main_question=topic.main_question,
             topic_order=topic.topic_order,
             status=topic.status,
@@ -485,6 +489,10 @@ class DynamicInterviewPersistenceService:
             # NULL / 非法 / schema 不兼容的 coverage_state_json 都退化成 initial state，
             # 不允许脏数据把答题链路打挂。
             coverage_state=topic_coverage_tracker.parse_state(entity.coverage_state_json, entity.question_type),
+            # PR4：坏 JSON / 非法结构 → []，不能 500。
+            resume_evidence_refs=resume_persistence_service.parse_resume_evidence_refs(
+                entity.resume_evidence_refs_json
+            ),
         )
 
     def turn_to_dto(self, entity: InterviewTurnEntity) -> DynamicTurnDTO:
