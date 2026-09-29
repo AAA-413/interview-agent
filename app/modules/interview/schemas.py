@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.modules.resume.canonical.models import ResumeEvidenceRefDTO
+
 
 class KeyPoint(BaseModel):
     point: str
@@ -152,6 +154,8 @@ class DynamicTopicDTO(BaseModel):
     # PR3：topic 级 coverage 累计状态。backward compatible：老 topic 为 None，
     # 读取方按 initial_state(question_type) 处理，不需要 backfill。
     coverage_state: "TopicCoverageStateDTO | None" = None
+    # PR4：本场面试引用的简历事实。backward compatible：老 topic / JD topic 为 []。
+    resume_evidence_refs: list[ResumeEvidenceRefDTO] = Field(default_factory=list)
 
 
 class DynamicTurnDTO(BaseModel):
