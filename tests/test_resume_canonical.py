@@ -37,6 +37,7 @@ from app.modules.resume import async_tasks as resume_async_tasks
 from app.modules.resume.async_tasks import ResumeAnalyzeTaskHandler
 from app.modules.resume.canonical.models import (
     RESUME_CANONICAL_SCHEMA_VERSION,
+    RawExperienceDTO,
     RawProjectDTO,
     RawResumeCanonicalDTO,
     RawSkillDTO,
@@ -1053,3 +1054,324 @@ def test_canonical_profile_rejects_summary_like_fields():
     fields = ResumeCanonicalProfileDTO.model_fields
     for banned in ("summary", "experience_level", "has_projects", "overall_score"):
         assert banned not in fields
+
+
+# ===========================================================================
+# PR4 review round —— P0-1：experience_type 必须 source-backed
+# ===========================================================================
+
+EXP_TEXT_PLAIN = "某科技有限公司\n后端开发工程师\n2025.06-2025.09"
+EXP_TEXT_INTERN = "某科技有限公司\n后端开发实习生\n2025.06-2025.09"
+EXP_TEXT_WORK = "工作经历：某某科技有限公司 后端开发工程师"
+
+
+def _exp(declared: str, quote: str, text: str, role_value: str = "后端开发工程师", role_quote: str = "后端开发工程师"):
+    raw = RawResumeCanonicalDTO(
+        experiences=[
+            RawExperienceDTO(
+                organization=_value("某科技有限公司", "某科技有限公司"),
+                role=_value(role_value, role_quote),
+                experience_type=_value(declared, quote),
+            )
+        ]
+    )
+    profile = _validator().build(raw, text)
+    return profile.experiences[0].experience_type if profile.experiences else "(dropped)"
+
+
+def test_experience_type_internship_without_source_evidence_is_not_internship():
+    """Case 1：原文没有「实习」标记 → 不得 INTERNSHIP（保守为 UNKNOWN）。"""
+    assert _exp("INTERNSHIP", "某科技有限公司", EXP_TEXT_PLAIN) == "UNKNOWN"
+
+
+def test_experience_type_internship_with_source_evidence():
+    """Case 2：原文明确写了「后端开发实习生」且 quote 合法 → INTERNSHIP。"""
+    assert (
+        _exp("INTERNSHIP", "后端开发实习生", EXP_TEXT_INTERN, role_value="后端开发实习生", role_quote="后端开发实习生")
+        == "INTERNSHIP"
+    )
+
+
+def test_experience_type_work_without_source_evidence_is_unknown():
+    """Case 3：LLM 给 WORK 但原文没有工作信号 → UNKNOWN，不能直接保存 WORK。"""
+    assert _exp("WORK", "某科技有限公司", EXP_TEXT_PLAIN) == "UNKNOWN"
+
+
+def test_experience_type_fake_quote_is_unknown():
+    """Case 4：quote 是编造的（原文不存在）→ UNKNOWN。"""
+    assert _exp("INTERNSHIP", "后端开发实习生", EXP_TEXT_PLAIN) == "UNKNOWN"
+
+
+def test_experience_type_work_with_source_evidence():
+    """原文明确有「工作经历」→ WORK。"""
+    work_quote = "工作经历：某某科技有限公司 后端开发工程师"
+    raw = RawResumeCanonicalDTO(
+        experiences=[
+            RawExperienceDTO(
+                organization=_value("某某科技有限公司", work_quote),
+                role=_value("后端开发工程师", work_quote),
+                experience_type=_value("WORK", work_quote),
+            )
+        ]
+    )
+    profile = _validator().build(raw, EXP_TEXT_WORK)
+    assert profile.experiences[0].experience_type == "WORK"
+
+
+def test_experience_type_absent_is_unknown():
+    raw = RawResumeCanonicalDTO(experiences=[RawExperienceDTO(organization=_value("某科技有限公司", "某科技有限公司"))])
+    profile = _validator().build(raw, EXP_TEXT_PLAIN)
+    assert profile.experiences[0].experience_type == "UNKNOWN"
+
+
+# ===========================================================================
+# PR4 review round —— P0-2：topic-specific evidence selection
+# ===========================================================================
+
+ORDER_TEXT = "\n".join(
+    [
+        "项目经历：订单系统",
+        "角色：后端开发工程师，负责订单系统的后端接口开发。",
+        "使用 Redis 缓存热点商品，缓解缓存穿透问题。",
+        "针对慢查询做 MySQL 索引优化，执行计划从全表扫描变为覆盖索引。",
+        "完成任务编排与异步投递。",
+        "上线后 QPS 从 1000 提升到 5000。",
+        "额外补充职责一：负责接口联调。",
+        "额外补充职责二：负责日志埋点。",
+        "额外补充职责三：负责灰度发布。",
+        "额外补充职责四：负责压测。",
+    ]
+)
+
+
+def _order_project():
+    raw = RawResumeCanonicalDTO(
+        projects=[
+            RawProjectDTO(
+                name=_value("订单系统", "项目经历：订单系统"),
+                role=_value("后端开发工程师", "角色：后端开发工程师，负责订单系统的后端接口开发。"),
+                technologies=[
+                    _value("Redis", "使用 Redis 缓存热点商品，缓解缓存穿透问题。"),
+                    _value("MySQL", "针对慢查询做 MySQL 索引优化，执行计划从全表扫描变为覆盖索引。"),
+                ],
+                responsibilities=[
+                    _value("负责接口开发", "角色：后端开发工程师，负责订单系统的后端接口开发。"),
+                    _value("完成任务编排", "完成任务编排与异步投递。"),
+                    _value("负责接口联调", "额外补充职责一：负责接口联调。"),
+                    _value("负责日志埋点", "额外补充职责二：负责日志埋点。"),
+                    _value("负责灰度发布", "额外补充职责三：负责灰度发布。"),
+                    _value("负责压测", "额外补充职责四：负责压测。"),
+                ],
+                metrics=[_value("QPS 从 1000 提升到 5000", "上线后 QPS 从 1000 提升到 5000。")],
+            )
+        ]
+    )
+    profile = _validator().build(raw, ORDER_TEXT)
+    return profile, profile.projects[0]
+
+
+def _candidate_for(topic_key: str):
+    """模拟 Planner 两阶段流程：discovery → topic-specific selection。"""
+    canonical, project = _order_project()
+    topic = topic_registry_service.get_topic(topic_key)
+    assert topic is not None
+    bundle = resume_evidence_selector.for_project(
+        canonical,
+        project,
+        topic_key=topic.topic_key,
+        skill_key=topic.skill_key,
+        keywords=(topic.label, *topic.aliases),
+    )
+    return topic, bundle
+
+
+def test_topic_specific_selection_redis_topic_gets_redis_supporting_ref():
+    """Case A：Redis topic 的 refs 里必须有 Redis 相关 supporting claim。"""
+    topic, bundle = _candidate_for("redis_cache_penetration_hotkey")
+    assert InterviewPlanService._has_supporting_ref(bundle, topic)
+    assert any("Redis" in ref.value or "redis" in ref.quote.lower() for ref in bundle.refs)
+
+
+def test_topic_specific_selection_mysql_topic_gets_mysql_supporting_ref():
+    """Case B：MySQL topic 的 refs 里必须有 MySQL 相关 supporting claim。"""
+    topic, bundle = _candidate_for("mysql_index_optimization")
+    assert InterviewPlanService._has_supporting_ref(bundle, topic)
+    assert any("MySQL" in ref.value or "mysql" in ref.quote.lower() for ref in bundle.refs)
+
+
+def test_topic_specific_selection_produces_different_refs_per_topic():
+    """Case B：Redis topic 与 MySQL topic 不得共享同一 bundle。"""
+    _, redis_bundle = _candidate_for("redis_cache_penetration_hotkey")
+    _, mysql_bundle = _candidate_for("mysql_index_optimization")
+    redis_ids = [ref.claim_id for ref in redis_bundle.refs]
+    mysql_ids = [ref.claim_id for ref in mysql_bundle.refs]
+    assert redis_ids != mysql_ids, "不同 topic 必须各自选择 evidence"
+    assert set(redis_ids) & set(mysql_ids), "两者都含通用 claim（如 role），但 supporting core 不同"
+    redis_core = {ref.claim_id for ref in redis_bundle.refs if "Redis" in ref.value}
+    mysql_core = {ref.claim_id for ref in mysql_bundle.refs if "MySQL" in ref.value}
+    assert redis_core and mysql_core and redis_core.isdisjoint(mysql_core)
+
+
+def test_topic_specific_selection_survives_evidence_budget():
+    """Case C：即使 role/responsibilities 超过预算，目标技术仍能靠 topic match 进 bundle。"""
+    canonical, project = _order_project()
+    assert len(project.responsibilities) >= 4, "构造的 claims 数量必须让 budget 产生差异"
+    topic = topic_registry_service.get_topic("mysql_index_optimization")
+    bundle = resume_evidence_selector.for_project(
+        canonical,
+        project,
+        topic_key=topic.topic_key,
+        skill_key=topic.skill_key,
+        keywords=(topic.label, *topic.aliases),
+    )
+    assert len(bundle.refs) <= 6
+    assert any("MySQL" in ref.value for ref in bundle.refs), "topic match 优先级必须压过预算截断"
+
+
+def test_no_supporting_ref_blocks_canonical_evidence_driven_topic():
+    """Case D：project 没有 MySQL evidence → 不创建 mysql_index_optimization candidate。"""
+    canonical, project = _order_project()
+    # 去掉 MySQL claim，模拟「完全没有 MySQL evidence」
+    project.technologies = [item for item in project.technologies if "MySQL" not in item.value]
+    topic = topic_registry_service.get_topic("mysql_index_optimization")
+    bundle = resume_evidence_selector.for_project(
+        canonical,
+        project,
+        topic_key=topic.topic_key,
+        skill_key=topic.skill_key,
+        keywords=(topic.label, *topic.aliases),
+    )
+    assert not InterviewPlanService._has_supporting_ref(bundle, topic)
+
+
+def test_canonical_planner_never_shares_one_bundle_across_topics():
+    """Planner 端到端：canonical path 下不同 topic 的 refs 不共享同一 bundle。"""
+    canonical, _project = _order_project()
+    topics, _ = InterviewPlanService().build_plan(_request(), _jd(), _canonical_detail(canonical))
+    project_topics = [t for t in topics if t.question_type == "PROJECT" and t.resume_evidence_refs]
+    assert len(project_topics) >= 2, "应产出多个带 refs 的 canonical topic"
+    signatures = {tuple(ref.claim_id for ref in t.resume_evidence_refs) for t in project_topics}
+    assert len(signatures) == len(project_topics), "每个 topic 必须有自己的 evidence 选择结果"
+
+
+def test_canonical_metric_topic_requires_metric_evidence():
+    """没有 metric / 量化 achievement 时，不无条件新增 project_metric_validation。"""
+    canonical, project = _order_project()
+    assert InterviewPlanService._has_metric_evidence(project) is True
+
+    raw = RawResumeCanonicalDTO(projects=[RawProjectDTO(name=_value("订单系统", "项目经历：订单系统"))])
+    empty_profile = _validator().build(raw, ORDER_TEXT)
+    assert InterviewPlanService._has_metric_evidence(empty_profile.projects[0]) is False
+
+
+# ===========================================================================
+# PR4 review round —— P1-1：MAX_QUOTE_CHARS 真正生效
+# ===========================================================================
+
+
+def _quote_length_case(length: int) -> bool:
+    long_quote = "A" * length
+    text = f"前缀{long_quote}后缀"
+    raw = RawResumeCanonicalDTO(projects=[RawProjectDTO(name=_value(long_quote[:20], long_quote))])
+    profile = _validator().build(raw, text)
+    return bool(profile.projects and profile.projects[0].name is not None)
+
+
+def test_quote_at_max_length_is_accepted():
+    assert _quote_length_case(239) is True
+    assert _quote_length_case(240) is True
+
+
+def test_quote_over_max_length_is_rejected_even_if_exact():
+    """241 字符且**确实出现在原文里**也必须 reject（不能截断后接受）。"""
+    assert _quote_length_case(241) is False
+    assert _quote_length_case(300) is False
+
+
+def test_overlong_quote_is_not_truncated():
+    """超长 quote 整条作废，而不是被截断成 240 后保存。"""
+    long_quote = "B" * 300
+    text = f"前缀{long_quote}后缀"
+    raw = RawResumeCanonicalDTO(projects=[RawProjectDTO(name=_value("B" * 20, long_quote))])
+    profile = _validator().build(raw, text)
+    assert profile.projects == [], "超长 quote 必须整体丢弃，不截断接受"
+
+
+def test_second_valid_quote_still_works_after_overlong_first():
+    """第一条超长、第二条合法 → 模型仍可凭第二条成立。"""
+    text = "前缀" + "C" * 300 + "后缀 项目经历：订单系统"
+    raw = RawResumeCanonicalDTO(projects=[RawProjectDTO(name=_value("订单系统", "C" * 300, "项目经历：订单系统"))])
+    profile = _validator().build(raw, text)
+    assert profile.projects and profile.projects[0].name.value == "订单系统"
+
+
+# ===========================================================================
+# PR4 review round —— P1-2：canonical_extractor_enabled 完整 rollback switch
+# ===========================================================================
+
+
+def test_canonical_disabled_falls_back_to_legacy_even_with_ready_canonical(monkeypatch):
+    """canonical READY + legacy 存在 + switch off → LEGACY_PROFILE，refs 为空。"""
+    canonical = _profile_with(
+        RawResumeCanonicalDTO(
+            projects=[
+                RawProjectDTO(
+                    name=_value("智能面试系统", "项目经历：智能面试系统"),
+                    technologies=[
+                        _value(
+                            "Redis Streams",
+                            "基于 Redis Streams 实现异步任务队列，生产端用 XADD 写入，消费组负责投递。",
+                        )
+                    ],
+                )
+            ]
+        )
+    )
+    monkeypatch.setattr(settings.resume, "canonical_extractor_enabled", False)
+    try:
+        topics, plan_summary = InterviewPlanService().build_plan(_request(), _jd(), _canonical_detail(canonical))
+        assert plan_summary["resume_evidence_mode"] == RESUME_EVIDENCE_MODE_LEGACY
+        assert all(topic.resume_evidence_refs == [] for topic in topics)
+        project_topics = [topic for topic in topics if topic.question_type == "PROJECT"]
+        assert project_topics
+        assert any("Legacy 项目" in (topic.evidence_snippet or "") for topic in project_topics)
+    finally:
+        monkeypatch.setattr(settings.resume, "canonical_extractor_enabled", True)
+
+
+def test_canonical_enabled_uses_canonical_when_ready(monkeypatch):
+    """开关恢复后行为回到 CANONICAL（避免上一条测试污染配置）。"""
+    canonical = _profile_with(
+        RawResumeCanonicalDTO(projects=[RawProjectDTO(name=_value("智能面试系统", "项目经历：智能面试系统"))])
+    )
+    monkeypatch.setattr(settings.resume, "canonical_extractor_enabled", True)
+    _, plan_summary = InterviewPlanService().build_plan(_request(), _jd(), _canonical_detail(canonical))
+    assert plan_summary["resume_evidence_mode"] == RESUME_EVIDENCE_MODE_CANONICAL
+
+
+# ===========================================================================
+# PR4 review round —— 补充 P1：freshness 内外 schema version 一致
+# ===========================================================================
+
+
+def test_inner_schema_version_mismatch_is_stale():
+    """列 = 当前版本，但 JSON 内 schema_version = old → STALE，不得 READY。"""
+    entity = _make_entity()
+    entity.canonical_schema_version = RESUME_CANONICAL_SCHEMA_VERSION
+    entity.canonical_source_hash = resume_persistence_service.canonical_source_hash(RESUME_TEXT)
+    entity.canonical_profile_json = json.dumps(
+        {"schema_version": "resume-canonical-old", "projects": []}, ensure_ascii=False
+    )
+    assert resume_persistence_service.canonical_is_fresh(entity, RESUME_TEXT) is False
+    assert resume_persistence_service.canonical_status(entity, RESUME_TEXT) == ResumeCanonicalStatus.STALE.value
+
+
+def test_inner_and_outer_schema_version_match_is_ready():
+    entity = _make_entity()
+    entity.canonical_schema_version = RESUME_CANONICAL_SCHEMA_VERSION
+    entity.canonical_source_hash = resume_persistence_service.canonical_source_hash(RESUME_TEXT)
+    entity.canonical_profile_json = json.dumps(
+        {"schema_version": RESUME_CANONICAL_SCHEMA_VERSION, "projects": []}, ensure_ascii=False
+    )
+    assert resume_persistence_service.canonical_is_fresh(entity, RESUME_TEXT) is True
+    assert resume_persistence_service.canonical_status(entity, RESUME_TEXT) == ResumeCanonicalStatus.READY.value

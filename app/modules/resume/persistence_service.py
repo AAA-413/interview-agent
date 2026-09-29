@@ -125,8 +125,16 @@ class ResumePersistenceService(BasePersistenceService[ResumeEntity]):
             return None
 
     def canonical_is_fresh(self, entity: ResumeEntity, resume_text: str | None) -> bool:
-        """canonical 可用 = JSON 可解析 + schema 版本匹配 + source hash 匹配。"""
-        if self.parse_canonical_profile(entity.canonical_profile_json) is None:
+        """canonical 可用 = JSON 可解析 + schema 版本匹配 + source hash 匹配。
+
+        schema version **内外都校验**：列上的 ``canonical_schema_version`` 与 JSON
+        内部的 ``profile.schema_version`` 都必须等于当前版本。只校验列会被
+        「列=v1、JSON 内=old」绕过（手工改数据、跨版本残留等）。
+        """
+        profile = self.parse_canonical_profile(entity.canonical_profile_json)
+        if profile is None:
+            return False
+        if profile.schema_version != RESUME_CANONICAL_SCHEMA_VERSION:
             return False
         if entity.canonical_schema_version != RESUME_CANONICAL_SCHEMA_VERSION:
             return False

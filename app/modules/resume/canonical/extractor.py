@@ -67,7 +67,8 @@ class _RawExperienceDTO(_StructuredDTO):
     responsibilities: list[_RawSourceBackedValueDTO] = Field(default_factory=list)
     achievements: list[_RawSourceBackedValueDTO] = Field(default_factory=list)
     metrics: list[_RawSourceBackedValueDTO] = Field(default_factory=list)
-    experience_type: str = Field(alias="experienceType", default="UNKNOWN")
+    # source-backed：LLM 给「声称的类型 + 原文出处」，validator 再按原文标记判定
+    experience_type: _RawSourceBackedValueDTO | None = Field(alias="experienceType", default=None)
 
 
 class _RawEducationDTO(_StructuredDTO):
@@ -165,9 +166,7 @@ class ResumeCanonicalExtractor:
                     responsibilities=_to_values(item.responsibilities),
                     achievements=_to_values(item.achievements),
                     metrics=_to_values(item.metrics),
-                    experience_type=item.experience_type
-                    if item.experience_type in {"WORK", "INTERNSHIP"}
-                    else "UNKNOWN",
+                    experience_type=_to_value(item.experience_type),
                 )
                 for item in dto.experiences or []
             ],

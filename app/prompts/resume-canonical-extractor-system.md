@@ -94,3 +94,18 @@
 
 每个 ``{...}`` 都是 ``{"value": str, "evidenceQuotes": [str]}``，或 ``null``。
 不要输出 schema 之外的字段，不要输出 ``id``、字符位置或行号 —— 这些由代码生成。
+
+## experienceType 特别说明
+
+``experienceType`` **同样**是 source-backed value，不是自由 enum：
+
+```text
+"experienceType": {"value": "INTERNSHIP", "evidenceQuotes": ["后端开发实习生"]}
+```
+
+- ``value`` 只能取 ``WORK`` 或 ``INTERNSHIP``；
+- **必须**另外给出一条**原文中明确写了**「实习 / intern / internship」或
+  「工作 / 全职 / 正式 / 任职 / 就职」的 quote；
+  因为 ``value`` 本身（英文单词）不会出现在中文简历原文里，它无法自证；
+- 拿不出这样的 quote 就输出 ``null`` —— 系统会把类型保守判为 ``UNKNOWN``；
+- **禁止**根据时间长度（如「3 个月」）、毕业年份、公司名或年龄推断实习/全职。

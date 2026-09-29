@@ -42,6 +42,7 @@ from app.modules.resume.canonical.models import (
     CLAIM_KIND_RESPONSIBILITY,
     CLAIM_KIND_ROLE,
     CLAIM_KIND_TECHNOLOGY,
+    MAX_QUOTE_CHARS,
     MAX_QUOTES_PER_CLAIM,
     MAX_SPANS_PER_CLAIM,
     MIN_QUOTE_CHARS,
@@ -64,6 +65,11 @@ from app.modules.resume.canonical.models import (
 
 # stable id 的 hex 长度（12 hex = 「rc_a91f02c771ab」这类形态）
 _ID_HEX_LEN = 12
+
+# experience_type 的原文标记（normalize 后比对：去空白 + 小写）
+# 只有 quote 里出现这些标记，才允许把 LLM 声称的类型写进 Canonical。
+_INTERNSHIP_MARKERS: tuple[str, ...] = ("实习", "intern", "internship")
+_WORK_MARKERS: tuple[str, ...] = ("工作", "全职", "正式", "任职", "就职", "employment", "full-time", "fulltime")
 
 
 def _stable_id(*parts: object) -> str:
@@ -121,9 +127,13 @@ class ResumeCanonicalValidator:
 
     @staticmethod
     def _span_for_quote(quote: str, resume_text: str) -> ResumeEvidenceSpanDTO | None:
-        """把一条 quote 解析成精确 span。quote 不存在于原文时返回 None。"""
+        """把一条 quote 解析成精确 span。
+
+        超长 quote **整条作废**，不做截断 —— 截断会篡改 LLM 声称的 source quote。
+        模型应该改用第二条更短但合法的 quote。
+        """
         candidate = (quote or "").strip()
-        if len(candidate) < MIN_QUOTE_CHARS:
+        if not (MIN_QUOTE_CHARS <= len(candidate) <= MAX_QUOTE_CHARS):
             return None
         start = resume_text.find(candidate)
         if start < 0:
@@ -286,8 +296,29 @@ class ResumeCanonicalValidator:
             responsibilities=responsibilities,
             achievements=achievements,
             metrics=metrics,
-            experience_type=raw.experience_type or "UNKNOWN",
+            experience_type=self.experience_type(raw.experience_type, resume_text),
         )
+
+    def experience_type(self, raw_value: RawSourceBackedValue | None, resume_text: str) -> str:
+        """把 LLM 声称的 experience_type 变成 source-backed 判定结果。
+
+        与常规 claim 的差别：这里**不要求** `normalize(value) in normalize(quote)`
+        （"INTERNSHIP" 显然不会出现在中文原文里），而是要求：
+
+        1. quote 必须是 exact substring（与其它 claim 同一套校验）；
+        2. 校验通过的 quote 里必须出现对应类型的明确原文标记。
+
+        拿不出证据、quote 是编造的、或原文没有对应标记 → 一律 `UNKNOWN`。
+        """
+        declared = (raw_value.value if raw_value else "").strip().upper()
+        if declared not in {"WORK", "INTERNSHIP"}:
+            return "UNKNOWN"
+        spans = self._valid_spans(raw_value, resume_text)
+        if not spans:
+            return "UNKNOWN"
+        haystack = normalize_evidence_text(" ".join(span.quote for span in spans))
+        markers = _INTERNSHIP_MARKERS if declared == "INTERNSHIP" else _WORK_MARKERS
+        return declared if any(marker in haystack for marker in markers) else "UNKNOWN"
 
     def _education(self, raw: RawEducationDTO, resume_text: str) -> ResumeCanonicalEducationDTO | None:
         institution = self.claim(raw.institution, CLAIM_KIND_INSTITUTION, resume_text)

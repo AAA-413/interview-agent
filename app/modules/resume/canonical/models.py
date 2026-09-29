@@ -120,8 +120,15 @@ class ResumeCanonicalProjectDTO(BaseModel):
 class ResumeCanonicalExperienceDTO(BaseModel):
     """工作 / 实习经历。
 
-    ``experience_type`` 只在原文明确写了「实习」时才允许为 INTERNSHIP；
-    禁止根据日期长短、候选人年龄或学校推断。
+    ``experience_type`` **由代码从 source-backed claim 推导**，不采信 LLM enum：
+
+    - 只有经过校验的原文 quote 里明确出现「实习 / intern / internship」才允许
+      ``INTERNSHIP``；
+    - 只有原文出现「工作 / 全职 / 正式 / 任职 / 就职 / employment」这类信号才允许
+      ``WORK``；
+    - 其余（含 LLM 给了类型但拿不出原文证据、或 quote 是编造的）一律 ``UNKNOWN``。
+
+    禁止根据日期长短、候选人年龄、公司名或学校推断。
     """
 
     experience_id: str
@@ -226,7 +233,9 @@ class RawExperienceDTO(BaseModel):
     responsibilities: list[RawSourceBackedValue] = Field(default_factory=list)
     achievements: list[RawSourceBackedValue] = Field(default_factory=list)
     metrics: list[RawSourceBackedValue] = Field(default_factory=list)
-    experience_type: Literal["WORK", "INTERNSHIP", "UNKNOWN"] = "UNKNOWN"
+    # experience_type 也必须是 source-backed value：LLM 只输出「声称的类型 + 原文出处」，
+    # 是否成立由 validator 按原文里的实习/全职标记判定，不直接采信 LLM enum。
+    experience_type: RawSourceBackedValue | None = None
 
 
 class RawEducationDTO(BaseModel):
