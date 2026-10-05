@@ -41,6 +41,10 @@ MAX_QUOTES_PER_CLAIM = 2
 #: 单个 quote 的最小 / 最大字符数（strip 之后）
 MIN_QUOTE_CHARS = 6
 MAX_QUOTE_CHARS = 240
+#: project source scope 边界标记的最小字符数。
+#: 边界标记**不是 claim**（不需自证 value），且真实边界常常很短
+#: （例如「工作经历」「专业技能」只有 4 个字），因此下限低于 claim quote。
+MIN_BOUNDARY_QUOTE_CHARS = 2
 #: 单个 canonical claim 最多保留的 evidence span 数
 MAX_SPANS_PER_CLAIM = 2
 #: Evidence Selector：单个 bundle 最多 refs
@@ -230,6 +234,14 @@ class RawProjectDTO(BaseModel):
     responsibilities: list[RawSourceBackedValue] = Field(default_factory=list)
     achievements: list[RawSourceBackedValue] = Field(default_factory=list)
     metrics: list[RawSourceBackedValue] = Field(default_factory=list)
+    # 项目在原文中的 **source scope 边界**（不是业务 claim，不需要自证 value）：
+    # scope_start_quote = 本段第一行原文；scope_end_quote = 本段最后一行原文。
+    # 代码只做 exact + unique 校验，用它们切出 closed window，
+    # 避免「最后一个 project → EOF」把后续 section（工作经历 / 专业技能）
+    # 或「未被抽出的下一个 project」的 claim 吸进来。
+    # 拿不出合法 scope_end 时保守处理：只保留 identity claims。
+    scope_start_quote: str | None = None
+    scope_end_quote: str | None = None
 
 
 class RawExperienceDTO(BaseModel):

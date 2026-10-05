@@ -94,7 +94,9 @@
       "technologies": [{"value": str, "evidenceQuotes": [str]}],
       "responsibilities": [...],
       "achievements": [...],
-      "metrics": [...]
+      "metrics": [...],
+      "scopeStartQuote": str | null,
+      "scopeEndQuote": str | null
     }
   ],
   "experiences": [ { organization, role, dateRange, technologies,
@@ -107,6 +109,40 @@
 
 每个 ``{...}`` 都是 ``{"value": str, "evidenceQuotes": [str]}``，或 ``null``。
 不要输出 schema 之外的字段，不要输出 ``id``、字符位置或行号 —— 这些由代码生成。
+
+## scopeStartQuote / scopeEndQuote 特别说明
+
+这两个字段**不是业务 claim**，只用来告诉系统「这个项目在原文里是从哪一行到哪一行」：
+
+- ``scopeStartQuote``：该项目那一段的**第一行原文**（通常就是项目名那一行）；
+- ``scopeEndQuote``：该项目那一段的**最后一行原文**（属于该项目的最后一行，
+  不要包含后面的「工作经历」「专业技能」「教育经历」等其它 section）；
+- 两者都必须是原文里**逐字存在**、且在全文**只出现一次**的连续片段；
+- 代码会用它切出一个闭合区间，区间之外的 claim 一律删除。
+  **这是防止把别的项目 / 别的 section 的内容算到本项目上的关键字段。**
+
+⚠️ 注意：
+
+- 你只抽出了部分项目也没关系，但 ``scopeEndQuote`` **必须**真实反映该项目的结束位置。
+  系统**不会**再用「后面没有别的项目 ⇒ 一直到文末都算这个项目」这种假设。
+- 如果某一行同时出现在多个地方（例如整句重复），请把上下文带上，使它唯一。
+- 实在无法确定某项目的结束位置时，把 ``scopeEndQuote`` 设为 ``null``：
+  系统会**保守处理**，该项目只保留项目名 / 角色 / 时间这些标识信息，
+  技术栈、职责、成果、指标都不会被采用。
+
+## 每条 claim 的 quote 都必须独立支持它的 value
+
+``evidenceQuotes`` 里的**每一条**都要能独立支持该 claim 的 ``value``：
+
+```text
+value = "MySQL"
+evidenceQuotes = [
+  "负责订单系统后端接口开发。",   ← ❌ 不支持 MySQL，会被丢弃
+  "使用 MySQL 做索引优化。"       ← ✅ 支持
+]
+```
+
+系统会逐条校验，只保留真正支持的 quote。不要靠「多条凑在一起」来成立。
 
 ## experienceType 特别说明
 

@@ -52,6 +52,7 @@ from app.modules.resume.canonical.models import (
     MAX_QUOTE_CHARS,
     MAX_QUOTES_PER_CLAIM,
     MAX_SPANS_PER_CLAIM,
+    MIN_BOUNDARY_QUOTE_CHARS,
     MIN_QUOTE_CHARS,
     RawCertificationDTO,
     RawEducationDTO,
@@ -203,12 +204,12 @@ class ResumeCanonicalValidator:
         return spans
 
     @staticmethod
-    def _value_supported(value: str, spans: list[ResumeEvidenceSpanDTO]) -> bool:
-        """value 是否被某个合法 quote 支持（忽略空白与大小写，不做语义匹配）。"""
+    def _span_supports_value(value: str, span: ResumeEvidenceSpanDTO) -> bool:
+        """**单个** span 是否独立支持 value（忽略空白与大小写，不做语义匹配）。"""
         normalized_value = normalize_evidence_text(value)
         if not normalized_value:
             return False
-        return any(normalized_value in normalize_evidence_text(span.quote) for span in spans)
+        return normalized_value in normalize_evidence_text(span.quote)
 
     def claim(
         self, raw_value: RawSourceBackedValue | None, claim_kind: str, resume_text: str
@@ -219,22 +220,26 @@ class ResumeCanonicalValidator:
         - quotes 为空 → 丢弃（§71-J）
         - 所有 quote 都不是原文精确子串 → 丢弃（§71-B）
         - quote 真实但 value 不被支持 → 丢弃（§71-C）
+
+        并且**逐 span 过滤**：``evidence_spans`` 只保留**独立支持** value 的 span。
+        只要 any span 支持就保存全部，会把「恰好真实但与本 claim 无关」的 quote
+        也持久化（Selector 固定取 ``evidence_spans[0]``，会直接把它带进 Topic）。
         """
         if raw_value is None:
             return None
         value = (raw_value.value or "").strip()
         if not value:
             return None
-        spans = self._valid_spans(raw_value, resume_text)
-        if not spans:
+        supporting = [
+            span for span in self._valid_spans(raw_value, resume_text) if self._span_supports_value(value, span)
+        ]
+        if not supporting:
             return None
-        if not self._value_supported(value, spans):
-            return None
-        primary = spans[0]
+        primary = supporting[0]
         return ResumeCanonicalClaimDTO(
             claim_id=f"rc_{_stable_id('claim', claim_kind, normalize_evidence_text(value), primary.start_char, primary.end_char)}",
             value=value,
-            evidence_spans=spans,
+            evidence_spans=supporting,
         )
 
     def claims(
@@ -286,15 +291,20 @@ class ResumeCanonicalValidator:
         self,
         claim: ResumeCanonicalClaimDTO | None,
         claim_kind: str,
-        window: tuple[int, int],
+        window: tuple[int, int] | None,
     ) -> ResumeCanonicalClaimDTO | None:
         """只保留落在本 project window 内的 span；一个都不剩则丢弃该 claim。
 
         这是「claim → correct resume entity」的收敛点：即使 quote 本身完全真实，
         只要它落在别的 project 区域，就必须从本 project 中删除。
+
+        ``window is None``（无法建立 verified source scope）时只对 identity claims
+        调用，按原样保留 —— 它们是实体自身的标识，不参与 locality 裁剪。
         """
         if claim is None:
             return None
+        if window is None:
+            return claim
         start, end = window
         kept = [span for span in claim.evidence_spans if start <= span.start_char and span.end_char <= end]
         if not kept:
@@ -315,31 +325,56 @@ class ResumeCanonicalValidator:
                 result.append(clipped)
         return result
 
+    @staticmethod
+    def _boundary_span(quote: str | None, resume_text: str) -> ResumeEvidenceSpanDTO | None:
+        """把 source scope 边界标记解析成 span。
+
+        边界标记**不是 claim**：不需要自证 value，只要求 exact + unique，
+        且长度下限比 claim quote 低（真实边界常常只有 2~4 个字，如「工作经历」）。
+        """
+        candidate = (quote or "").strip()
+        if not (MIN_BOUNDARY_QUOTE_CHARS <= len(candidate) <= MAX_QUOTE_CHARS):
+            return None
+        start = resume_text.find(candidate)
+        if start < 0:
+            return None
+        if resume_text.find(candidate, start + 1) >= 0:
+            return None
+        end = start + len(candidate)
+        return ResumeEvidenceSpanDTO(
+            quote=candidate,
+            start_char=start,
+            end_char=end,
+            start_line=resume_text.count("\n", 0, start) + 1,
+            end_line=resume_text.count("\n", 0, end) + 1,
+        )
+
     def _resolve_projects(self, raw_projects: list[RawProjectDTO], resume_text: str) -> list[ResumeCanonicalProjectDTO]:
-        """按原文 anchor 把 raw projects 落到互不重叠的 window 上。
+        """把 raw projects 落到由**原文自身**确定的 closed source scope 上。
 
         ```text
         Raw Projects
               ↓ 先验证 identity claims（name / date_range / role）
-        确定 project anchor（优先 name）
-              ↓ anchor start_char 升序 → 建立不重叠 window
-            [a0, a1) / [a1, a2) / [a2, len)
-              ↓ 每个 project 只保留落在自己 window 内的 claims
+        确定 project anchor（优先 name）与 identity start = min(identity spans, scope_start)
+              ↓ verified scope_end（原文行，exact + unique）给出 closed window 右界
+            window = [identity_start, scope_end.end_char]
+              ↓ 只保留完全落在 window 内的 claims
         按 anchor 文档顺序输出的 Canonical projects
         ```
 
-        没有任何可用 anchor 的 structured project 直接 drop —— 本 PR 优先保证
-        precision，不为了 recall 继续信任 LLM 的 entity grouping。
+        为什么不能再用「anchor → EOF」：Extractor 的 projects[] 并不保证完整。
+        若原文有项目 A / 项目 B，而 LLM 只抽出 A 且错误地把 B 的 MySQL claim 挂在 A 上，
+        ``[A, EOF)`` 会把它放行；同理最后一个 project 会把后续的
+        「工作经历 / 专业技能」section 全部吸进来。因此右界必须来自原文里的
+        一条**已验证边界**，而不是「后面还有没有 RawProjectDTO」。
+
+        拿不出合法 scope_end 时 **保守处理**：该项目只保留 identity claims，
+        不再默认把 anchor 之后到文末的一切都算作本项目。
+
+        没有任何可用 anchor 的 structured project 直接 drop —— 优先保证 precision，
+        不为了 recall 继续信任 LLM 的 entity grouping。
         """
-        staged: list[
-            tuple[
-                int,
-                RawProjectDTO,
-                ResumeCanonicalClaimDTO | None,
-                ResumeCanonicalClaimDTO | None,
-                ResumeCanonicalClaimDTO | None,
-            ]
-        ] = []
+        staged: list[tuple] = []
         for raw_project in raw_projects or []:
             name = self.claim(raw_project.name, CLAIM_KIND_NAME, resume_text)
             role = self.claim(raw_project.role, CLAIM_KIND_ROLE, resume_text)
@@ -347,7 +382,14 @@ class ResumeCanonicalValidator:
             anchor_claim = name or date_range or role
             if anchor_claim is None:
                 continue
-            staged.append((anchor_claim.evidence_spans[0].start_char, raw_project, name, role, date_range))
+            identity = [claim for claim in (name, role, date_range) if claim is not None]
+            # P1：window.start 不能固定等于 name.start —— 常见格式里 date_range /
+            # role 排在 name 前面（"2025.01-2025.06 / 智能面试系统 / 后端开发"），
+            # 用 min(...) 才不会把合法 identity claim 裁掉。entity id 仍优先 name。
+            identity_start = min(claim.evidence_spans[0].start_char for claim in identity)
+            staged.append(
+                (anchor_claim.evidence_spans[0].start_char, identity_start, raw_project, name, role, date_range)
+            )
 
         if not staged:
             return []
@@ -365,9 +407,9 @@ class ResumeCanonicalValidator:
 
         projects: list[ResumeCanonicalProjectDTO] = []
         seen_ids: set[str] = set()
-        for index, (anchor, raw_project, name, role, date_range) in enumerate(staged):
-            end = staged[index + 1][0] if index + 1 < len(staged) else len(resume_text)
-            window = (anchor, end)
+        for index, (anchor, identity_start, raw_project, name, role, date_range) in enumerate(staged):
+            next_anchor = staged[index + 1][0] if index + 1 < len(staged) else None
+            window = self._project_window(raw_project, resume_text, identity_start, next_anchor)
             project = self._project_in_window(
                 raw_project,
                 resume_text,
@@ -382,20 +424,53 @@ class ResumeCanonicalValidator:
             projects.append(project)
         return projects
 
+    def _project_window(
+        self,
+        raw: RawProjectDTO,
+        resume_text: str,
+        identity_start: int,
+        next_anchor: int | None,
+    ) -> tuple[int, int] | None:
+        """由原文确定该项目 closed source scope；无法确定时返回 None（保守）。"""
+        start = identity_start
+        scope_start = self._boundary_span(raw.scope_start_quote, resume_text)
+        if scope_start is not None:
+            start = min(start, scope_start.start_char)
+
+        scope_end = self._boundary_span(raw.scope_end_quote, resume_text)
+        if scope_end is None:
+            return None
+        end = scope_end.end_char
+        # 防御：即使 scope_end 被幻觉指到别的项目区域，也不能越过下一个 project 的 anchor
+        if next_anchor is not None:
+            end = min(end, next_anchor)
+        if end <= start:
+            return None
+        return (start, end)
+
     def _project_in_window(
         self,
         raw: RawProjectDTO,
         resume_text: str,
         *,
-        window: tuple[int, int],
+        window: tuple[int, int] | None,
         name: ResumeCanonicalClaimDTO | None,
         role: ResumeCanonicalClaimDTO | None,
         date_range: ResumeCanonicalClaimDTO | None,
     ) -> ResumeCanonicalProjectDTO | None:
-        technologies = self._claims_in_window(raw.technologies, CLAIM_KIND_TECHNOLOGY, resume_text, window)
-        responsibilities = self._claims_in_window(raw.responsibilities, CLAIM_KIND_RESPONSIBILITY, resume_text, window)
-        achievements = self._claims_in_window(raw.achievements, CLAIM_KIND_ACHIEVEMENT, resume_text, window)
-        metrics = self._claims_in_window(raw.metrics, CLAIM_KIND_METRIC, resume_text, window)
+        if window is None:
+            # 无法建立 verified source scope → 只保留 identity claims（precision first）
+            technologies: list[ResumeCanonicalClaimDTO] = []
+            responsibilities: list[ResumeCanonicalClaimDTO] = []
+            achievements: list[ResumeCanonicalClaimDTO] = []
+            metrics: list[ResumeCanonicalClaimDTO] = []
+        else:
+            technologies = self._claims_in_window(raw.technologies, CLAIM_KIND_TECHNOLOGY, resume_text, window)
+            responsibilities = self._claims_in_window(
+                raw.responsibilities, CLAIM_KIND_RESPONSIBILITY, resume_text, window
+            )
+            achievements = self._claims_in_window(raw.achievements, CLAIM_KIND_ACHIEVEMENT, resume_text, window)
+            metrics = self._claims_in_window(raw.metrics, CLAIM_KIND_METRIC, resume_text, window)
 
         # 没有任何合法 claim（或在 window 内一个都不剩）→ 整体丢弃（§27）
         primary = name or date_range or role
@@ -462,14 +537,9 @@ class ResumeCanonicalValidator:
         （"INTERNSHIP" 显然不会出现在中文原文里），而是要求：
 
         1. quote 必须是 exact substring（与其它 claim 同一套校验）；
-        2. 校验通过的 quote 里必须出现对应类型的**明确标记**。
-
-        标记判定用两套 haystack：
-
-        - 中文标记用 normalize 后的文本做 substring（``实习`` / ``工作经历`` …）；
-        - 英文标记用**保留空白与词边界**的原文做 regex（``\\binterns?\\b`` 等），
-          否则 normalize 会把空格删掉导致词边界失效，且 ``internal`` /
-          ``international`` 会被 ``intern`` 误命中。
+        2. **每个 span 独立**含有对应类型的明确标记 —— 不把多个 span 拼起来再
+           ``any(marker)``，否则「公司名 + 后端开发实习生」两条都会留下，
+           而公司名并不支持 INTERNSHIP。
 
         拿不出证据、quote 编造、或原文没有对应标记 → ``None``
         （不是持久化一个没有 provenance 的 ``UNKNOWN``）。
@@ -477,22 +547,31 @@ class ResumeCanonicalValidator:
         declared = (raw_value.value if raw_value else "").strip().upper()
         if declared not in {"WORK", "INTERNSHIP"}:
             return None
-        spans = self._valid_spans(raw_value, resume_text)
-        if not spans:
+        supporting = [
+            span for span in self._valid_spans(raw_value, resume_text) if self._experience_span_supports(declared, span)
+        ]
+        if not supporting:
             return None
-        if not self._experience_type_supported(declared, spans):
-            return None
-        primary = spans[0]
+        primary = supporting[0]
         return ResumeCanonicalClaimDTO(
             claim_id=f"rc_{_stable_id('claim', CLAIM_KIND_EXPERIENCE_TYPE, normalize_evidence_text(declared), primary.start_char, primary.end_char)}",
             value=declared,
-            evidence_spans=spans,
+            evidence_spans=supporting,
         )
 
     @staticmethod
-    def _experience_type_supported(declared: str, spans: list[ResumeEvidenceSpanDTO]) -> bool:
-        raw_haystack = " ".join(span.quote for span in spans).lower()
-        norm_haystack = normalize_evidence_text(raw_haystack)
+    def _experience_span_supports(declared: str, span: ResumeEvidenceSpanDTO) -> bool:
+        """单个 span 是否独立含有 declared 类型的明确标记。
+
+        标记判定用两套 haystack：
+
+        - 中文标记用 normalize 后的文本做 substring（``实习`` / ``工作经历`` …）；
+        - 英文标记用**保留空白与词边界**的原文做 regex（``\\binterns?\\b`` 等），
+          否则 normalize 会把空格删掉导致词边界失效，且 ``internal`` /
+          ``international`` 会被 ``intern`` 误命中。
+        """
+        raw_haystack = span.quote.lower()
+        norm_haystack = normalize_evidence_text(span.quote)
         if declared == "INTERNSHIP":
             if any(marker in norm_haystack for marker in _INTERNSHIP_CN_MARKERS):
                 return True

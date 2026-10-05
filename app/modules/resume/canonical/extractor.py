@@ -57,6 +57,9 @@ class _RawProjectDTO(_StructuredDTO):
     responsibilities: list[_RawSourceBackedValueDTO] = Field(default_factory=list)
     achievements: list[_RawSourceBackedValueDTO] = Field(default_factory=list)
     metrics: list[_RawSourceBackedValueDTO] = Field(default_factory=list)
+    # source scope 边界（原文行，不是业务 claim，不需要 evidenceQuotes）
+    scope_start_quote: str | None = Field(alias="scopeStartQuote", default=None)
+    scope_end_quote: str | None = Field(alias="scopeEndQuote", default=None)
 
 
 class _RawExperienceDTO(_StructuredDTO):
@@ -154,6 +157,8 @@ class ResumeCanonicalExtractor:
                     responsibilities=_to_values(item.responsibilities),
                     achievements=_to_values(item.achievements),
                     metrics=_to_values(item.metrics),
+                    scope_start_quote=item.scope_start_quote,
+                    scope_end_quote=item.scope_end_quote,
                 )
                 for item in dto.projects or []
             ],
