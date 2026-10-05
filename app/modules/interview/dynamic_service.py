@@ -414,7 +414,12 @@ class InterviewPlanService:
 
     @staticmethod
     def _supporting_keywords(topic) -> tuple[str, ...]:
-        """判断某个 claim 是否支撑该 topic 的关键词集合（deterministic）。"""
+        """判断某个 claim 是否支撑该 topic 的**已 normalize**关键词集合（deterministic）。
+
+        必须与比对侧用同一套 normalization semantics：blob 走
+        ``normalize_evidence_text``（去空白 + 小写），关键词也必须走一遍，
+        否则 ``"Redis Streams" in "redistreams"`` 会永远为 False。
+        """
         parts: list[str] = []
         for chunk in str(topic.topic_key).replace("-", "_").split("_"):
             if len(chunk) > 2:
@@ -423,7 +428,8 @@ class InterviewPlanService:
             text = str(item or "").strip()
             if len(text) > 2:
                 parts.append(text)
-        return tuple(dict.fromkeys(parts))
+        normalized = [normalize_evidence_text(part) for part in parts]
+        return tuple(dict.fromkeys(part for part in normalized if part))
 
     @staticmethod
     def _has_supporting_ref(bundle, topic) -> bool:

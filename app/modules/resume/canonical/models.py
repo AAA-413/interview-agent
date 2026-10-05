@@ -120,13 +120,19 @@ class ResumeCanonicalProjectDTO(BaseModel):
 class ResumeCanonicalExperienceDTO(BaseModel):
     """工作 / 实习经历。
 
-    ``experience_type`` **由代码从 source-backed claim 推导**，不采信 LLM enum：
+    ``experience_type`` **由代码从 source-backed claim 推导**，不采信 LLM enum，
+    并且**自身也保留 provenance**（与其它 canonical 事实一致）：
 
-    - 只有经过校验的原文 quote 里明确出现「实习 / intern / internship」才允许
-      ``INTERNSHIP``；
-    - 只有原文出现「工作 / 全职 / 正式 / 任职 / 就职 / employment」这类信号才允许
-      ``WORK``；
-    - 其余（含 LLM 给了类型但拿不出原文证据、或 quote 是编造的）一律 ``UNKNOWN``。
+    - 只有经过校验的原文 quote 里明确出现实习标记（``实习`` / ``\\bintern\\b`` /
+      ``\\binternship\\b``）才成立 ``INTERNSHIP``；
+    - 只有出现明确的雇佣标记（``工作经历`` / ``全职`` / ``正式员工`` / ``任职于`` /
+      ``就职于`` / ``\\bfull[\\-\\s]?time\\b`` / ``\\bemployment\\b`` / ``\\bemployed\\b``）
+      才成立 ``WORK``；
+    - 其余情况（LLM 给了类型但拿不出原文证据、quote 编造、或原文只有
+      「工作流」「正式上线」「internal」这类**非雇佣**表达）→ ``None``。
+
+    ``None`` 表示「系统没有足够原文证据判定类型」，这是**派生状态**，
+    不是一条 resume claim，因此不会持久化成 ``UNKNOWN`` 这种无 provenance 的值。
 
     禁止根据日期长短、候选人年龄、公司名或学校推断。
     """
@@ -142,7 +148,8 @@ class ResumeCanonicalExperienceDTO(BaseModel):
     achievements: list[ResumeCanonicalClaimDTO] = Field(default_factory=list)
     metrics: list[ResumeCanonicalClaimDTO] = Field(default_factory=list)
 
-    experience_type: Literal["WORK", "INTERNSHIP", "UNKNOWN"] = "UNKNOWN"
+    #: ``value`` 为 ``WORK`` / ``INTERNSHIP``，并携带判定所依据的原文 span
+    experience_type: ResumeCanonicalClaimDTO | None = None
 
 
 class ResumeCanonicalEducationDTO(BaseModel):
@@ -317,3 +324,4 @@ CLAIM_KIND_MAJOR = "MAJOR"
 CLAIM_KIND_PROFICIENCY = "PROFICIENCY"
 CLAIM_KIND_CONTEXT = "CONTEXT"
 CLAIM_KIND_CERT_DATE = "CERT_DATE"
+CLAIM_KIND_EXPERIENCE_TYPE = "EXPERIENCE_TYPE"
