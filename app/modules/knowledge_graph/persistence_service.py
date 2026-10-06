@@ -78,8 +78,28 @@ class KnowledgeGraphPersistenceService:
         await db.flush()
         return triple
 
+    @staticmethod
+    def _apply_kb_scope(stmt, kb_id: int | None, kb_ids: list[int] | None):
+        """把三元组限制在授权的 KB 集合内。
+
+        ``kb_id`` 用于单 KB 场景，``kb_ids`` 用于「当前用户名下的全部 KB」场景。
+        两者都是**调用方已校验过归属**的 id（见 CrossKBRagService）。
+        """
+        if kb_id is not None:
+            stmt = stmt.where(KnowledgeTriple.source_kb_id == kb_id)
+        elif kb_ids is not None:
+            if not kb_ids:
+                # 没有任何授权 KB → 不要退化成「不加条件」（那会跨用户泄漏）
+                return stmt.where(KnowledgeTriple.id.is_(None))
+            stmt = stmt.where(KnowledgeTriple.source_kb_id.in_(kb_ids))
+        return stmt
+
     async def query_triples_by_entity(
-        self, db: AsyncSession, entity_name: str, kb_id: int | None = None
+        self,
+        db: AsyncSession,
+        entity_name: str,
+        kb_id: int | None = None,
+        kb_ids: list[int] | None = None,
     ) -> list[KnowledgeTriple]:
         stmt = (
             select(KnowledgeTriple)
@@ -97,15 +117,18 @@ class KnowledgeGraphPersistenceService:
                 )
             )
         )
-        if kb_id is not None:
-            stmt = stmt.where(KnowledgeTriple.source_kb_id == kb_id)
+        stmt = self._apply_kb_scope(stmt, kb_id, kb_ids)
         result = await db.execute(stmt)
         return list(result.scalars().all())
 
     async def query_two_hop(
-        self, db: AsyncSession, entity_name: str, kb_id: int | None = None
+        self,
+        db: AsyncSession,
+        entity_name: str,
+        kb_id: int | None = None,
+        kb_ids: list[int] | None = None,
     ) -> list[KnowledgeTriple]:
-        first_hop = await self.query_triples_by_entity(db, entity_name, kb_id)
+        first_hop = await self.query_triples_by_entity(db, entity_name, kb_id, kb_ids)
         neighbor_ids = set()
         for t in first_hop:
             if t.subject_entity.name == entity_name:
@@ -124,8 +147,7 @@ class KnowledgeGraphPersistenceService:
             )
             .where(KnowledgeTriple.subject_id.in_(neighbor_ids) | KnowledgeTriple.object_id.in_(neighbor_ids))
         )
-        if kb_id is not None:
-            stmt = stmt.where(KnowledgeTriple.source_kb_id == kb_id)
+        stmt = self._apply_kb_scope(stmt, kb_id, kb_ids)
         result = await db.execute(stmt)
         second_hop = list(result.scalars().all())
 

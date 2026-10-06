@@ -939,8 +939,9 @@ def test_parse_state_missing_targets_is_normalized():
 # ---------------------------------------------------------------------------
 
 
-def test_evaluator_version_is_v3():
-    assert EVALUATOR_VERSION == "hybrid-evaluator-v3"
+def test_evaluator_version_is_current():
+    """版本号必须随 evaluator 语义变更 bump（PR5 → v4）。"""
+    assert EVALUATOR_VERSION == "hybrid-evaluator-v4"
 
 
 # ---------------------------------------------------------------------------

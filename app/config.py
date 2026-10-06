@@ -91,6 +91,17 @@ class InterviewSettings(BaseSettings):
     # 单次 answer evaluation 的超时上限（秒），超时即回退 heuristic
     answer_evaluator_timeout_seconds: float = 12.0
 
+    # ---- PR5：Knowledge Grounding（只给 KNOWLEDGE 题提供 factual context）----
+    # 关闭时 KNOWLEDGE 回到未 grounding 语义（confidence 仍 cap 0.75），不是错误
+    knowledge_grounding_enabled: bool = True
+    # 整个 grounding 检索（embedding + DB + rerank）的超时上限（秒）
+    knowledge_grounding_timeout_seconds: float = 6.0
+    # vector recall 候选数 → rerank → top_k
+    knowledge_grounding_candidate_k: int = 12
+    knowledge_grounding_top_k: int = 4
+    # factual grading 比普通知识库 QA 更保守：低于该分直接 drop（全部 drop → NO_HIT）
+    knowledge_grounding_min_score: float = 0.60
+
 
 class ResumeSettings(BaseSettings):
     model_config = SettingsConfigDict(

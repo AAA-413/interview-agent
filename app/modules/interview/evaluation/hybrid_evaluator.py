@@ -59,9 +59,16 @@ from app.modules.interview.schemas import (
     COVERAGE_STATUS_COVERED,
     COVERAGE_STATUS_NOT_COVERED,
     COVERAGE_STATUS_PARTIAL,
+    GROUNDED_KNOWLEDGE_VERDICTS,
+    KNOWLEDGE_GROUNDING_READY,
+    KNOWLEDGE_VERDICT_INSUFFICIENT,
+    MAX_GROUNDING_CANDIDATE_QUOTES,
+    MAX_GROUNDING_EVIDENCE_IDS,
     DynamicTurnEvaluationDTO,
     EvaluationCoverageAssessmentDTO,
     EvaluationEvidenceDTO,
+    KnowledgeGroundingAssessmentDTO,
+    KnowledgeGroundingDTO,
 )
 from app.modules.interview.topic_state.models import (
     COVERAGE_STATUS_RANK,
@@ -169,7 +176,9 @@ class HybridAnswerEvaluationService:
             )
 
         try:
-            evaluation = self._compose_hybrid(topic, answer, llm_result, guard, previous_turns)
+            evaluation = self._compose_hybrid(
+                topic, answer, llm_result, guard, previous_turns, snapshot.knowledge_grounding
+            )
         except _EvaluationRejectedError as exc:
             reason = str(exc)
             logger.warning(
@@ -208,11 +217,15 @@ class HybridAnswerEvaluationService:
                 "exitCriteria": _render_list(_safe_items(snapshot.topic.exit_criteria)),
                 "followupGoals": _render_list(_safe_items(snapshot.topic.followup_goals)),
                 "resumeEvidence": _untrusted(snapshot.topic.evidence_snippet) or "（无）",
+                "knowledgeEvidence": self._render_knowledge_evidence(snapshot.knowledge_grounding),
                 "previousTurns": self._render_previous_turns(snapshot.previous_turns),
                 "candidateAnswer": _untrusted(answer),
             },
         )
 
+        # SingleFlight key 必须包含 grounding fingerprint（status + query +
+        # sorted(evidence_id, content_hash)）—— 否则用户重新索引知识库后，
+        # 相同 question + answer 会错误命中旧 factual context 的评分缓存。
         key = build_single_flight_key(
             "answer-evaluate",
             EVALUATOR_VERSION,
@@ -223,6 +236,7 @@ class HybridAnswerEvaluationService:
             snapshot.turn.question,
             _answer_hash(answer),
             (llm_provider or "").strip().lower() or "__default__",
+            *(snapshot.knowledge_grounding.fingerprint_parts() if snapshot.knowledge_grounding else ()),
         )
 
         async def _call() -> str:
@@ -277,6 +291,7 @@ class HybridAnswerEvaluationService:
         llm_result: LLMEvaluationResult,
         guard: GuardVerdict,
         previous_turns,
+        grounding: KnowledgeGroundingDTO | None = None,
     ) -> DynamicTurnEvaluationDTO:
         weights = active_dimension_weights(topic.question_type)
         active = set(weights)
@@ -351,7 +366,16 @@ class HybridAnswerEvaluationService:
 
         strengths, risks = self._apply_previous_turn_comparison(strengths, risks, final_score, previous_turns)
 
-        confidence = self._confidence(topic.question_type, unique_evidence_count=unique_evidence_count)
+        # PR5：Knowledge Grounding 与 Semantic Evaluation 也是**独立失败域** ——
+        # grounding assessment 不合法只是降级为 INSUFFICIENT，绝不影响上面的分数。
+        knowledge_grounding = self._build_knowledge_grounding(answer_norm, llm_result, grounding)
+        grounded_knowledge = bool(knowledge_grounding and knowledge_grounding.is_validated_grounding())
+
+        confidence = self._confidence(
+            topic.question_type,
+            unique_evidence_count=unique_evidence_count,
+            grounded_knowledge=grounded_knowledge,
+        )
 
         return DynamicTurnEvaluationDTO(
             ability_score=final_score,
@@ -365,6 +389,7 @@ class HybridAnswerEvaluationService:
             # Coverage 与 Score 是**独立失败域**：这里只做保守过滤/降级，
             # 绝不允许 coverage 的局部异常把已经可信的 score 打成 fallback。
             coverage_assessments=self._build_coverage_assessments(topic.question_type, answer_norm, llm_result),
+            knowledge_grounding=knowledge_grounding,
         )
 
     def _build_coverage_assessments(
@@ -469,21 +494,131 @@ class HybridAnswerEvaluationService:
         return strengths, risks
 
     @staticmethod
-    def _confidence(question_type: str, *, unique_evidence_count: int) -> float:
+    def _confidence(question_type: str, *, unique_evidence_count: int, grounded_knowledge: bool = False) -> float:
         """置信度由代码产生，不采信模型自报值。
 
         ``unique_evidence_count`` 是**去重后**的唯一原文证据条数：同一句 quote
         重复出现或同时挂在两个维度上，都只能算 1 条。
+
+        KNOWLEDGE 默认 cap 0.75 —— 系统无法证明模型判断技术事实时有什么外部依据。
+        只有**同时**满足以下条件才解除 cap（见 ``KnowledgeGroundingDTO.is_validated_grounding``）：
+
+        - ``grounding.status == READY`` 且至少 1 条 reference
+        - assessment ``validated == True``
+        - verdict ∈ {SUPPORTED, PARTIAL, **CONTRADICTED**}
+          （CONTRADICTED 也可以高 confidence：confidence 表示「我们对评分判断有多大
+          把握」，不是「候选人答得有多好」—— 候选人可以很确定地答错）
+        - 至少 1 个代码校验过的 evidence_id + 1 条代码校验过的 candidate quote
+
+        注意：解除 cap **不等于**加分。分数仍完全来自 PR2 的 weighted semantic score。
         """
         confidence = FALLBACK_CONFIDENCE
         for minimum, value in CONFIDENCE_TIERS:
             if unique_evidence_count >= minimum:
                 confidence = value
                 break
-        if (question_type or "").upper() == "KNOWLEDGE":
-            # 本轮没有 RAG / reference answer factual grounding，不能假装有事实依据
+        if (question_type or "").upper() == "KNOWLEDGE" and not grounded_knowledge:
             confidence = min(confidence, KNOWLEDGE_CONFIDENCE_CAP)
         return round(confidence, 2)
+
+    # ------------------------------------------------------- knowledge grounding
+
+    def _build_knowledge_grounding(
+        self,
+        answer_norm: str,
+        llm_result: LLMEvaluationResult,
+        grounding: KnowledgeGroundingDTO | None,
+    ) -> KnowledgeGroundingDTO | None:
+        """把 LLM 的 grounding 判断校验成可持久化的结果。
+
+        与 PR3 coverage 完全同源的失败域原则：grounding 的局部异常**只降级自己**，
+        绝不把已经可信的 dimension score 打成 fallback。
+        """
+        if grounding is None:
+            return None
+        try:
+            grounding.assessment = self._validate_grounding_assessment(answer_norm, llm_result, grounding)
+        except Exception as exc:  # pragma: no cover - 防御性兜底
+            logger.warning("knowledge grounding assessment 校验异常，降级 INSUFFICIENT: %s", exc)
+            grounding.assessment = KnowledgeGroundingAssessmentDTO()
+        return grounding
+
+    def _validate_grounding_assessment(
+        self,
+        answer_norm: str,
+        llm_result: LLMEvaluationResult,
+        grounding: KnowledgeGroundingDTO,
+    ) -> KnowledgeGroundingAssessmentDTO:
+        """代码校验 LLM 的 grounding 判断；LLM 自己说的不算数。
+
+        - ``evidence_ids`` 只允许出现在**最终 prompt 里的** references 中（unknown drop、
+          duplicate dedup、最多 4 条）；
+        - ``candidate_quotes`` 必须是候选人本轮回答的逐字片段（与 dimension evidence
+          同一套 normalize 校验，最多 2 条）；
+        - verdict ∈ {SUPPORTED, PARTIAL, CONTRADICTED} 但缺任一侧有效证据 →
+          保守降级为 INSUFFICIENT / validated=False。
+        """
+        assessment = KnowledgeGroundingAssessmentDTO()
+        raw = llm_result.knowledge_grounding
+        if raw is None or grounding.status != KNOWLEDGE_GROUNDING_READY:
+            return assessment
+
+        allowed_ids = {ref.evidence_id for ref in grounding.references}
+        valid_ids: list[str] = []
+        for raw_id in raw.evidence_ids or []:
+            text = str(raw_id or "").strip()
+            if text in allowed_ids and text not in valid_ids:
+                valid_ids.append(text)
+            if len(valid_ids) >= MAX_GROUNDING_EVIDENCE_IDS:
+                break
+
+        valid_quotes: list[str] = []
+        for raw_quote in raw.candidate_quotes or []:
+            if len(valid_quotes) >= MAX_GROUNDING_CANDIDATE_QUOTES:
+                break
+            quote = str(raw_quote or "").strip()
+            if not quote or len(quote) > MAX_EVIDENCE_QUOTE_CHARS:
+                continue
+            if _normalize_for_evidence(quote) not in answer_norm:
+                continue
+            if quote in valid_quotes:
+                continue
+            valid_quotes.append(quote)
+
+        verdict = str(raw.verdict or "").strip().upper()
+        if verdict not in GROUNDED_KNOWLEDGE_VERDICTS:
+            # 未知 / INSUFFICIENT → 保留已校验的 citation，但不算 grounded
+            return KnowledgeGroundingAssessmentDTO(
+                verdict=KNOWLEDGE_VERDICT_INSUFFICIENT,
+                evidence_ids=valid_ids,
+                candidate_quotes=valid_quotes,
+                validated=False,
+            )
+
+        validated = bool(valid_ids) and bool(valid_quotes)
+        return KnowledgeGroundingAssessmentDTO(
+            verdict=verdict if validated else KNOWLEDGE_VERDICT_INSUFFICIENT,
+            evidence_ids=valid_ids,
+            candidate_quotes=valid_quotes,
+            validated=validated,
+        )
+
+    @staticmethod
+    def _render_knowledge_evidence(grounding: KnowledgeGroundingDTO | None) -> str:
+        """渲染 KNOWLEDGE_EVIDENCE。
+
+        只渲染**最终 top refs**（LLM 只能引用这些 id），内容直接来自 chunk 前缀，
+        不做任何改写。整段作为 untrusted data → **只进 user prompt**。
+        """
+        if grounding is None or grounding.status != KNOWLEDGE_GROUNDING_READY or not grounding.references:
+            return "（无）"
+        blocks: list[str] = []
+        for ref in grounding.references:
+            header = f"[{ref.evidence_id} / {ref.source_name}]"
+            if ref.title:
+                header = f"{header} title: {ref.title}"
+            blocks.append(f"{header}\nscore: {ref.score}\ncontent:\n{_untrusted(ref.content_excerpt)}")
+        return "\n\n".join(blocks)
 
     # ------------------------------------------------------------- fallbacks
 
