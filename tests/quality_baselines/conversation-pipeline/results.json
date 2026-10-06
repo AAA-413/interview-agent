@@ -1,0 +1,99 @@
+{
+  "generated_at": "2026-09-28T11:44:34",
+  "total_checks": 18,
+  "passed": 18,
+  "failed": 0,
+  "pass_rate": 1.0,
+  "checks": [
+    {
+      "check": "context_contains_previous_question",
+      "passed": true,
+      "detail": "history=面试官：你们为什么使用 Redis Streams？\n候选人：因为需要 Consumer Group 支持多个消费者并行消费。\n面试官：那消费失败怎么重试？\n候"
+    },
+    {
+      "check": "context_contains_previous_answer",
+      "passed": true,
+      "detail": "previous answers present in rendered history"
+    },
+    {
+      "check": "context_contains_current_answer",
+      "passed": true,
+      "detail": "current_answer=我们后来用 Redis Streams 做异步任务队列，Producer 用 X"
+    },
+    {
+      "check": "recent_turns_capped",
+      "passed": true,
+      "detail": "turns in context=4, budget=4"
+    },
+    {
+      "check": "oldest_turn_dropped",
+      "passed": true,
+      "detail": "rendered chars=175"
+    },
+    {
+      "check": "policy_emits_intent_only",
+      "passed": true,
+      "detail": "action=FOLLOW_UP, intent=VERIFY_OWNERSHIP, next_question=None"
+    },
+    {
+      "check": "intent_forwarded_to_realizer",
+      "passed": true,
+      "detail": "intent=VERIFY_OWNERSHIP"
+    },
+    {
+      "check": "realizer_receives_answer_not_only_gap",
+      "passed": true,
+      "detail": "candidate's concrete terms present in user prompt"
+    },
+    {
+      "check": "untrusted_data_not_in_system_prompt",
+      "passed": true,
+      "detail": "candidate answer stays in user message only"
+    },
+    {
+      "check": "realizer_returns_question",
+      "passed": true,
+      "detail": "question=你刚才提到 XREADGROUP，重复投递怎么处理？"
+    },
+    {
+      "check": "fallback_on_timeout",
+      "passed": true,
+      "detail": "realized=你刚才讲到了一些点，但我还没听清楚最小链路。就选一个最小闭环，从一次请求或任务进"
+    },
+    {
+      "check": "fallback_on_exception",
+      "passed": true,
+      "detail": "realized=你刚才讲到了一些点，但我还没听清楚最小链路。就选一个最小闭环，从一次请求或任务进"
+    },
+    {
+      "check": "transition_context_has_previous_topic",
+      "passed": true,
+      "detail": "previous=async_task_pipeline"
+    },
+    {
+      "check": "transition_prompt_has_both_topics",
+      "passed": true,
+      "detail": "previous and next topic both in prompt"
+    },
+    {
+      "check": "transition_composed_into_opening",
+      "passed": true,
+      "detail": "opening=这块先到这里。\n\n消费者重复收到任务时怎么保证幂等？"
+    },
+    {
+      "check": "transition_fallback_uses_main_question",
+      "passed": true,
+      "detail": "opening=请讲清楚消费端怎么保证幂等。"
+    },
+    {
+      "check": "single_flight_key_differs_on_state",
+      "passed": true,
+      "detail": "followup-realize|3b4a31b vs followup-realize|918b10a"
+    },
+    {
+      "check": "single_flight_key_stable_on_same_state",
+      "passed": true,
+      "detail": "same context merges"
+    }
+  ]
+}

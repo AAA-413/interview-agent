@@ -16,7 +16,28 @@ from app.common.error_code import ErrorCode
 from app.common.exception import BusinessException
 from app.common.model import AsyncTaskStatus
 from app.config import settings
+from app.modules.interview.context.builder import InterviewContextBuilder
+from app.modules.interview.context.models import FollowUpIntent, InterviewContext
 from app.modules.interview.dynamic_persistence_service import dynamic_interview_persistence_service
+from app.modules.interview.evaluation.hybrid_evaluator import HybridAnswerEvaluationService
+from app.modules.interview.evaluation.models import (
+    FALLBACK_CONFIDENCE,
+    GENERIC_CAP,
+    GUARD_EMPTY,
+    GUARD_GENERIC,
+    GUARD_OFF_TOPIC,
+    GUARD_SHORT,
+    GUARD_VERY_SHORT,
+    OFF_TOPIC_CAP,
+    SHORT_ANSWER_CHARS,
+    SHORT_CAP,
+    VERY_SHORT_ANSWER_CHARS,
+    VERY_SHORT_CAP,
+    EvaluationSnapshot,
+    GuardVerdict,
+    filter_active_dimension_scores,
+    normalize_evidence_text,
+)
 from app.modules.interview.jd_parse_service import jd_parse_service
 from app.modules.interview.models import (
     DecisionAction,
@@ -28,6 +49,7 @@ from app.modules.interview.models import (
     TopicStatus,
     TurnType,
 )
+from app.modules.interview.question_realizer import compose_utterance, question_realizer
 from app.modules.interview.schemas import (
     DynamicDecisionDTO,
     DynamicInterviewCreateRequest,
@@ -43,14 +65,29 @@ from app.modules.interview.schemas import (
     DynamicTurnEvaluationDTO,
     SubmitDynamicTurnAnswerRequest,
     TomorrowTaskDTO,
+    TopicCoverageStateDTO,
+    TopicStateDTO,
 )
 from app.modules.interview.topic_registry import TopicDef, topic_registry_service
+from app.modules.interview.topic_state.models import canonical_exit_criteria, target_intent
+from app.modules.interview.topic_state.tracker import topic_coverage_tracker
 from app.modules.knowledge_base.models import KnowledgeBaseEntity, KnowledgeChunkEntity
 from app.modules.knowledge_base.persistence_service import knowledge_base_persistence_service
+from app.modules.resume.canonical.models import (
+    ResumeCanonicalProfileDTO,
+    ResumeCanonicalStatus,
+    ResumeEvidenceRefDTO,
+)
+from app.modules.resume.canonical.selector import resume_evidence_selector
 from app.modules.resume.history_service import resume_history_service
 from app.modules.resume.schemas import ProjectInfo, ResumeDetailDTO, ResumeProfile
 
 logger = logging.getLogger(__name__)
+
+# PR4：Planner 本次使用的简历事实来源（写进 plan_summary 便于排查）
+RESUME_EVIDENCE_MODE_CANONICAL = "CANONICAL"
+RESUME_EVIDENCE_MODE_LEGACY = "LEGACY_PROFILE"
+RESUME_EVIDENCE_MODE_NONE = "NONE"
 
 
 @dataclass(frozen=True)
@@ -60,6 +97,9 @@ class _TopicCandidate:
     evidence: str | None
     source_type: str
     weight: float
+    # PR4：本 topic 引用的简历事实。JD topic 与 legacy resume topic 为 ()；
+    # canonical resume topic 才非空。
+    resume_evidence_refs: tuple[ResumeEvidenceRefDTO, ...] = ()
 
 
 class InterviewPlanService:
@@ -76,10 +116,29 @@ class InterviewPlanService:
         target_role = request.target_role or structured_jd.role_title or "目标技术岗位"
         seed = variation_seed or target_role
         profile = self._latest_profile(resume_detail)
+        canonical = self._canonical_profile(resume_detail)
         recent_keys = {item["topic_key"] for item in (recent_topic_keys or [])}
         low_score_keys = set(user_topic_profile.get("low_score_topics", []) if user_topic_profile else [])
 
-        project_candidates = self._project_candidates(profile, structured_jd, target_role, request.skill_id)
+        # PR4：Planner 优先消费 Canonical（source-validated facts）。
+        # canonical READY 时即便 projects 为空也不回退 legacy —— Canonical 已经说明
+        # 「基于 source validation 没有可信项目事实」，回退 legacy 等于把未校验的
+        # LLM 总结重新当成事实。
+        #
+        # `settings.resume.canonical_extractor_enabled` 是完整 rollback switch：
+        # 关掉后即使 DB 里已有 READY canonical，Planner 也走 legacy compatibility path，
+        # 线上不需要清 DB 就能关掉整条 PR4 Canonical 路径。
+        if settings.resume.canonical_extractor_enabled and canonical is not None:
+            resume_evidence_mode = RESUME_EVIDENCE_MODE_CANONICAL
+            project_candidates = self._canonical_project_candidates(
+                canonical, structured_jd, target_role, request.skill_id
+            )
+        elif profile is not None:
+            resume_evidence_mode = RESUME_EVIDENCE_MODE_LEGACY
+            project_candidates = self._project_candidates(profile, structured_jd, target_role, request.skill_id)
+        else:
+            resume_evidence_mode = RESUME_EVIDENCE_MODE_NONE
+            project_candidates = []
         knowledge_candidate = self._knowledge_candidate(
             structured_jd, target_role, request.skill_id, project_candidates
         )
@@ -115,6 +174,7 @@ class InterviewPlanService:
             "recent_topic_keys": sorted(recent_keys),
             "low_score_retry_topics": sorted(low_score_keys),
             "variation_seed": seed,
+            "resume_evidence_mode": resume_evidence_mode,
             "topics": [
                 {
                     "topic_key": topic.topic_key,
@@ -129,10 +189,26 @@ class InterviewPlanService:
 
     @staticmethod
     def _latest_profile(resume_detail: ResumeDetailDTO | None) -> ResumeProfile | None:
+        """Legacy ResumeProfile —— 只在 canonical 不可用时才作为兜底事实来源。"""
         if not resume_detail or not resume_detail.analyses:
             return None
         latest = max(resume_detail.analyses, key=lambda item: item.analyzed_at)
         return latest.profile
+
+    @staticmethod
+    def _canonical_profile(resume_detail: ResumeDetailDTO | None) -> ResumeCanonicalProfileDTO | None:
+        """Canonical 可用（READY）时返回 source-validated profile，否则 None。
+
+        READY 的判定在 persistence 层完成（JSON 可解析 + schema 版本匹配 + source hash 匹配），
+        Planner 只信任 READY 的 canonical。
+        """
+        if not resume_detail:
+            return None
+        if resume_detail.canonical_profile is None:
+            return None
+        if resume_detail.canonical_status != ResumeCanonicalStatus.READY.value:
+            return None
+        return resume_detail.canonical_profile
 
     def _project_candidates(
         self,
@@ -141,126 +217,403 @@ class InterviewPlanService:
         target_role: str,
         skill_id: str | None,
     ) -> list[_TopicCandidate]:
+        """Legacy 路径：ResumeProfile（LLM 总结）→ topic candidates。
+
+        只在 canonical 不可用（NOT_EXTRACTED / FAILED）时使用，
+        保证 migration 后老用户不会因为还没有 canonical 就无法面试。
+        """
         projects = profile.projects if profile and profile.projects else []
         candidates: list[_TopicCandidate] = []
 
         for project in projects[:4]:
-            evidence = self._project_evidence(project)
-            normalized = topic_registry_service.normalize(
+            self._append_project_candidates(
+                candidates,
+                structured_jd,
+                target_role,
+                skill_id,
+                evidence=self._project_evidence(project),
                 raw_topic=" ".join(project.tech_stack) or project.description,
-                evidence_snippet=evidence,
-                question_type="PROJECT",
-                target_role=target_role,
-                skill_id=skill_id,
-                role_domain=structured_jd.role_domain,
+                resume_evidence_refs=(),
             )
-            topic = topic_registry_service.get_topic(normalized.topic_key)
-            if topic is None or normalized.fallback_reason:
-                topic = topic_registry_service.get_topic("project_role_ownership")
-            elif topic.topic_key == "multi_agent_collaboration" and not self._has_multi_agent_evidence(evidence):
-                topic = None
-            if topic:
-                candidates.append(
-                    _TopicCandidate(
-                        topic=topic,
-                        question_type="PROJECT",
-                        evidence=evidence,
-                        source_type="resume",
-                        weight=structured_jd.topic_weights.get(topic.topic_key, 0.52) + 0.12,
-                    )
-                )
-
-            evidence_lower = evidence.lower()
-            for topic_key, weight in structured_jd.topic_weights.items():
-                weighted_topic = topic_registry_service.get_topic(topic_key)
-                if weighted_topic is None or "PROJECT" not in weighted_topic.supported_question_types:
-                    continue
-                if weighted_topic.skill_key in {"typescript", "fastapi"}:
-                    continue
-                aliases = (
-                    weighted_topic.topic_key,
-                    weighted_topic.label,
-                    weighted_topic.skill_key,
-                    *weighted_topic.aliases,
-                )
-                if not any(alias and alias.lower() in evidence_lower for alias in aliases):
-                    continue
-                candidates.append(
-                    _TopicCandidate(
-                        topic=weighted_topic,
-                        question_type="PROJECT",
-                        evidence=evidence,
-                        source_type="resume",
-                        weight=min(weight + 0.18, 1.0),
-                    )
-                )
-
-            evidence_priority_topics = (
-                "frontend_performance_optimization",
-                "async_task_pipeline",
-                "idempotency_design",
-                "redis_cache_penetration_hotkey",
-                "mysql_index_optimization",
-                "mcp_tool_integration",
-            )
-            for topic_key in evidence_priority_topics:
-                priority_topic = topic_registry_service.get_topic(topic_key)
-                if priority_topic is None:
-                    continue
-                aliases = (priority_topic.topic_key, priority_topic.label, *priority_topic.aliases)
-                if not any(alias and alias.lower() in evidence_lower for alias in aliases):
-                    continue
-                candidates.append(
-                    _TopicCandidate(
-                        topic=priority_topic,
-                        question_type="PROJECT",
-                        evidence=evidence,
-                        source_type="resume",
-                        weight=0.96,
-                    )
-                )
-
-            metric_topic = topic_registry_service.get_topic("project_metric_validation")
-            if metric_topic:
-                candidates.append(
-                    _TopicCandidate(
-                        topic=metric_topic,
-                        question_type="PROJECT",
-                        evidence=evidence,
-                        source_type="resume",
-                        weight=structured_jd.topic_weights.get(metric_topic.topic_key, 0.5),
-                    )
-                )
 
         if not candidates:
-            fallback_topic = topic_registry_service.get_topic("custom_project_topic")
-            if fallback_topic:
-                candidates.append(
-                    _TopicCandidate(
-                        topic=fallback_topic,
-                        question_type="PROJECT",
-                        evidence="简历中未识别到明确项目证据，请先用一个最能证明岗位匹配度的核心项目作答。",
-                        source_type="resume",
-                        weight=0.4,
-                    )
-                )
-            ownership_topic = topic_registry_service.get_topic("project_role_ownership")
-            if ownership_topic:
-                candidates.append(
-                    _TopicCandidate(
-                        topic=ownership_topic,
-                        question_type="PROJECT",
-                        evidence="简历项目证据不足，本题用于补齐个人贡献和项目真实性表达。",
-                        source_type="resume",
-                        weight=0.38,
-                    )
-                )
-
+            self._append_project_fallbacks(candidates)
         candidates.sort(
             key=lambda item: (item.weight, self._project_topic_priority(item.topic.topic_key)),
             reverse=True,
         )
         return self._dedupe_candidates(candidates, "PROJECT")
+
+    def _canonical_project_candidates(
+        self,
+        canonical: ResumeCanonicalProfileDTO,
+        structured_jd,
+        target_role: str,
+        skill_id: str | None,
+    ) -> list[_TopicCandidate]:
+        """Canonical 路径：source-validated resume facts → topic candidates。
+
+        两阶段（PR4 review）：
+
+        ```text
+        Canonical Project
+              ↓  Candidate Discovery（用 searchable canonical text 做 alias 匹配）
+           确定 TopicDef
+              ↓  Topic-specific Evidence Selection（每个 topic 单独 select）
+            Candidate（自带该 topic 的 refs）
+        ```
+
+        ``skill_id ≠ topic_key``，因此**不能**先选一次 bundle 再让该 project 生成的
+        所有 topic 共用 —— 否则 MySQL topic 会拿到 Redis 的 provenance。
+        """
+        candidates: list[_TopicCandidate] = []
+
+        for project in canonical.projects[:4]:
+            # ---- 阶段一：Candidate Discovery（只用已校验的 claim value 做匹配） ----
+            discovered = self._discover_canonical_topics(project, structured_jd, target_role, skill_id)
+            for topic, weight, requires_support in discovered:
+                # ---- 阶段二：Topic-specific Evidence Selection ----
+                bundle = resume_evidence_selector.for_project(
+                    canonical,
+                    project,
+                    topic_key=topic.topic_key,
+                    skill_key=topic.skill_key,
+                    keywords=(topic.label, *topic.aliases),
+                )
+                if requires_support:
+                    if not self._has_supporting_ref(bundle, topic):
+                        # provenance 脱节：不允许「Topic=MySQL 索引优化，refs=负责后端接口」
+                        logger.info("canonical topic 缺少 supporting evidence，跳过: topic=%s", topic.topic_key)
+                        continue
+                elif not bundle.refs:
+                    # 通用 project topic（role_ownership 等）没有专属证据时退回通用选择，
+                    # 仍不回退 legacy ResumeProfile。
+                    bundle = resume_evidence_selector.for_project(canonical, project)
+                candidates.append(
+                    _TopicCandidate(
+                        topic=topic,
+                        question_type="PROJECT",
+                        evidence=bundle.rendered_text or "简历项目证据不足。",
+                        source_type="resume",
+                        weight=weight,
+                        resume_evidence_refs=tuple(bundle.refs),
+                    )
+                )
+
+            # project_metric_validation 只在确有结果/验证类证据时才新增
+            self._append_canonical_metric_candidate(candidates, canonical, project, structured_jd)
+
+        if not candidates:
+            # canonical READY 但 projects 为空（或所有 topic 都缺 supporting evidence）
+            # → deterministic fallback，**不回退 legacy ResumeProfile**（§54）。
+            self._append_project_fallbacks(candidates)
+        candidates.sort(
+            key=lambda item: (item.weight, self._project_topic_priority(item.topic.topic_key)),
+            reverse=True,
+        )
+        return self._dedupe_candidates(candidates, "PROJECT")
+
+    # ------------------------------------------------------------------
+    # PR4 review：canonical 两阶段选题
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _canonical_searchable_text(project) -> str:
+        """由**已通过 source validation** 的 claim value 拼出可检索文本。
+
+        只用于 TopicRegistry normalize / alias 匹配，**不能**当作 evidence_snippet ——
+        最终展示给模型/用户的证据必须是 Evidence Selector 选出的原文 quote。
+        """
+        parts: list[str] = []
+        for claim in [
+            project.name,
+            project.role,
+            *project.technologies,
+            *project.responsibilities,
+            *project.achievements,
+            *project.metrics,
+        ]:
+            if claim is not None and claim.value:
+                parts.append(claim.value)
+        return " ".join(parts)
+
+    def _discover_canonical_topics(
+        self,
+        project,
+        structured_jd,
+        target_role: str,
+        skill_id: str | None,
+    ) -> list[tuple]:
+        """阶段一：从 canonical project 发现候选 TopicDef（不做 evidence budget）。
+
+        返回 ``(topic, weight, requires_support)``：
+
+        - ``requires_support=True``：由 canonical 技术/职责/成果 alias 命中的
+          evidence-driven topic，最终 refs 里必须有 supporting claim，否则丢弃；
+        - ``requires_support=False``：通用 project topic（normalize 兜底出来的
+          ``project_role_ownership``），允许没有专属 supporting claim。
+        """
+        searchable = self._canonical_searchable_text(project)
+        if not searchable:
+            return []
+        haystack = searchable.lower()
+        found: list[tuple] = []
+
+        normalized = topic_registry_service.normalize(
+            raw_topic=searchable,
+            evidence_snippet=searchable,
+            question_type="PROJECT",
+            target_role=target_role,
+            skill_id=skill_id,
+            role_domain=structured_jd.role_domain,
+        )
+        topic = topic_registry_service.get_topic(normalized.topic_key)
+        requires_support = True
+        if topic is None or normalized.fallback_reason:
+            topic = topic_registry_service.get_topic("project_role_ownership")
+            requires_support = False
+        elif topic.topic_key == "multi_agent_collaboration" and not self._has_multi_agent_evidence(searchable):
+            topic = None
+        if topic is not None:
+            found.append((topic, structured_jd.topic_weights.get(topic.topic_key, 0.52) + 0.12, requires_support))
+
+        for topic_key, weight in structured_jd.topic_weights.items():
+            weighted_topic = topic_registry_service.get_topic(topic_key)
+            if weighted_topic is None or "PROJECT" not in weighted_topic.supported_question_types:
+                continue
+            if weighted_topic.skill_key in {"typescript", "fastapi"}:
+                continue
+            aliases = (
+                weighted_topic.topic_key,
+                weighted_topic.label,
+                weighted_topic.skill_key,
+                *weighted_topic.aliases,
+            )
+            if not any(alias and alias.lower() in haystack for alias in aliases):
+                continue
+            found.append((weighted_topic, min(weight + 0.18, 1.0), True))
+
+        evidence_priority_topics = (
+            "frontend_performance_optimization",
+            "async_task_pipeline",
+            "idempotency_design",
+            "redis_cache_penetration_hotkey",
+            "mysql_index_optimization",
+            "mcp_tool_integration",
+        )
+        for topic_key in evidence_priority_topics:
+            priority_topic = topic_registry_service.get_topic(topic_key)
+            if priority_topic is None:
+                continue
+            aliases = (priority_topic.topic_key, priority_topic.label, *priority_topic.aliases)
+            if not any(alias and alias.lower() in haystack for alias in aliases):
+                continue
+            found.append((priority_topic, 0.96, True))
+
+        return found
+
+    @staticmethod
+    def _supporting_keywords(topic) -> tuple[str, ...]:
+        """判断某个 claim 是否支撑该 topic 的**已 normalize**关键词集合（deterministic）。
+
+        必须与比对侧用同一套 normalization semantics：blob 走
+        ``normalize_evidence_text``（去空白 + 小写），关键词也必须走一遍，
+        否则 ``"Redis Streams" in "redistreams"`` 会永远为 False。
+        """
+        parts: list[str] = []
+        for chunk in str(topic.topic_key).replace("-", "_").split("_"):
+            if len(chunk) > 2:
+                parts.append(chunk)
+        for item in (topic.label, topic.skill_key, *topic.aliases):
+            text = str(item or "").strip()
+            if len(text) > 2:
+                parts.append(text)
+        normalized = [normalize_evidence_text(part) for part in parts]
+        return tuple(dict.fromkeys(part for part in normalized if part))
+
+    @staticmethod
+    def _has_supporting_ref(bundle, topic) -> bool:
+        """refs 中必须至少有一条 claim 与 topic_key / skill_key / label / aliases 匹配。
+
+        不允许出现「Topic = MySQL 索引优化，refs 却是『负责后端接口』」这种
+        provenance 脱节。
+        """
+        keywords = InterviewPlanService._supporting_keywords(topic)
+        if not keywords:
+            return True
+        for ref in bundle.refs:
+            blob = normalize_evidence_text(f"{ref.value} {ref.quote}")
+            if any(keyword in blob for keyword in keywords):
+                return True
+        return False
+
+    @staticmethod
+    def _has_metric_evidence(project) -> bool:
+        """canonical path 下 project_metric_validation 的前置条件。
+
+        必须有 METRIC claim，或 achievement 里带量化数字；否则不无条件新增，
+        避免每个 project 都硬塞一个指标题。
+        """
+        if project.metrics:
+            return True
+        return any(any(char.isdigit() for char in claim.value) for claim in project.achievements or [])
+
+    def _append_canonical_metric_candidate(
+        self,
+        candidates: list[_TopicCandidate],
+        canonical,
+        project,
+        structured_jd,
+    ) -> None:
+        metric_topic = topic_registry_service.get_topic("project_metric_validation")
+        if metric_topic is None or not self._has_metric_evidence(project):
+            return
+        bundle = resume_evidence_selector.for_project(
+            canonical,
+            project,
+            topic_key=metric_topic.topic_key,
+            skill_key=metric_topic.skill_key,
+            keywords=(metric_topic.label, *metric_topic.aliases),
+        )
+        if not bundle.refs:
+            return
+        candidates.append(
+            _TopicCandidate(
+                topic=metric_topic,
+                question_type="PROJECT",
+                evidence=bundle.rendered_text,
+                source_type="resume",
+                weight=structured_jd.topic_weights.get(metric_topic.topic_key, 0.5),
+                resume_evidence_refs=tuple(bundle.refs),
+            )
+        )
+
+    def _append_project_candidates(
+        self,
+        candidates: list[_TopicCandidate],
+        structured_jd,
+        target_role: str,
+        skill_id: str | None,
+        *,
+        evidence: str,
+        raw_topic: str,
+        resume_evidence_refs: tuple[ResumeEvidenceRefDTO, ...],
+    ) -> None:
+        """按一份 project evidence 生成 topic candidates（legacy / canonical 共用）。"""
+        normalized = topic_registry_service.normalize(
+            raw_topic=raw_topic,
+            evidence_snippet=evidence,
+            question_type="PROJECT",
+            target_role=target_role,
+            skill_id=skill_id,
+            role_domain=structured_jd.role_domain,
+        )
+        topic = topic_registry_service.get_topic(normalized.topic_key)
+        if topic is None or normalized.fallback_reason:
+            topic = topic_registry_service.get_topic("project_role_ownership")
+        elif topic.topic_key == "multi_agent_collaboration" and not self._has_multi_agent_evidence(evidence):
+            topic = None
+        if topic:
+            candidates.append(
+                _TopicCandidate(
+                    topic=topic,
+                    question_type="PROJECT",
+                    evidence=evidence,
+                    source_type="resume",
+                    weight=structured_jd.topic_weights.get(topic.topic_key, 0.52) + 0.12,
+                    resume_evidence_refs=resume_evidence_refs,
+                )
+            )
+
+        evidence_lower = evidence.lower()
+        for topic_key, weight in structured_jd.topic_weights.items():
+            weighted_topic = topic_registry_service.get_topic(topic_key)
+            if weighted_topic is None or "PROJECT" not in weighted_topic.supported_question_types:
+                continue
+            if weighted_topic.skill_key in {"typescript", "fastapi"}:
+                continue
+            aliases = (
+                weighted_topic.topic_key,
+                weighted_topic.label,
+                weighted_topic.skill_key,
+                *weighted_topic.aliases,
+            )
+            if not any(alias and alias.lower() in evidence_lower for alias in aliases):
+                continue
+            candidates.append(
+                _TopicCandidate(
+                    topic=weighted_topic,
+                    question_type="PROJECT",
+                    evidence=evidence,
+                    source_type="resume",
+                    weight=min(weight + 0.18, 1.0),
+                    resume_evidence_refs=resume_evidence_refs,
+                )
+            )
+
+        evidence_priority_topics = (
+            "frontend_performance_optimization",
+            "async_task_pipeline",
+            "idempotency_design",
+            "redis_cache_penetration_hotkey",
+            "mysql_index_optimization",
+            "mcp_tool_integration",
+        )
+        for topic_key in evidence_priority_topics:
+            priority_topic = topic_registry_service.get_topic(topic_key)
+            if priority_topic is None:
+                continue
+            aliases = (priority_topic.topic_key, priority_topic.label, *priority_topic.aliases)
+            if not any(alias and alias.lower() in evidence_lower for alias in aliases):
+                continue
+            candidates.append(
+                _TopicCandidate(
+                    topic=priority_topic,
+                    question_type="PROJECT",
+                    evidence=evidence,
+                    source_type="resume",
+                    weight=0.96,
+                    resume_evidence_refs=resume_evidence_refs,
+                )
+            )
+
+        metric_topic = topic_registry_service.get_topic("project_metric_validation")
+        if metric_topic:
+            candidates.append(
+                _TopicCandidate(
+                    topic=metric_topic,
+                    question_type="PROJECT",
+                    evidence=evidence,
+                    source_type="resume",
+                    weight=structured_jd.topic_weights.get(metric_topic.topic_key, 0.5),
+                    resume_evidence_refs=resume_evidence_refs,
+                )
+            )
+
+    @staticmethod
+    def _append_project_fallbacks(candidates: list[_TopicCandidate]) -> None:
+        fallback_topic = topic_registry_service.get_topic("custom_project_topic")
+        if fallback_topic:
+            candidates.append(
+                _TopicCandidate(
+                    topic=fallback_topic,
+                    question_type="PROJECT",
+                    evidence="简历中未识别到明确项目证据，请先用一个最能证明岗位匹配度的核心项目作答。",
+                    source_type="resume",
+                    weight=0.4,
+                )
+            )
+        ownership_topic = topic_registry_service.get_topic("project_role_ownership")
+        if ownership_topic:
+            candidates.append(
+                _TopicCandidate(
+                    topic=ownership_topic,
+                    question_type="PROJECT",
+                    evidence="简历项目证据不足，本题用于补齐个人贡献和项目真实性表达。",
+                    source_type="resume",
+                    weight=0.38,
+                )
+            )
 
     @staticmethod
     def _select_project_candidates(
@@ -464,6 +817,8 @@ class InterviewPlanService:
             followup_goals=self._followup_goals(candidate),
             exit_criteria=self._exit_criteria(candidate),
             rubric=self._rubric(candidate.question_type),
+            # PR4：canonical topic 带上简历事实 refs；JD / legacy topic 为空列表
+            resume_evidence_refs=list(candidate.resume_evidence_refs),
         )
 
     @staticmethod
@@ -539,11 +894,11 @@ class InterviewPlanService:
 
     @staticmethod
     def _exit_criteria(candidate: _TopicCandidate) -> list[str]:
-        if candidate.question_type == "PROJECT":
-            return ["能说清项目目标", "能说明个人贡献", "能给出结果或验证方式", "能补充一个取舍或异常处理"]
-        if candidate.question_type == "SYSTEM_DESIGN":
-            return ["能拆分核心模块", "能说明数据流", "能覆盖可靠性", "能说明至少一个取舍"]
-        return ["能给出准确定义", "能说明机制", "能给出场景", "能指出边界或风险"]
+        """exit criteria 由 canonical coverage targets 生成，不再单独维护字符串。
+
+        这样 Planner、TopicCoverageTracker、Adaptive Policy 三者永远是同一套语义。
+        """
+        return canonical_exit_criteria(candidate.question_type)
 
     @staticmethod
     def _rubric(question_type: str) -> dict[str, str]:
@@ -676,6 +1031,19 @@ class DynamicAnswerEvaluationService:
         "reward model",
         "beta=",
         "reference model",
+    )
+    #: 真正「明显替换题目方案」的表述（hard guard 只认这些）。
+    #: OFF_TOPIC_MARKERS 里还有一批通用基建词（负载均衡 / 微服务架构 / CDN…），
+    #: 它们可能出现在完全切题的讨论里，绝不能据此 hard cap。
+    OFF_TOPIC_GUARD_MARKERS = (
+        "不需要引入 Redis",
+        "ThreadPoolExecutor",
+        "应该用多线程",
+        "不如直接写 Prompt",
+        "应该靠规则引擎",
+        "应该用 MongoDB",
+        "应该全部放到后端",
+        "前端只是展示层",
     )
     GENERIC_WEAK_MARKERS = (
         "效果还不错",
@@ -814,6 +1182,60 @@ class DynamicAnswerEvaluationService:
             signals={key: self._dedupe(values)[:5] for key, values in signals.items()},
             dimension_scores=self._dimension_scores(topic.question_type, score, marker_hits),
         )
+
+    def detect_hard_guard(self, topic: DynamicTopicDTO, answer: str) -> GuardVerdict:
+        """Deterministic hard guard（PR2）。
+
+        只负责「跳过语义评分 / 硬上限 / 标记」三类硬约束，
+        **不参与正常路径的加权评分**：正常路径的最终分由 Hybrid Evaluator
+        按 LLM 的语义维度分加权后再被这里的 caps 收敛。
+
+        检测逻辑与 ``evaluate()`` 中的旧规则保持一致，避免两套阈值漂移。
+        """
+        text = (answer or "").strip()
+        if not text:
+            return GuardVerdict(
+                flags=[GUARD_EMPTY],
+                hard_caps=[0],
+                skip_semantic=True,
+                rule_only=True,
+                reason="空回答无法进行语义评分",
+            )
+
+        flags: list[str] = []
+        caps: list[int] = []
+
+        if len(text) <= VERY_SHORT_ANSWER_CHARS:
+            return GuardVerdict(
+                flags=[GUARD_VERY_SHORT],
+                hard_caps=[VERY_SHORT_CAP],
+                skip_semantic=True,
+                rule_only=False,
+                reason="回答过短，语义评分无有效信息，直接使用规则兜底评分",
+            )
+
+        concrete_hits = [term for term in self.CONCRETE_MARKERS if term.lower() in text.lower()]
+        generic_hits = [term for term in self.GENERIC_WEAK_MARKERS if term.lower() in text.lower()]
+        off_topic_hits = [term for term in self.OFF_TOPIC_GUARD_MARKERS if term.lower() in text.lower()]
+        markers = self._question_type_markers(topic.question_type)
+        marker_hits = [label for label, values in markers.items() if self._contains_any(text, values)]
+
+        if len(generic_hits) >= 2 and len(concrete_hits) < 3:
+            flags.append(GUARD_GENERIC)
+            caps.append(GENERIC_CAP)
+        elif generic_hits and not marker_hits and len(concrete_hits) < 2:
+            flags.append(GUARD_GENERIC)
+            caps.append(GENERIC_CAP)
+
+        if off_topic_hits and len(concrete_hits) < 3:
+            flags.append(GUARD_OFF_TOPIC)
+            caps.append(OFF_TOPIC_CAP)
+
+        if len(text) < SHORT_ANSWER_CHARS:
+            flags.append(GUARD_SHORT)
+            caps.append(SHORT_CAP)
+
+        return GuardVerdict(flags=flags, hard_caps=caps, skip_semantic=False, rule_only=False)
 
     def coach_hint(self, topic: DynamicTopicDTO, evaluation: DynamicTurnEvaluationDTO) -> dict:
         return self.fallback_coach_hint(topic, evaluation)
@@ -993,8 +1415,44 @@ class DynamicAnswerEvaluationService:
         return {key: max(0, min(value, 100)) for key, value in dimensions.items()}
 
 
+def _coverage_labels(coverage: TopicCoverageStateDTO, keys: list[str]) -> list[str]:
+    """按 canonical 顺序把 target key 映射成 label（对外的可读视图）。"""
+    labels: list[str] = []
+    for key in keys:
+        point = coverage.points.get(key)
+        label = (point.label if point else "") or key
+        if label not in labels:
+            labels.append(label)
+    return labels
+
+
+def _exit_decision(has_next_topic: bool, reason: str) -> DynamicDecisionDTO:
+    """离开当前 topic 的统一出口：有下一个 topic 就切，否则结束面试。
+
+    ``max_turns``、early exit、coverage complete 三条规则共用这一个出口，
+    避免「什么时候切 / 什么时候结束」出现多套判断。
+    """
+    if has_next_topic:
+        return DynamicDecisionDTO(action=DecisionAction.NEXT_TOPIC.value, reason=reason, hint=None)
+    return DynamicDecisionDTO(action=DecisionAction.END.value, reason="所有计划 topic 已完成，生成面试报告。")
+
+
 class CoachInterviewPolicy:
+    """教练模式策略：coverage + score + turn budget + improvement 共同决定。
+
+    仍然是**确定性**决策：LLM 只提供「这一轮覆盖了什么」，是否继续重答完全由
+    这里的代码规则决定。
+    """
+
+    #: 兼容属性：真正的生命周期上限是 ``topic.max_turns``（见 PR3 §28）
     max_retries_per_topic = 2
+
+    #: MAIN 轮：coverage 完整且分数达标 → 直接进入下一个 topic
+    main_next_score = 85
+    #: COACH_RETRY 轮：coverage 完整且（分数达标 或 提升明显）→ 进入下一个 topic
+    retry_next_score = 75
+    #: COACH_RETRY 轮：相对首轮提升达到该值也算过关
+    retry_min_improvement = 10
 
     def decide(
         self,
@@ -1005,38 +1463,90 @@ class CoachInterviewPolicy:
         answered_turns_after_current: list[DynamicTurnDTO],
         has_next_topic: bool,
         coach_hint: dict | None,
+        topic_state: TopicStateDTO | None = None,
     ) -> DynamicDecisionDTO:
-        retry_count = sum(1 for item in answered_turns_after_current if item.turn_type == TurnType.COACH_RETRY.value)
-        initial_score = next(
-            (item.ability_score for item in answered_turns_after_current if item.turn_type == TurnType.MAIN.value),
-            evaluation.ability_score,
-        )
+        state = self._resolve_state(topic, answered_turns_after_current, topic_state)
+        coverage = state.coverage
+        score = evaluation.ability_score
 
-        should_retry = False
+        # Hard stop：turn 预算用尽，无论 coverage / score / improvement
+        if state.remaining_turns <= 0:
+            return _exit_decision(has_next_topic, "教练模式当前 topic 已达到最大轮次上限，进入下一个 topic。")
+
         if turn.turn_type == TurnType.MAIN.value:
-            should_retry = evaluation.ability_score < 85
-        elif turn.turn_type == TurnType.COACH_RETRY.value:
-            improvement = evaluation.ability_score - (initial_score or 0)
-            should_retry = evaluation.ability_score < 75 and improvement < 10
-
-        if should_retry and retry_count < self.max_retries_per_topic:
+            if coverage.complete and score >= self.main_next_score:
+                return _exit_decision(has_next_topic, "教练模式该 topic 关键点已覆盖且回答质量达标，进入下一个 topic。")
             return DynamicDecisionDTO(
                 action=DecisionAction.COACH_RETRY.value,
                 reason="教练模式下当前回答仍有可训练缺口，进入同题重答。",
                 hint=coach_hint,
                 next_question=topic.main_question,
+                target_coverage_key=coverage.next_target_key,
             )
 
-        if has_next_topic:
+        if turn.turn_type == TurnType.COACH_RETRY.value:
+            improvement = state.score_improvement if state.score_improvement is not None else 0
+            if coverage.complete and (score >= self.retry_next_score or improvement >= self.retry_min_improvement):
+                return _exit_decision(has_next_topic, "教练模式重答后已达到过关标准，进入下一个 topic。")
             return DynamicDecisionDTO(
-                action=DecisionAction.NEXT_TOPIC.value,
-                reason="当前 topic 已完成本轮训练，进入下一个 topic。",
+                action=DecisionAction.COACH_RETRY.value,
+                reason="教练模式下重答仍有可训练缺口，继续同题重答。",
+                hint=coach_hint,
+                next_question=topic.main_question,
+                target_coverage_key=coverage.next_target_key,
             )
-        return DynamicDecisionDTO(action=DecisionAction.END.value, reason="所有计划 topic 已完成，生成 topic 级报告。")
+
+        return _exit_decision(has_next_topic, "当前轮次类型无需继续重答，进入下一个 topic。")
+
+    @staticmethod
+    def _resolve_state(
+        topic: DynamicTopicDTO,
+        answered_turns_after_current: list[DynamicTurnDTO],
+        topic_state: TopicStateDTO | None,
+    ) -> TopicStateDTO:
+        """优先使用 orchestrator 传进来的 TopicState；否则用初始 coverage 现场重建。
+
+        后者是给「还没有 coverage 数据」的旧调用方/旧测试用的向后兼容路径，
+        决策逻辑本身只有一条。
+        """
+        if topic_state is not None:
+            return topic_state
+        return topic_coverage_tracker.build_state(
+            topic=topic,
+            answered_turns=answered_turns_after_current,
+            coverage=topic_coverage_tracker.initial_state(topic.question_type),
+        )
 
 
 class StrictInterviewPolicy:
+    """严厉模式策略层（PR3：coverage-aware）。
+
+    只负责确定性决策：
+
+    - 是否追问 / 是否切 topic / 是否结束
+    - 这一轮要验证什么（``follow_up_intent`` + ``target_coverage_key`` + ``target_gap``）
+
+    **不负责**最终追问措辞：``next_question`` 留空，由 ``QuestionRealizer`` 生成；
+    Realizer 失败时由调用方回退到本类的 ``_followup_question()`` 模板
+    （模板会按 Policy 给出的 intent 生成，保证「追指标就继续追指标」）。
+
+    决策完全由代码规则驱动，LLM 的 coverage 输出只作为输入，不参与「要不要继续」。
+    """
+
+    #: 兼容属性：真正的生命周期上限是 ``topic.max_turns``（见 PR3 §28）
     max_followups_per_topic = 2
+
+    #: Early exit：coverage 完整且回答质量达标 → 直接进入下一个 topic（0 次追问）
+    early_exit_score = 70
+
+    # gap 关键词 → 追问意图（有限集合，顺序即优先级）
+    _INTENT_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+        (("指标", "效果", "结果", "验证", "口径", "baseline"), FollowUpIntent.VERIFY_METRIC.value),
+        (("取舍", "权衡", "替代方案", "成本", "为什么选"), FollowUpIntent.VERIFY_TRADEOFF.value),
+        (("职责", "个人", "贡献", "真实性", "证据"), FollowUpIntent.VERIFY_OWNERSHIP.value),
+        (("排查", "定位", "监控", "恢复", "故障", "修复"), FollowUpIntent.VERIFY_FAILURE.value),
+        (("异常", "边界", "失败", "兜底", "降级", "重试"), FollowUpIntent.VERIFY_BOUNDARY.value),
+    )
 
     def decide(
         self,
@@ -1047,34 +1557,159 @@ class StrictInterviewPolicy:
         answered_turns_after_current: list[DynamicTurnDTO],
         has_next_topic: bool,
         coach_hint: dict | None = None,
+        topic_state: TopicStateDTO | None = None,
     ) -> DynamicDecisionDTO:
         del coach_hint
-        followup_count = sum(1 for item in answered_turns_after_current if item.turn_type == TurnType.FOLLOW_UP.value)
-        if (
-            turn.turn_type in {TurnType.MAIN.value, TurnType.FOLLOW_UP.value}
-            and followup_count < self.max_followups_per_topic
-        ):
-            return DynamicDecisionDTO(
-                action=DecisionAction.FOLLOW_UP.value,
-                reason="严厉模式下继续验证回答真实性、细节和抗压稳定性。",
-                hint=None,
-                next_question=self._followup_question(topic, evaluation, followup_count + 1),
+        state = CoachInterviewPolicy._resolve_state(topic, answered_turns_after_current, topic_state)
+        coverage = state.coverage
+        score = evaluation.ability_score
+
+        # ---- Hard stop：turn 预算用尽，无论 coverage / score -------------------
+        if state.remaining_turns <= 0:
+            return _exit_decision(has_next_topic, "严厉模式当前 topic 已达到最大轮次上限，进入下一个 topic。")
+
+        # ---- Early exit：关键点全部覆盖 + 回答质量达标 → 0 次追问 -------------
+        if coverage.complete and score >= self.early_exit_score:
+            return _exit_decision(
+                has_next_topic,
+                "严厉模式该 topic 的关键点已全部覆盖且回答质量达标，提前进入下一个 topic。",
             )
 
-        if has_next_topic:
-            return DynamicDecisionDTO(
-                action=DecisionAction.NEXT_TOPIC.value,
-                reason="严厉模式当前 topic 已完成两轮追问，进入下一个 topic。",
-                hint=None,
-            )
-        return DynamicDecisionDTO(action=DecisionAction.END.value, reason="所有计划 topic 已完成，生成严厉模式报告。")
+        # ---- 仍有预算 → 继续追问 --------------------------------------------
+        # coverage 未完整时优先追 next_target（Policy 决定「问什么」）；
+        # coverage 已完整但质量不达标时退回缺口驱动（gap → intent）。
+        gap_intent, gap_target = self._follow_up_intent(
+            topic,
+            evaluation,
+            state.followup_count + 1,
+            used_intents=self._used_follow_up_intents(answered_turns_after_current),
+        )
+        target_key = coverage.next_target_key if not coverage.complete else None
+        if target_key:
+            intent = target_intent(topic.question_type, target_key) or gap_intent
+            target_gap = coverage.next_target_label or gap_target
+        else:
+            intent, target_gap = gap_intent, gap_target
+
+        reason = (
+            f"严厉模式继续验证未覆盖的关键点：{coverage.next_target_label}。"
+            if target_key
+            else "严厉模式继续验证回答真实性、细节和抗压稳定性。"
+        )
+        return DynamicDecisionDTO(
+            action=DecisionAction.FOLLOW_UP.value,
+            reason=reason,
+            hint=None,
+            next_question=None,
+            follow_up_intent=intent,
+            target_gap=target_gap,
+            target_coverage_key=target_key,
+        )
+
+    @classmethod
+    def _follow_up_intent(
+        cls,
+        topic: DynamicTopicDTO,
+        evaluation: DynamicTurnEvaluationDTO,
+        followup_number: int,
+        used_intents: set[str] | None = None,
+    ) -> tuple[str, str]:
+        """把规则评分的缺口翻译成「追问意图 + 目标缺口」。
+
+        Policy 只输出意图分类，不写自然语言问题（那是 QuestionRealizer 的职责）。
+        同一 topic 内优先换一个还没用过的意图，避免连续追问都停在同一个维度。
+        """
+        signals = evaluation.signals or {}
+        candidates = [*(signals.get("gaps") or []), *(signals.get("risks") or [])]
+        ranked: list[tuple[str, str]] = []
+        for gap in candidates:
+            text = str(gap)
+            for keywords, candidate_intent in cls._INTENT_RULES:
+                if any(keyword in text for keyword in keywords):
+                    if not any(item[0] == candidate_intent for item in ranked):
+                        ranked.append((candidate_intent, text))
+                    break
+        ranked.append((cls._default_intent(topic, followup_number), ""))
+
+        used = used_intents or set()
+        intent, matched_gap = ranked[0]
+        for candidate_intent, candidate_gap in ranked:
+            if candidate_intent not in used:
+                intent, matched_gap = candidate_intent, candidate_gap
+                break
+
+        target_gap = cls._target_gap(candidates, matched_gap)
+        return intent, target_gap
+
+    @staticmethod
+    def _used_follow_up_intents(answered_turns_after_current: list[DynamicTurnDTO]) -> set[str]:
+        """从历史轮次的 decision 里提取已经用过的追问意图。"""
+        used: set[str] = set()
+        for turn in answered_turns_after_current:
+            decision = turn.decision or {}
+            if isinstance(decision, dict):
+                intent = decision.get("follow_up_intent")
+                if intent:
+                    used.add(str(intent))
+        return used
+
+    @staticmethod
+    def _default_intent(topic: DynamicTopicDTO, followup_number: int) -> str:
+        if followup_number <= 1:
+            return FollowUpIntent.VERIFY_IMPLEMENTATION.value
+        if topic.question_type == "PROJECT":
+            return FollowUpIntent.VERIFY_METRIC.value
+        if topic.question_type == "SYSTEM_DESIGN":
+            return FollowUpIntent.VERIFY_FAILURE.value
+        return FollowUpIntent.VERIFY_BOUNDARY.value
+
+    @staticmethod
+    def _target_gap(candidates: list[str], matched_gap: str, limit: int = 160) -> str:
+        """构造给 QuestionRealizer 的「要验证什么」，只描述缺口，不写问题。"""
+        ordered: list[str] = []
+        if matched_gap:
+            ordered.append(str(matched_gap))
+        for item in candidates:
+            text = str(item)
+            if text and text not in ordered:
+                ordered.append(text)
+            if len(ordered) >= 2:
+                break
+        if not ordered:
+            return "回答整体偏泛，需要补一个可验证的具体点"
+        return "；".join(ordered)[:limit]
 
     @staticmethod
     def _followup_question(
         topic: DynamicTopicDTO,
         evaluation: DynamicTurnEvaluationDTO,
         followup_number: int,
+        *,
+        follow_up_intent: str | None = None,
+        target_gap: str | None = None,
+        target_coverage_key: str | None = None,
     ) -> str:
+        """fallback 追问模板。
+
+        优先级（从具体到兜底）：
+
+        1. ``target_coverage_key`` 专属模板 —— canonical target 与 intent 不是 1:1
+           （例如 KNOWLEDGE_DEFINITION/MECHANISM/SCENARIO 都映射 VERIFY_IMPLEMENTATION，
+           但问题必须不同），因此先按 target 精确对齐，保证 fallback 自身 correctness。
+        2. ``follow_up_intent`` 模板 —— 六种 intent 全覆盖。
+        3. 题型 + 缺口的旧模板（向后兼容）。
+
+        不通过解析自由文本 ``target_gap`` 来猜 target。
+        """
+        del target_gap  # 只作可读性/日志用途，模板不拼接自由文本
+        target_question = StrictInterviewPolicy._coverage_target_question(topic, target_coverage_key)
+        if target_question:
+            return target_question
+
+        intent_question = StrictInterviewPolicy._intent_question(topic, follow_up_intent)
+        if intent_question:
+            return intent_question
+
         gaps = evaluation.signals.get("gaps") or evaluation.signals.get("risks") or []
         gap = gaps[0] if gaps else ""
         if topic.question_type == "PROJECT":
@@ -1088,6 +1723,57 @@ class StrictInterviewPolicy:
         if followup_number == 1:
             return f"我想确认你不是只记了概念。请用 3 步讲清楚「{topic.topic_title}」的核心机制，再补一个最容易踩错的边界。"
         return "最后只举一个工程场景：它什么时候适用，什么时候不适用？"
+
+    @staticmethod
+    def _coverage_target_question(topic: DynamicTopicDTO, target_coverage_key: str | None) -> str:
+        """按 canonical target 生成 fallback 追问。
+
+        只有那些「intent 与 target 不是 1:1、且会与默认模板冲突」的 target 才需要
+        专属模板；能复用 intent 模板的（OWNERSHIP / RESULT_VALIDATION / TRADEOFF /
+        BOUNDARY / RELIABILITY 等）返回空串，交由上层按 intent 处理。
+        """
+        if not target_coverage_key:
+            return ""
+
+        if target_coverage_key == "PROJECT_GOAL":
+            return "先不讲实现，先讲清楚这个项目要解决什么问题、面向什么用户、目标是什么。"
+        if target_coverage_key == "KNOWLEDGE_DEFINITION":
+            return f"先用一句话说清「{topic.topic_title}」是什么、怎么界定，先不展开内部原理。"
+        if target_coverage_key == "KNOWLEDGE_MECHANISM":
+            return f"讲一下「{topic.topic_title}」的核心机制或执行流程，用 3 步讲清楚。"
+        if target_coverage_key == "KNOWLEDGE_SCENARIO":
+            return f"举一个真实工程场景：什么时候用「{topic.topic_title}」？具体怎么落地？"
+        if target_coverage_key == "SYSTEM_COMPONENTS":
+            return "先不管数据流，先把这个系统拆成哪几个核心模块/组件？每个一句话说清职责。"
+        if target_coverage_key == "SYSTEM_DATA_FLOW":
+            return "讲一次请求或一条数据从进来到返回，依次经过哪些模块、每个环节做什么。"
+        # 其余 target 与 intent 1:1，复用 intent 模板
+        return ""
+
+    @staticmethod
+    def _intent_question(topic: DynamicTopicDTO, follow_up_intent: str | None) -> str:
+        """按 intent 生成 fallback 追问（六种 intent 全覆盖）。"""
+        if not follow_up_intent:
+            return ""
+        if follow_up_intent == FollowUpIntent.VERIFY_METRIC.value:
+            return "先只讲一个指标：你们看的是延迟、成功率、召回率还是转化？上线前后怎么对比，baseline 是多少？"
+        if follow_up_intent == FollowUpIntent.VERIFY_BOUNDARY.value:
+            return "只讲一个边界：什么输入或什么量级下这套做法会失效？当时是怎么限制或兜住的？"
+        if follow_up_intent == FollowUpIntent.VERIFY_FAILURE.value:
+            return "只挑一个失败场景：依赖超时、参数错误或结果为空时，你们怎么发现、怎么恢复？"
+        if follow_up_intent == FollowUpIntent.VERIFY_TRADEOFF.value:
+            return "只讲一个取舍：当时有哪两个可选方案？你们为什么选现在这个，放弃了什么？"
+        if follow_up_intent == FollowUpIntent.VERIFY_OWNERSHIP.value:
+            return "这部分具体是你自己设计并落地的吗？从方案确定到上线，哪几步是你亲手做的？"
+        if follow_up_intent == FollowUpIntent.VERIFY_IMPLEMENTATION.value:
+            if topic.question_type == "PROJECT":
+                return StrictInterviewPolicy._project_minimal_chain_prompt(topic.topic_title)
+            if topic.question_type == "SYSTEM_DESIGN":
+                return (
+                    "先不谈容量。你先口述最小链路：用户请求进来后，依次经过哪 3 到 5 个模块？每个模块一句话负责什么。"
+                )
+            return f"请用 3 步讲清楚「{topic.topic_title}」的核心机制，不要只讲结论。"
+        return ""
 
     @staticmethod
     def _project_followup_question(topic: DynamicTopicDTO, gap: str, followup_number: int) -> str:
@@ -1173,6 +1859,7 @@ class DynamicInterviewReportService:
         score_delta = final_score - initial_score if final_score is not None and initial_score is not None else None
         strengths, gaps, risks = self._merge_signals(answered)
         next_action = self._next_training_action(topic, gaps, risks, score_delta)
+        coverage = self._topic_coverage_view(topic)
         return DynamicTopicSummaryDTO(
             topic_id=topic.id,
             topic_key=topic.topic_key,
@@ -1188,7 +1875,16 @@ class DynamicInterviewReportService:
             risks=risks[:4],
             gaps=gaps[:4],
             next_training_action=next_action,
+            coverage_ratio=coverage.coverage_ratio,
+            covered_points=_coverage_labels(coverage, coverage.covered_keys),
+            partial_points=_coverage_labels(coverage, coverage.partial_keys),
+            unresolved_points=_coverage_labels(coverage, coverage.unresolved_keys),
         )
+
+    @staticmethod
+    def _topic_coverage_view(topic: InterviewTopicEntity) -> TopicCoverageStateDTO:
+        """report 用：从 coverage_state_json 解析出 topic 级 coverage（NULL → initial）。"""
+        return topic_coverage_tracker.parse_state(topic.coverage_state_json, topic.question_type)
 
     @staticmethod
     def _merge_signals(turns: list[InterviewTurnEntity]) -> tuple[list[str], list[str], list[str]]:
@@ -1228,6 +1924,11 @@ class DynamicInterviewReportService:
 
     @staticmethod
     def _ability_scores(turns: list[InterviewTurnEntity]) -> dict[str, int]:
+        """按维度聚合平均分。
+
+        PR2 起 dimension_scores 只含当前 question_type 的 active dimensions，
+        因此「没有该维度」就不参与聚合，**不补 45/50 这种假分**。
+        """
         buckets: dict[str, list[int]] = {
             "authenticity": [],
             "technical_depth": [],
@@ -1244,7 +1945,7 @@ class DynamicInterviewReportService:
                 value = dimension_scores.get(key)
                 if isinstance(value, int):
                     buckets[key].append(value)
-        return {key: int(sum(values) / len(values)) if values else 0 for key, values in buckets.items()}
+        return {key: int(sum(values) / len(values)) for key, values in buckets.items() if values}
 
     @staticmethod
     def _top_risks(topic_summaries: list[DynamicTopicSummaryDTO]) -> list[str]:
@@ -1506,6 +2207,15 @@ class DynamicRagCoachService:
         return f"用 1 分钟解释「{topic.topic_title}」的定义、机制、场景和风险。"
 
 
+def resolve_topic_opening(transition: str | None, main_question: str) -> str:
+    """决定下一 topic 的开场话术。
+
+    LLM 只负责生成转场语；**下一题永远是 Planner 产出的 ``main_question``**，
+    不允许被重写。转场失败 / 为空时原样返回 main_question，保证面试不中断。
+    """
+    return compose_utterance(transition or "", main_question)
+
+
 class DynamicInterviewService:
     generation_stages = [
         ("RESUME_PROFILE", "正在分析简历项目"),
@@ -1519,12 +2229,40 @@ class DynamicInterviewService:
         self.evaluator = DynamicAnswerEvaluationService()
         self.report_service = DynamicInterviewReportService()
         self.rag_coach_service = DynamicRagCoachService()
+        self.context_builder = InterviewContextBuilder()
+        # LLM 语义评分 + 确定性校准；heuristic evaluator 继续承担 guard / fallback / coach hint
+        self.hybrid_evaluator = HybridAnswerEvaluationService(heuristic_evaluator=self.evaluator)
 
     @staticmethod
     def _policy_for_mode(mode: str | None):
         if mode and mode.upper() == InterviewMode.STRICT.value:
             return StrictInterviewPolicy()
         return CoachInterviewPolicy()
+
+    @staticmethod
+    def _resolve_pending_next_question(
+        *,
+        action: str,
+        decision: DynamicDecisionDTO,
+        topic_entity: InterviewTopicEntity,
+        fallback_question: str,
+        next_topic_entity: InterviewTopicEntity | None,
+    ) -> str | None:
+        """Phase 1 落库时每个 action 对应的「确定性下一题」。
+
+        必须按 action 区分，不能用单一兜底值覆盖所有分支：
+        - FOLLOW_UP   -> 规则模板追问
+        - COACH_RETRY -> Policy 已经给出的 next_question（重答同一题）
+        - NEXT_TOPIC  -> 下一个 topic 的 main_question（转场语只是增强）
+        - END         -> None
+        """
+        if action == DecisionAction.FOLLOW_UP.value:
+            return fallback_question or topic_entity.main_question
+        if action == DecisionAction.COACH_RETRY.value:
+            return decision.next_question or topic_entity.main_question
+        if action == DecisionAction.NEXT_TOPIC.value:
+            return next_topic_entity.main_question if next_topic_entity is not None else None
+        return None
 
     async def create_session(
         self,
@@ -1762,7 +2500,7 @@ class DynamicInterviewService:
                     user_id=user_id,
                     resume_id=request.resume_id,
                     topic=topic,
-                    evidence_hash=self._evidence_hash(topic.evidence_snippet),
+                    evidence_hash=self._evidence_hash(topic.evidence_snippet, topic.resume_evidence_refs),
                 )
                 topic_entities.append(topic_entity)
 
@@ -1785,6 +2523,208 @@ class DynamicInterviewService:
             )
             await bg_db.commit()
 
+    @staticmethod
+    def _assert_session_acceptable(session: InterviewSessionEntity) -> None:
+        if session.status == SessionStatus.COMPLETED:
+            raise BusinessException(ErrorCode.INTERVIEW_ALREADY_COMPLETED)
+        if session.status == SessionStatus.PLANNING:
+            raise BusinessException(ErrorCode.BAD_REQUEST, "面试计划仍在生成，请稍后刷新")
+        if session.status == SessionStatus.FAILED:
+            raise BusinessException(ErrorCode.BAD_REQUEST, "面试计划生成失败，请返回创建页重试")
+
+    async def _load_evaluation_snapshot(self, session_id: str, turn_id: int, user_id: int) -> EvaluationSnapshot:
+        """用独立短生命周期 session 读取评分快照，读完立即释放连接。
+
+        返回对象里只有 plain scalar 与 DTO，**不含任何 ORM entity**。
+        """
+        from app.database import get_db_context
+
+        async with get_db_context() as snapshot_db:
+            session = await dynamic_interview_persistence_service.find_session_or_throw(
+                snapshot_db, session_id, user_id
+            )
+            self._assert_session_acceptable(session)
+            turn = await dynamic_interview_persistence_service.find_turn_or_throw(
+                snapshot_db, turn_id, session.id, user_id
+            )
+            if turn.answer is not None:
+                raise BusinessException(ErrorCode.BAD_REQUEST, "该轮回答已提交，不能重复提交")
+
+            topic_entity = await dynamic_interview_persistence_service.find_topic_or_throw(
+                snapshot_db, turn.topic_id, user_id
+            )
+            topic = dynamic_interview_persistence_service.topic_to_dto(topic_entity)
+            previous_turns = [
+                dynamic_interview_persistence_service.turn_to_dto(item)
+                for item in await dynamic_interview_persistence_service.list_turns_by_topic(
+                    snapshot_db, topic_entity.id
+                )
+                if item.answer is not None
+            ]
+
+            return EvaluationSnapshot(
+                session_entity_id=session.id,
+                session_id=session.session_id,
+                user_id=session.user_id,
+                session_status=session.status.value if session.status else SessionStatus.INTERVIEWING.value,
+                interview_mode=session.interview_mode or InterviewMode.COACH.value,
+                llm_provider=session.llm_provider,
+                topic=topic,
+                turn=dynamic_interview_persistence_service.turn_to_dto(turn),
+                previous_turns=previous_turns,
+            )
+
+    async def _evaluate_answer(self, snapshot: EvaluationSnapshot, answer: str) -> DynamicTurnEvaluationDTO:
+        """Hybrid 评分 + 独立 metric。评分失败一律降级，绝不抛出。"""
+        start = time.perf_counter()
+        outcome = None
+        unexpected_error: str | None = None
+        try:
+            outcome = await self.hybrid_evaluator.evaluate(snapshot, answer, llm_provider=snapshot.llm_provider)
+        except Exception as exc:
+            # Hybrid evaluator 内部已兜底；这里再兜一层，保证 answer 一定能提交
+            unexpected_error = exc.__class__.__name__
+            logger.warning(
+                "Hybrid 评分异常，使用规则兜底评分: session_id=%s, turn_id=%s, error=%s",
+                snapshot.session_id,
+                snapshot.turn.id,
+                exc,
+            )
+
+        if outcome is None:
+            evaluation = self._catastrophic_fallback(snapshot, answer, unexpected_error or "UNEXPECTED")
+            llm_attempted, llm_error = True, unexpected_error
+        else:
+            evaluation = outcome.evaluation
+            llm_attempted, llm_error = outcome.llm_attempted, outcome.llm_error
+
+        # 规则侧 metric（保留旧 dashboard 语义）
+        await self._record_operation_metric(
+            session_entity_id=snapshot.session_entity_id,
+            user_id=snapshot.user_id,
+            llm_provider=snapshot.llm_provider,
+            operation_type="ANSWER_EVALUATE",
+            topic_id=snapshot.topic.id,
+            turn_id=snapshot.turn.id,
+            latency_ms=self._latency_ms(start),
+            success=True,
+            error_type=None,
+        )
+
+        # LLM 语义评分 metric：success 与「HTTP 提交是否成功」是两个概念
+        if llm_attempted or evaluation.evaluation_method == "HYBRID_LLM":
+            await self._record_operation_metric(
+                session_entity_id=snapshot.session_entity_id,
+                user_id=snapshot.user_id,
+                llm_provider=snapshot.llm_provider,
+                operation_type="ANSWER_EVALUATE_LLM",
+                topic_id=snapshot.topic.id,
+                turn_id=snapshot.turn.id,
+                latency_ms=self._latency_ms(start),
+                success=evaluation.evaluation_method == "HYBRID_LLM",
+                error_type=None if evaluation.evaluation_method == "HYBRID_LLM" else llm_error,
+            )
+
+        return evaluation
+
+    @staticmethod
+    def _reduce_coverage(
+        *,
+        topic: DynamicTopicDTO,
+        turn_id: int,
+        answer: str,
+        evaluation: DynamicTurnEvaluationDTO,
+    ) -> TopicCoverageStateDTO:
+        """把当前轮次的 coverage 贡献合并进 topic 累计状态。
+
+        纯计算：不查 DB、不调 LLM、不碰 ORM；因此可以安全地放在 Phase 1 事务里，
+        也可以在测试里直接调用。
+        """
+        try:
+            return topic_coverage_tracker.update(
+                topic=topic,
+                current_state=topic.coverage_state or topic_coverage_tracker.initial_state(topic.question_type),
+                turn_id=turn_id,
+                answer=answer,
+                evaluation=evaluation,
+            )
+        except Exception as exc:
+            # coverage 属于「体验/策略」层，任何异常都不允许影响 answer 落库
+            logger.warning("coverage reduce 失败，保持原状态: turn_id=%s, error=%s", turn_id, exc)
+            return topic.coverage_state or topic_coverage_tracker.initial_state(topic.question_type)
+
+    @staticmethod
+    def _topic_progress(state: TopicStateDTO) -> dict:
+        """topic_progress：score 与 coverage 是两个独立概念，这里都如实暴露。"""
+        coverage = state.coverage
+        return {
+            "answered_turns": state.turn_count,
+            "max_turns": state.max_turns,
+            "remaining_turns": state.remaining_turns,
+            "best_score": state.best_score,
+            "final_score": state.current_score,
+            "coverage_ratio": coverage.coverage_ratio,
+            "coverage_complete": coverage.complete,
+            "covered_points": _coverage_labels(coverage, coverage.covered_keys),
+            "partial_points": _coverage_labels(coverage, coverage.partial_keys),
+            "unresolved_points": _coverage_labels(coverage, coverage.unresolved_keys),
+            "next_target_key": coverage.next_target_key,
+            "next_target_label": coverage.next_target_label,
+        }
+
+    @staticmethod
+    def _attach_coverage_target(
+        coach_hint: dict | None,
+        state: TopicStateDTO,
+        decision: DynamicDecisionDTO,
+    ) -> dict:
+        """COACH_RETRY 提示里带上本轮瞄准的 coverage target（仍然不给标准答案）。"""
+        target_key = decision.target_coverage_key
+        if not target_key:
+            return coach_hint or {}
+        label = state.coverage.points.get(target_key)
+        hint = dict(coach_hint or {})
+        hint["coverage_target"] = {
+            "key": target_key,
+            "label": (label.label if label else None) or decision.target_gap or "",
+        }
+        return hint
+
+    def _catastrophic_fallback(
+        self, snapshot: EvaluationSnapshot, answer: str, error_type: str
+    ) -> DynamicTurnEvaluationDTO:
+        """Hybrid evaluator 整体抛异常时的最后兜底。
+
+        原则：**能拿到真实 heuristic 分数就不要退化成固定 50 分**——丢掉候选人的
+        整个回答信息是没有必要的。只有在 heuristic 自身也失败时才用固定紧急分。
+
+        metadata 必须与其它降级路径自洽：
+        ``HEURISTIC_FALLBACK`` / confidence ``0.35`` / active dimensions only /
+        ``evidence=[]`` / ``guard_flags`` 含 ``FALLBACK:<ErrorType>``。
+        """
+        try:
+            heuristic = self.evaluator.evaluate(snapshot.topic, snapshot.turn, answer, snapshot.previous_turns)
+        except Exception as exc:
+            logger.warning(
+                "heuristic 兜底评分也失败，使用固定紧急分: session_id=%s, turn_id=%s, error=%s",
+                snapshot.session_id,
+                snapshot.turn.id,
+                exc,
+            )
+            heuristic = self.evaluator.fallback_evaluation(snapshot.topic)
+
+        return heuristic.model_copy(
+            update={
+                "dimension_scores": filter_active_dimension_scores(
+                    snapshot.topic.question_type, heuristic.dimension_scores
+                ),
+                "evaluation_method": "HEURISTIC_FALLBACK",
+                "confidence": FALLBACK_CONFIDENCE,
+                "evidence": [],
+                "guard_flags": [f"FALLBACK:{error_type}"],
+            }
+        )
+
     async def submit_turn_answer(
         self,
         db: AsyncSession,
@@ -1793,19 +2733,36 @@ class DynamicInterviewService:
         request: SubmitDynamicTurnAnswerRequest,
         user_id: int,
     ) -> DynamicTurnAnswerResponse:
-        session = await dynamic_interview_persistence_service.find_session_or_throw(db, session_id, user_id)
-        if session.status == SessionStatus.COMPLETED:
-            raise BusinessException(ErrorCode.INTERVIEW_ALREADY_COMPLETED)
-        if session.status == SessionStatus.PLANNING:
-            raise BusinessException(ErrorCode.BAD_REQUEST, "面试计划仍在生成，请稍后刷新")
-        if session.status == SessionStatus.FAILED:
-            raise BusinessException(ErrorCode.BAD_REQUEST, "面试计划生成失败，请返回创建页重试")
+        # =====================================================================
+        # Phase E0：在独立短生命周期 read session 内读取 immutable snapshot
+        # ---------------------------------------------------------------------
+        # 之后要调用 LLM 语义评分（最长 answer_evaluator_timeout_seconds），
+        # 绝不能让这段等待时间占用 endpoint 的业务 connection / transaction。
+        # snapshot 里只允许出现 plain scalar 与 Pydantic DTO，不能带出 ORM entity。
+        # =====================================================================
+        snapshot = await self._load_evaluation_snapshot(session_id, turn_id, user_id)
 
-        turn = await dynamic_interview_persistence_service.find_turn_or_throw(db, turn_id, session.id, user_id)
+        # =====================================================================
+        # Phase E1：LLM 语义评分（期间 0 个业务 DB transaction）
+        # =====================================================================
+        evaluation = await self._evaluate_answer(snapshot, request.answer)
+
+        # =====================================================================
+        # Phase 1 前：重新进入业务 transaction，加锁重读并再校验（防重复提交）
+        # =====================================================================
+        session = await dynamic_interview_persistence_service.find_session_or_throw(db, session_id, user_id)
+        self._assert_session_acceptable(session)
+        turn = await dynamic_interview_persistence_service.find_turn_for_update_or_throw(
+            db, turn_id, session.id, user_id
+        )
         if turn.answer is not None:
             raise BusinessException(ErrorCode.BAD_REQUEST, "该轮回答已提交，不能重复提交")
 
-        topic_entity = await dynamic_interview_persistence_service.find_topic_or_throw(db, turn.topic_id, user_id)
+        # 锁顺序固定 turn → topic：先锁 turn 并确认 answer is None，再锁 topic 读取
+        # **最新**的 coverage 状态做 reduce，避免并发请求基于过期状态互相覆盖。
+        topic_entity = await dynamic_interview_persistence_service.find_topic_for_update_or_throw(
+            db, turn.topic_id, user_id
+        )
         topic = dynamic_interview_persistence_service.topic_to_dto(topic_entity)
         previous_turns = [
             dynamic_interview_persistence_service.turn_to_dto(item)
@@ -1813,20 +2770,6 @@ class DynamicInterviewService:
             if item.answer is not None
         ]
         turn_dto = dynamic_interview_persistence_service.turn_to_dto(turn)
-        try:
-            evaluation = await self._track_operation(
-                db,
-                session,
-                "ANSWER_EVALUATE",
-                lambda: self.evaluator.evaluate(topic, turn_dto, request.answer, previous_turns),
-                topic_id=topic_entity.id,
-                turn_id=turn.id,
-            )
-        except Exception as exc:
-            logger.warning(
-                "动态面试评分失败，使用兜底评分: session_id=%s, turn_id=%s, error=%s", session_id, turn_id, exc
-            )
-            evaluation = self.evaluator.fallback_evaluation(topic)
 
         try:
             coach_hint = None
@@ -1854,6 +2797,26 @@ class DynamicInterviewService:
         ]
         all_topics = await dynamic_interview_persistence_service.list_topics(db, session.id)
         next_topic_entity = self._next_pending_topic(all_topics, topic_entity.topic_order)
+
+        # =====================================================================
+        # Coverage reduce（确定性，纯计算，不查 DB、不调 LLM）
+        # ---------------------------------------------------------------------
+        # 输入：加锁重读得到的**最新** topic coverage + 当前轮的 evaluation。
+        # 输出：单调合并后的累计状态 —— covered/partial/unresolved、complete、
+        # next_target。Policy 只消费这个结果，LLM 不参与「要不要继续追问」。
+        # =====================================================================
+        coverage_state = self._reduce_coverage(
+            topic=topic,
+            turn_id=turn.id,
+            answer=request.answer,
+            evaluation=evaluation,
+        )
+        topic_state = topic_coverage_tracker.build_state(
+            topic=topic,
+            answered_turns=answered_after,
+            coverage=coverage_state,
+        )
+
         policy = self._policy_for_mode(session.interview_mode)
         decision = policy.decide(
             topic=topic,
@@ -1862,9 +2825,63 @@ class DynamicInterviewService:
             answered_turns_after_current=answered_after,
             has_next_topic=next_topic_entity is not None,
             coach_hint=coach_hint,
+            topic_state=topic_state,
         )
         if decision.action != DecisionAction.COACH_RETRY.value:
             coach_hint = None
+        elif decision.target_coverage_key:
+            # 教练模式重答提示里带上本轮瞄准的 coverage target（不给标准答案）
+            coach_hint = self._attach_coverage_target(coach_hint, topic_state, decision)
+
+        followup_count = topic_state.followup_count
+
+        # Answer -> InterviewContext：所有下游（Realizer / Prompt）只消费这一份 Context
+        interview_context = self.context_builder.build(
+            session_id=session.session_id,
+            interview_mode=session.interview_mode,
+            topic=topic,
+            current_question=turn.question,
+            current_answer=request.answer,
+            answered_turns=previous_turns,
+            evaluation=evaluation,
+            follow_up_count=followup_count,
+            coverage_state=coverage_state,
+            target_coverage_key=decision.target_coverage_key,
+        )
+
+        # =====================================================================
+        # Phase 1：确定性状态持久化
+        # ---------------------------------------------------------------------
+        # 候选人的 answer / evaluation / policy decision / topic 状态（含 coverage）/
+        # 下一轮的「兜底问题」全部先落库并提交。QuestionRealizer 是可降级的外部调用，
+        # 不能让它的 25s 等待时间持有本 endpoint 的 DB transaction / connection。
+        # =====================================================================
+        fallback_question = ""
+        if decision.action == DecisionAction.FOLLOW_UP.value:
+            # 兜底问题必须与 Policy 的 target 一致：Policy 说要追指标，
+            # Realizer 失败后 fallback 也必须继续追指标，不能跳回实现链路。
+            fallback_question = StrictInterviewPolicy._followup_question(
+                topic,
+                evaluation,
+                followup_count + 1,
+                follow_up_intent=decision.follow_up_intent,
+                target_gap=decision.target_gap,
+                target_coverage_key=decision.target_coverage_key,
+            )
+
+        # Phase 1 落库的 decision 使用**确定性的兜底问题**作为 next_question（按 action 区分）：
+        # - FOLLOW_UP：模板追问；COACH_RETRY：Policy 给的 main_question；
+        #   NEXT_TOPIC：下一个 topic 的 main_question；END：None。
+        # 这样即使 Phase 2/3 全部失败，库里的 decision 与已创建的 turn 依然自洽，
+        # 且重新 GET session 时 decision.next_question 与 submit 返回值语义一致。
+        pending_question = self._resolve_pending_next_question(
+            action=decision.action,
+            decision=decision,
+            topic_entity=topic_entity,
+            fallback_question=fallback_question,
+            next_topic_entity=next_topic_entity,
+        )
+        pending_decision = decision.model_copy(update={"next_question": pending_question})
 
         await dynamic_interview_persistence_service.save_turn_answer(
             db,
@@ -1874,8 +2891,8 @@ class DynamicInterviewService:
             feedback=evaluation.feedback,
             signals=evaluation.signals,
             evaluation=evaluation.model_dump(),
-            decision_action=decision.action,
-            decision=decision.model_dump(),
+            decision_action=pending_decision.action,
+            decision=pending_decision.model_dump(),
             coach_hint=coach_hint,
         )
 
@@ -1890,8 +2907,12 @@ class DynamicInterviewService:
             best_score=max(scores) if scores else None,
             final_score=scores[-1] if scores else None,
             completed=completed,
+            # coverage 与 turn_count / best_score / final_score / completed
+            # 在**同一个 Phase 1 transaction** 内落库
+            coverage_state=coverage_state,
         )
 
+        next_turn_entity: InterviewTurnEntity | None = None
         next_turn = None
         current_topic = dynamic_interview_persistence_service.topic_to_dto(topic_entity)
         report = None
@@ -1906,7 +2927,6 @@ class DynamicInterviewService:
                 question=topic_entity.main_question,
                 coach_hint=coach_hint,
             )
-            next_turn = dynamic_interview_persistence_service.turn_to_dto(next_turn_entity)
         elif decision.action == DecisionAction.FOLLOW_UP.value:
             next_turn_entity = await dynamic_interview_persistence_service.create_turn(
                 db,
@@ -1915,9 +2935,8 @@ class DynamicInterviewService:
                 user_id=user_id,
                 turn_type=TurnType.FOLLOW_UP.value,
                 turn_order=len(refreshed_turns) + 1,
-                question=decision.next_question or topic_entity.main_question,
+                question=fallback_question or topic_entity.main_question,
             )
-            next_turn = dynamic_interview_persistence_service.turn_to_dto(next_turn_entity)
         elif decision.action == DecisionAction.NEXT_TOPIC.value and next_topic_entity is not None:
             await dynamic_interview_persistence_service.activate_topic(db, next_topic_entity.id, session.id)
             existing_next_turns = await dynamic_interview_persistence_service.list_turns_by_topic(
@@ -1927,6 +2946,7 @@ class DynamicInterviewService:
                 (item for item in existing_next_turns if item.turn_type == TurnType.MAIN.value),
                 None,
             )
+            # 下一题永远由 Planner 的 main_question 决定，转场语只是前置包装
             if next_turn_entity is None:
                 next_turn_entity = await dynamic_interview_persistence_service.create_turn(
                     db,
@@ -1937,24 +2957,272 @@ class DynamicInterviewService:
                     turn_order=1,
                     question=next_topic_entity.main_question,
                 )
-            next_turn = dynamic_interview_persistence_service.turn_to_dto(next_turn_entity)
             current_topic = dynamic_interview_persistence_service.topic_to_dto(next_topic_entity)
         elif decision.action == DecisionAction.END.value:
             report = await self._complete_and_report(db, session)
 
+        if next_turn_entity is not None:
+            next_turn = dynamic_interview_persistence_service.turn_to_dto(next_turn_entity)
+
+        # Phase 1 提交点：此后连接归还连接池，LLM 调用不再占用 DB transaction
+        await db.commit()
+
+        # =====================================================================
+        # Phase 2：可降级的 LLM 调用（期间不访问数据库）
+        # =====================================================================
+        realized_question: str | None = None
+        realized_transition: str | None = None
+        if decision.action == DecisionAction.FOLLOW_UP.value:
+            realized_question = await self._realize_follow_up_question(
+                session,
+                topic=topic,
+                evaluation=evaluation,
+                context=interview_context,
+                decision=decision,
+                followup_count=followup_count,
+                topic_id=topic_entity.id,
+                turn_id=turn.id,
+            )
+        elif decision.action == DecisionAction.NEXT_TOPIC.value and next_topic_entity is not None:
+            realized_transition = await self._realize_topic_transition(
+                session,
+                previous_topic=topic,
+                previous_question=turn.question,
+                previous_answer=request.answer,
+                next_topic=dynamic_interview_persistence_service.topic_to_dto(next_topic_entity),
+                topic_id=topic_entity.id,
+                turn_id=turn.id,
+            )
+
+        # =====================================================================
+        # Phase 3：把生成结果落库（best-effort）
+        # ---------------------------------------------------------------------
+        # Phase 1 已经决定了 correctness：answer / evaluation / decision /
+        # topic 状态 / 下一轮兜底 turn 全部提交完成。Phase 3 只是把 LLM 生成的
+        # 措辞替换成更自然的一版，**不允许**因为它的 DB 写失败而让整个 submit 失败
+        # （否则用户会看到 500，重试时又收到「该轮回答已提交」）。
+        # =====================================================================
+        # 返回所需的普通数据必须在 Phase 3 之前固化：
+        # 一旦 Phase 3 rollback，SQLAlchemy 会 expire 本次 session 中的 ORM 对象
+        # （expire_on_commit=False 不影响 rollback 语义），此后再读
+        # session.status / topic_entity.* / next_turn_entity.question 会触发隐式
+        # reload，在 AsyncSession 下可能直接抛 MissingGreenlet。
+        response_status = session.status.value if session.status else SessionStatus.INTERVIEWING.value
+        # 全部取自 Phase 1 已固化的 TopicState（纯 DTO），Phase 3 rollback 后仍可用
+        topic_progress = self._topic_progress(topic_state)
+        session_id_value = session.session_id
+        answer_turn_id = turn.id
+        persisted_question = next_turn_entity.question if next_turn_entity is not None else None
+        phase1_next_turn = next_turn
+
+        final_question: str | None = None
+        if decision.action == DecisionAction.FOLLOW_UP.value:
+            final_question = realized_question or fallback_question or topic_entity.main_question
+        elif decision.action == DecisionAction.NEXT_TOPIC.value and next_topic_entity is not None:
+            final_question = resolve_topic_opening(realized_transition, next_topic_entity.main_question)
+
+        if persisted_question is not None and final_question and persisted_question != final_question:
+            try:
+                await dynamic_interview_persistence_service.update_turn_question(db, next_turn_entity, final_question)
+                await dynamic_interview_persistence_service.update_turn_decision(
+                    db,
+                    turn,
+                    decision.model_copy(update={"next_question": final_question}).model_dump(),
+                )
+                await db.commit()
+                next_turn = dynamic_interview_persistence_service.turn_to_dto(next_turn_entity)
+            except Exception as exc:
+                logger.warning(
+                    "Phase 3 持久化失败，保留 Phase 1 兜底状态: session_id=%s, turn_id=%s, error=%s",
+                    session_id_value,
+                    answer_turn_id,
+                    exc,
+                )
+                await self._safe_rollback(db)
+                # rollback 后不再触碰 ORM：全部回落到 Phase 1 的普通数据/DTO
+                final_question = persisted_question
+                next_turn = phase1_next_turn
+
+        response_decision = decision
+        if final_question:
+            response_decision = decision.model_copy(update={"next_question": final_question})
+
         return DynamicTurnAnswerResponse(
-            status=session.status.value if session.status else SessionStatus.INTERVIEWING.value,
+            status=response_status,
             evaluation=evaluation,
-            decision=decision,
+            decision=response_decision,
             next_turn=next_turn,
             current_topic=current_topic,
-            topic_progress={
-                "answered_turns": len(answered_turns),
-                "max_turns": topic_entity.max_turns,
-                "best_score": topic_entity.best_score,
-                "final_score": topic_entity.final_score,
-            },
+            topic_progress=topic_progress,
             report=report,
+        )
+
+    async def _run_realizer_outside_transaction(
+        self,
+        session: InterviewSessionEntity,
+        operation_type: str,
+        invoke,
+        *,
+        topic_id: int,
+        turn_id: int,
+    ):
+        """执行 QuestionRealizer，**调用期间不访问数据库**。
+
+        QuestionRealizer 最长可能等待 ``question_realizer_timeout_seconds``（默认 25s）。
+        若用 ``_track_operation`` 包裹，metric 的 insert 会在 LLM 等待期间打开一个新的
+        DB transaction 并占用连接；这里改为「先调用、后写 metric（独立 session）」，
+        保证 Phase 2 期间 endpoint 的 session 上没有打开的事务。
+
+        metric 使用**独立短生命周期 session**，不再复用业务 session：
+        SQLAlchemy 的 ``Session.rollback()`` 会 expire 当前 session 中的 ORM 对象
+        （``expire_on_commit=False`` 也救不了），在 AsyncSession 下后续属性访问可能
+        触发隐式 reload 甚至 MissingGreenlet。业务 session 不应因为 metric 写失败
+        而被污染。
+
+        注意：这里只读 ``session`` 上不会变化的标量字段（id / user_id / provider /
+        session_id），不触发懒加载。只捕获 ``Exception``：外部取消（CancelledError）
+        仍然向上抛，不吞掉。
+        """
+        start = time.perf_counter()
+        error_type: str | None = None
+        result = None
+        try:
+            result = await invoke()
+        except Exception as exc:
+            error_type = exc.__class__.__name__
+            logger.warning(
+                "%s 失败，使用兜底: session_id=%s, turn_id=%s, error=%s",
+                operation_type,
+                session.session_id,
+                turn_id,
+                exc,
+            )
+            result = None
+
+        await self._record_operation_metric(
+            session_entity_id=session.id,
+            user_id=session.user_id,
+            llm_provider=session.llm_provider,
+            operation_type=operation_type,
+            topic_id=topic_id,
+            turn_id=turn_id,
+            latency_ms=self._latency_ms(start),
+            success=error_type is None,
+            error_type=error_type,
+        )
+        return result
+
+    @staticmethod
+    async def _record_operation_metric(
+        *,
+        session_entity_id: int,
+        user_id: int,
+        llm_provider: str | None,
+        operation_type: str,
+        topic_id: int | None,
+        turn_id: int | None,
+        latency_ms: int,
+        success: bool,
+        error_type: str | None,
+    ) -> None:
+        """用独立 DB session 写 operation metric，失败只记日志。
+
+        独立 session 隔离了 metric 写失败（例如 flush 报错）对业务 session 的影响，
+        业务状态由 Phase 1 的 commit 保证。
+        """
+        try:
+            from app.database import get_db_context
+
+            async with get_db_context() as metric_db:
+                await dynamic_interview_persistence_service.record_operation_metric(
+                    metric_db,
+                    session_entity_id=session_entity_id,
+                    user_id=user_id,
+                    operation_type=operation_type,
+                    topic_id=topic_id,
+                    turn_id=turn_id,
+                    llm_provider=llm_provider,
+                    latency_ms=latency_ms,
+                    success=success,
+                    error_type=error_type,
+                )
+                await metric_db.commit()
+        except Exception as exc:
+            logger.warning("记录 %s metric 失败（独立 session，不影响主链路）: %s", operation_type, exc)
+
+    @staticmethod
+    async def _safe_rollback(db: AsyncSession) -> None:
+        """best-effort 回滚：回滚本身失败也不能影响调用方。"""
+        try:
+            await db.rollback()
+        except Exception as exc:
+            logger.warning("rollback 失败（不影响返回结果）: %s", exc)
+
+    async def _realize_follow_up_question(
+        self,
+        session: InterviewSessionEntity,
+        *,
+        topic: DynamicTopicDTO,
+        evaluation: DynamicTurnEvaluationDTO,
+        context: InterviewContext,
+        decision: DynamicDecisionDTO,
+        followup_count: int,
+        topic_id: int,
+        turn_id: int,
+    ) -> str:
+        """LLM 生成追问；任何失败都回退到 StrictInterviewPolicy 的模板追问。
+
+        不需要业务 ``db``：Phase 2 期间不访问数据库，metric 走独立 session。
+        """
+        realized = await self._run_realizer_outside_transaction(
+            session,
+            "FOLLOW_UP_REALIZE",
+            lambda: question_realizer.realize_follow_up(context, decision, llm_provider=session.llm_provider),
+            topic_id=topic_id,
+            turn_id=turn_id,
+        )
+        if realized:
+            return realized
+        # fallback 必须与 Policy 的 target 对齐：Policy 说要追指标，
+        # Realizer 失败后也必须继续追指标，不能跳回实现链路。
+        return StrictInterviewPolicy._followup_question(
+            topic,
+            evaluation,
+            followup_count + 1,
+            follow_up_intent=decision.follow_up_intent,
+            target_gap=decision.target_gap,
+            target_coverage_key=decision.target_coverage_key,
+        )
+
+    async def _realize_topic_transition(
+        self,
+        session: InterviewSessionEntity,
+        *,
+        previous_topic: DynamicTopicDTO,
+        previous_question: str,
+        previous_answer: str,
+        next_topic: DynamicTopicDTO,
+        topic_id: int,
+        turn_id: int,
+    ) -> str | None:
+        """LLM 只生成转场语；失败返回 None，调用方直接使用 main_question。
+
+        下一题本身由 Planner 的 ``main_question`` 决定，LLM 不得改写。
+        """
+        context = self.context_builder.build_topic_transition(
+            session_id=session.session_id,
+            interview_mode=session.interview_mode,
+            previous_topic=previous_topic,
+            previous_question=previous_question,
+            previous_answer=previous_answer,
+            next_topic=next_topic,
+        )
+        return await self._run_realizer_outside_transaction(
+            session,
+            "TOPIC_TRANSITION_REALIZE",
+            lambda: question_realizer.realize_topic_transition(context, llm_provider=session.llm_provider),
+            topic_id=topic_id,
+            turn_id=turn_id,
         )
 
     async def get_session_detail(self, db: AsyncSession, session_id: str, user_id: int) -> DynamicSessionDetailDTO:
@@ -2123,7 +3391,18 @@ class DynamicInterviewService:
         )
 
     @staticmethod
-    def _evidence_hash(evidence: str | None) -> str | None:
+    @staticmethod
+    def _evidence_hash(evidence: str | None, refs: list[ResumeEvidenceRefDTO] | None = None) -> str | None:
+        """Topic evidence hash。
+
+        PR4：canonical topic 优先基于 ``sorted(claim_id) + quote`` 生成 ——
+        同一组事实 refs 得到稳定 hash，而不是去 hash 用户可见的拼接文本
+        （拼接文本会随 selector 预算 / 截断策略变化）。
+        legacy / JD path 保留原有逻辑。
+        """
+        if refs:
+            payload = "|".join(f"{ref.claim_id}:{ref.quote}" for ref in sorted(refs, key=lambda item: item.claim_id))
+            return hashlib.sha256(payload.encode("utf-8")).hexdigest()
         if not evidence:
             return None
         return hashlib.sha256(evidence.strip().encode("utf-8")).hexdigest()

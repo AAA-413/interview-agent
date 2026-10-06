@@ -82,6 +82,14 @@ class InterviewSettings(BaseSettings):
     evaluation_batch_size: int = 8
     default_skill_id: str = "java-backend"
     default_difficulty: str = "mid"
+    # LLM 追问/转场生成开关：关闭后链路自动回退到规则模板，保证面试不中断
+    question_realizer_enabled: bool = True
+    # 单次 QuestionRealizer 的超时上限（秒），超时即回退模板，避免卡住答题链路
+    question_realizer_timeout_seconds: float = 25.0
+    # Hybrid Answer Evaluator（LLM 语义评分）：关闭时直接走 heuristic fallback，不是错误
+    answer_evaluator_enabled: bool = True
+    # 单次 answer evaluation 的超时上限（秒），超时即回退 heuristic
+    answer_evaluator_timeout_seconds: float = 12.0
 
 
 class ResumeSettings(BaseSettings):
@@ -98,6 +106,12 @@ class ResumeSettings(BaseSettings):
         "text/plain",
         "text/markdown",
     ]
+
+    # ---- PR4：Canonical Resume 事实抽取 ----
+    # 关闭时跳过 canonical 抽取，继续原 Resume Grading；不能把 analyze 当失败。
+    canonical_extractor_enabled: bool = True
+    # canonical 超时不能让 background task 一直卡住
+    canonical_extractor_timeout_seconds: float = 30.0
 
 
 class GitHubSettings(BaseSettings):

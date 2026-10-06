@@ -19,7 +19,14 @@ from app.modules.interview.models import (
     SessionStatus,
     TopicStatus,
 )
-from app.modules.interview.schemas import DynamicTopicDTO, DynamicTurnDTO, StructuredJD
+from app.modules.interview.schemas import (
+    DynamicTopicDTO,
+    DynamicTurnDTO,
+    StructuredJD,
+    TopicCoverageStateDTO,
+)
+from app.modules.interview.topic_state.tracker import topic_coverage_tracker
+from app.modules.resume.persistence_service import resume_persistence_service
 
 
 def _json_dumps(value: object) -> str:
@@ -164,6 +171,9 @@ class DynamicInterviewPersistenceService:
             source_type=topic.source_type,
             evidence_snippet=topic.evidence_snippet,
             evidence_hash=evidence_hash,
+            resume_evidence_refs_json=_json_dumps([ref.model_dump() for ref in topic.resume_evidence_refs])
+            if topic.resume_evidence_refs
+            else None,
             main_question=topic.main_question,
             topic_order=topic.topic_order,
             status=topic.status,
@@ -201,6 +211,16 @@ class DynamicInterviewPersistenceService:
         db.add(entity)
         await db.flush()
         return entity
+
+    async def update_turn_question(self, db: AsyncSession, turn: InterviewTurnEntity, question: str) -> None:
+        """更新已创建轮次的问题文案（NEXT_TOPIC 自然转场会重写下一题的开场话术）。"""
+        turn.question = question
+        await db.flush()
+
+    async def update_turn_decision(self, db: AsyncSession, turn: InterviewTurnEntity, decision: dict) -> None:
+        """回填当前轮次的 decision（Phase 3 拿到 LLM 生成的问题后补写 next_question）。"""
+        turn.decision_json = _json_dumps(decision)
+        await db.flush()
 
     async def find_session(
         self, db: AsyncSession, session_id: str, user_id: int | None = None
@@ -240,6 +260,31 @@ class DynamicInterviewPersistenceService:
         stmt = select(InterviewTurnEntity).where(
             InterviewTurnEntity.id == turn_id,
             InterviewTurnEntity.session_id == session_entity_id,
+        )
+        if user_id is not None:
+            stmt = stmt.where(InterviewTurnEntity.user_id == user_id)
+        result = await db.execute(stmt)
+        entity = result.scalar_one_or_none()
+        if entity is None:
+            raise BusinessException(ErrorCode.INTERVIEW_QUESTION_NOT_FOUND, "动态面试 turn 不存在")
+        return entity
+
+    async def find_turn_for_update_or_throw(
+        self, db: AsyncSession, turn_id: int, session_entity_id: int, user_id: int | None = None
+    ) -> InterviewTurnEntity:
+        """带行级锁读取 turn，用于「慢 LLM 评分之后」的重复提交再校验。
+
+        LLM evaluation 可能持续数秒，期间同一轮可能已被另一个请求提交；
+        因此真正落库前必须加锁重读并再次确认 ``answer is None``。
+        **锁只在 Phase 1 事务内短暂持有**，绝不在 LLM 等待期间持锁。
+        """
+        stmt = (
+            select(InterviewTurnEntity)
+            .where(
+                InterviewTurnEntity.id == turn_id,
+                InterviewTurnEntity.session_id == session_entity_id,
+            )
+            .with_for_update()
         )
         if user_id is not None:
             stmt = stmt.where(InterviewTurnEntity.user_id == user_id)
@@ -322,6 +367,25 @@ class DynamicInterviewPersistenceService:
         turn.answered_at = datetime.now()
         await db.flush()
 
+    async def find_topic_for_update_or_throw(
+        self, db: AsyncSession, topic_id: int, user_id: int | None = None
+    ) -> InterviewTopicEntity:
+        """带行级锁读取 topic，用于 coverage 累计写入前的重读。
+
+        锁顺序固定为 ``turn → topic``：先锁 turn 并确认 ``answer is None``，
+        再锁 topic 读取「最新的 coverage 状态」做 reduce，避免两个并发请求
+        各自基于过期状态覆盖对方的 coverage。
+        **锁只在 Phase 1 事务内短暂持有**，绝不在 LLM 等待期间持锁。
+        """
+        stmt = select(InterviewTopicEntity).where(InterviewTopicEntity.id == topic_id).with_for_update()
+        if user_id is not None:
+            stmt = stmt.where(InterviewTopicEntity.user_id == user_id)
+        result = await db.execute(stmt)
+        entity = result.scalar_one_or_none()
+        if entity is None:
+            raise BusinessException(ErrorCode.INTERVIEW_QUESTION_NOT_FOUND, "动态面试 topic 不存在")
+        return entity
+
     async def update_topic_after_answer(
         self,
         db: AsyncSession,
@@ -331,10 +395,13 @@ class DynamicInterviewPersistenceService:
         best_score: int | None,
         final_score: int | None,
         completed: bool = False,
+        coverage_state: TopicCoverageStateDTO | None = None,
     ) -> None:
         topic.turn_count = turn_count
         topic.best_score = best_score
         topic.final_score = final_score
+        if coverage_state is not None:
+            topic.coverage_state_json = topic_coverage_tracker.dump_state(coverage_state)
         if completed:
             topic.status = TopicStatus.COMPLETED.value
             topic.completed_at = datetime.now()
@@ -419,6 +486,13 @@ class DynamicInterviewPersistenceService:
             followup_goals=safe_json_loads(entity.followup_goals_json, []),
             exit_criteria=safe_json_loads(entity.exit_criteria_json, []),
             rubric=safe_json_loads(entity.rubric_json, {}),
+            # NULL / 非法 / schema 不兼容的 coverage_state_json 都退化成 initial state，
+            # 不允许脏数据把答题链路打挂。
+            coverage_state=topic_coverage_tracker.parse_state(entity.coverage_state_json, entity.question_type),
+            # PR4：坏 JSON / 非法结构 → []，不能 500。
+            resume_evidence_refs=resume_persistence_service.parse_resume_evidence_refs(
+                entity.resume_evidence_refs_json
+            ),
         )
 
     def turn_to_dto(self, entity: InterviewTurnEntity) -> DynamicTurnDTO:
