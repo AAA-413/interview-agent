@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.modules.resume.canonical.models import ResumeEvidenceRefDTO
 
@@ -134,8 +134,22 @@ class KnowledgeEvidenceRefDTO(BaseModel):
     """一条来自**当前用户**知识库的 source-backed 参考依据。
 
     ``content_excerpt`` 必须逐字来自 ``KnowledgeChunkEntity.content`` 的前缀，
-    **不是** LLM 生成的摘要。``score`` 只表示 retrieval relevance，
-    **不是**「事实正确率」。
+    **不是** LLM 生成的摘要。
+
+    score contract（**单一量纲**）
+    -----------------------------
+    ``score`` 永远是 **bounded retrieval relevance**，即 cosine similarity 裁剪到
+    ``[0.0, 1.0]`` 后的值，语义是「这条 chunk 与问题有多相关」，**不是**「事实正确率」，
+    也不是 CrossEncoder 的原始 logit。
+
+    因此无论 reranker 是否启用：
+
+    ```text
+    knowledge_grounding_min_score 始终作用在同一个 score 量纲上
+    ```
+
+    reranker 只负责**排序**，它的原始模型分数存在 ``rerank_score`` 里
+    （raw、模型相关量纲，仅供排序 / debug，**绝不**用于阈值，也不代表相关性概率）。
     """
 
     evidence_id: str = Field(min_length=1)
@@ -148,12 +162,26 @@ class KnowledgeEvidenceRefDTO(BaseModel):
 
     content_excerpt: str
 
+    #: bounded retrieval relevance ∈ [0.0, 1.0]（cosine similarity 裁剪后）
     score: float
     rank: int
 
     content_hash: str
 
     retrieval_method: Literal["VECTOR", "VECTOR_RERANK"] = "VECTOR"
+
+    #: reranker 原始模型分数（**不保证** [0,1]，仅用于排序 / debug）。
+    #: 为 None 表示该 ref 没有经过 rerank，或者 reranker 未参与本次排序。
+    rerank_score: float | None = None
+
+    @field_validator("score", mode="after")
+    @classmethod
+    def _clamp_score(cls, value: float) -> float:
+        """防御性裁剪：对外契约永远 ``0.0 <= score <= 1.0``。
+
+        不抛异常 —— 宁可裁剪也不能让历史 / 手工数据把整份 evaluation 解析打断。
+        """
+        return min(1.0, max(0.0, float(value)))
 
 
 class KnowledgeGroundingAssessmentDTO(BaseModel):
@@ -172,7 +200,15 @@ class KnowledgeGroundingAssessmentDTO(BaseModel):
 class KnowledgeGroundingDTO(BaseModel):
     """一次 KNOWLEDGE 回答的 grounding 结果（随该 turn 的 evaluation_json 冻结）。
 
-    即使之后用户重新索引知识库，旧 turn 的 factual evidence 仍然可解释。
+    冻结语义（准确表述）
+    -------------------
+    只有 **HYBRID semantic evaluation 成功**时，validation 通过的 grounding 才会随
+    ``evaluation_json`` 冻结下来 —— 因此即使之后用户重新索引知识库，旧 turn 的
+    factual evidence（evidence_id / content_hash / excerpt）仍然可解释。
+
+    ``evaluation_method == HEURISTIC_FALLBACK``（LLM 超时 / 解析失败）时，本对象
+    要么为 ``None``，要么不携带 ``assessment`` —— 系统**绝不**把「RAG 检索到了
+    reference」伪装成「grounded semantic evaluation」，也绝不因此解除 confidence cap。
     """
 
     status: KnowledgeGroundingStatusLiteral = KNOWLEDGE_GROUNDING_NOT_APPLICABLE
@@ -181,7 +217,8 @@ class KnowledgeGroundingDTO(BaseModel):
 
     references: list[KnowledgeEvidenceRefDTO] = Field(default_factory=list)
 
-    #: retrieval relevance（不是 truth probability）
+    #: bounded retrieval relevance ∈ [0.0, 1.0]（= max(references[].score)），
+    #: 只表示「检索相关性」，**不是** truth probability
     retrieval_confidence: float = 0.0
 
     latency_ms: int = 0
@@ -189,6 +226,12 @@ class KnowledgeGroundingDTO(BaseModel):
     error_type: str | None = None
 
     assessment: KnowledgeGroundingAssessmentDTO | None = None
+
+    @field_validator("retrieval_confidence", mode="after")
+    @classmethod
+    def _clamp_retrieval_confidence(cls, value: float) -> float:
+        """防御性裁剪：对外契约永远 ``0.0 <= retrieval_confidence <= 1.0``。"""
+        return min(1.0, max(0.0, float(value)))
 
     def fingerprint_parts(self) -> tuple[str, ...]:
         """SingleFlight 指纹：status + query + sorted(evidence_id, content_hash)。

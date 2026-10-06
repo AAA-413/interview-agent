@@ -35,11 +35,27 @@ context」，绝不参与任何 ``rag_score * 0.3 + llm_score * 0.7`` 式的加�
 检索必须在**业务 DB transaction 之外**执行
 -------------------------------------------
 ```text
-G0  判断适用性 + deterministic query（0 DB）
+G0   判断适用性 + deterministic query（0 DB）
+G0.5 独立短 DB read session：user 是否有 COMPLETED KB → 立即关闭（无 → NO_SOURCE）
 G1  embedding（0 DB transaction）
 G2  独立短 DB read session：user-scoped vector retrieval → materialize DTO → 关闭
 G3  rerank / filter（0 DB transaction）
 ```
+
+``NO_SOURCE`` 必须在 embedding **之前**确定：用户根本没有知识库时不应该白调一次
+embedding，更不应该因为 embedding provider 恰好故障就把语义正确的 ``NO_SOURCE``
+报成 ``ERROR``。
+
+score contract（VECTOR / VECTOR_RERANK 同一量纲）
+-------------------------------------------------
+```text
+score = bounded cosine relevance ∈ [0, 1]   ← threshold / retrieval_confidence 只看它
+rerank_score = CrossEncoder 原始分数          ← 只决定顺序，绝不参与阈值
+```
+
+``knowledge_grounding_min_score`` 的含义**不随 reranker 是否启用而改变**；这是关键
+不变式：否则同一份配置在装了 / 没装 ``sentence-transformers`` 的机器上会有两套数学
+含义（cosine 阈值 vs 原始 logit 阈值），READY / NO_HIT 语义就不稳定了。
 
 整个检索受 ``knowledge_grounding_timeout_seconds`` 约束，任何异常都降级为
 ``status=ERROR``，**绝不阻止 answer submit**。
@@ -174,21 +190,27 @@ class KnowledgeGroundingService:
     # ----------------------------------------------------------------- internal
 
     async def _retrieve_with_query(self, snapshot: EvaluationSnapshot, query: str) -> KnowledgeGroundingDTO:
+        # ---- G0.5：source availability（独立短 DB session，必须在 embedding 之前）----
+        # 用户没有任何 COMPLETED KB 时直接 NO_SOURCE：既符合状态语义，也避免
+        # 「没有知识库却调用 embedding」和「embedding 故障把 NO_SOURCE 报成 ERROR」。
+        if not await self._user_has_completed_source(snapshot.user_id):
+            return KnowledgeGroundingDTO(status=KNOWLEDGE_GROUNDING_NO_SOURCE, query=query)
+
         # ---- G1：embedding（0 DB transaction）----
         # embed_text 是同步接口（可能含网络调用），放到线程里，且必须在打开
         # AsyncSession transaction 之前完成。
         query_embedding = await asyncio.to_thread(self._vector_service().embed_text, query)
 
         # ---- G2：独立短 DB read session → materialize plain DTO → 关闭 ----
-        candidates, has_source = await self._fetch_candidates(snapshot.user_id, query_embedding)
-        if not has_source:
-            return KnowledgeGroundingDTO(status=KNOWLEDGE_GROUNDING_NO_SOURCE, query=query)
+        candidates = await self._fetch_candidates(snapshot.user_id, query_embedding)
         if not candidates:
             return KnowledgeGroundingDTO(status=KNOWLEDGE_GROUNDING_NO_HIT, query=query)
 
         # ---- G3：rerank（0 DB transaction，DB session 已关闭）----
         ranked, method = await self._rerank_candidates(query, candidates)
 
+        # 阈值永远作用在 bounded cosine relevance（``score``）上，
+        # 与 reranker 是否启用无关（见模块 docstring 的 score contract）。
         threshold = float(settings.interview.knowledge_grounding_min_score)
         top_k = max(1, int(settings.interview.knowledge_grounding_top_k))
         kept = [item for item in ranked if item.score >= threshold][:top_k]
@@ -206,9 +228,28 @@ class KnowledgeGroundingService:
             retrieval_confidence=round(max(item.score for item in references), 4),
         )
 
-    async def _fetch_candidates(
-        self, user_id: int, query_embedding: list[float]
-    ) -> tuple[list[KnowledgeEvidenceRefDTO], bool]:
+    async def _user_has_completed_source(self, user_id: int) -> bool:
+        """独立短 read session：当前 user 是否存在 COMPLETED KB。
+
+        **必须在 embedding 之前调用**，且不能与后续 retrieval 共用一个 session
+        （否则 embedding 会落在一个已经打开的 DB session 之后，破坏 transaction 不变式）。
+        """
+        from app.common.model import AsyncTaskStatus
+        from app.database import get_db_context
+        from app.modules.knowledge_base.models import KnowledgeBaseEntity
+
+        stmt = (
+            select(KnowledgeBaseEntity.id)
+            .where(
+                KnowledgeBaseEntity.user_id == user_id,
+                KnowledgeBaseEntity.index_status == AsyncTaskStatus.COMPLETED,
+            )
+            .limit(1)
+        )
+        async with get_db_context() as db:
+            return bool(list((await db.execute(stmt)).scalars().all()))
+
+    async def _fetch_candidates(self, user_id: int, query_embedding: list[float]) -> list[KnowledgeEvidenceRefDTO]:
         """独立短 read session：user-scoped 检索 + JOIN，一次性取回 KB 名称（避免 N+1）。
 
         **任何 evidence 只能来自当前 session.user_id 的 KB。**
@@ -220,14 +261,6 @@ class KnowledgeGroundingService:
         candidate_k = max(1, int(settings.interview.knowledge_grounding_candidate_k))
 
         async with get_db_context() as db:
-            source_stmt = select(KnowledgeBaseEntity.id).where(
-                KnowledgeBaseEntity.user_id == user_id,
-                KnowledgeBaseEntity.index_status == AsyncTaskStatus.COMPLETED,
-            )
-            source_ids = list((await db.execute(source_stmt)).scalars().all())
-            if not source_ids:
-                return [], False
-
             stmt = (
                 select(
                     KnowledgeChunkEntity.id,
@@ -267,12 +300,21 @@ class KnowledgeGroundingService:
                     retrieval_method="VECTOR",
                 )
             )
-        return self._deduplicate(candidates), True
+        return self._deduplicate(candidates)
 
     async def _rerank_candidates(
         self, query: str, candidates: list[KnowledgeEvidenceRefDTO]
     ) -> tuple[list[KnowledgeEvidenceRefDTO], str]:
-        """rerank 只对 plain DTO 操作（DB session 已关闭）。reranker 不可用不算 ERROR。"""
+        """rerank 只对 plain DTO 操作（DB session 已关闭）。reranker 不可用不算 ERROR。
+
+        契约：reranker **只改顺序**。它返回的原始 CrossEncoder 分数写进
+        ``rerank_score``，``score`` 始终保持 G2 的 bounded cosine relevance ——
+        这样阈值与 ``retrieval_confidence`` 的量纲不随 reranker 开关漂移。
+
+        调用时带 ``raise_on_error=True``：真实 ``RerankService`` 内部会吞掉
+        ``model.predict()`` 异常并降级返回原列表，若不 strict，我们会把一次**失败**的
+        rerank 谎报成 ``retrieval_method=VECTOR_RERANK``（provenance 错误）。
+        """
         rerank = self._rerank_service()
         if rerank is None or not getattr(rerank, "enabled", False):
             # reranker disabled / 模型缺失 → 按 vector score 排序，**不是** ERROR
@@ -292,7 +334,7 @@ class KnowledgeGroundingService:
             )
             for item in candidates
         ]
-        reranked = await rerank.rerank(query, payload, len(candidates))
+        reranked = await rerank.rerank(query, payload, len(candidates), raise_on_error=True)
         by_chunk = {item.chunk_id: item for item in candidates}
         merged: list[KnowledgeEvidenceRefDTO] = []
         seen: set[int] = set()
@@ -301,10 +343,11 @@ class KnowledgeGroundingService:
             if original is None or item.chunk_id in seen:
                 continue
             seen.add(item.chunk_id)
-            merged.append(original.model_copy(update={"score": round(float(item.score), 4)}))
+            # item.score 来自 reranker（rag_service DTO 的字段），语义 = 原始模型分
+            merged.append(original.model_copy(update={"rerank_score": round(float(item.score), 6)}))
         if not merged:
             return self._stable_sort(candidates), "VECTOR"
-        return self._stable_sort(merged), "VECTOR_RERANK"
+        return self._ordered_by_rerank(merged), "VECTOR_RERANK"
 
     # ------------------------------------------------------------------ helpers
 
@@ -327,13 +370,16 @@ class KnowledgeGroundingService:
 
     @staticmethod
     def _cosine_score(query_embedding: list[float], chunk_embedding) -> float:
-        """retrieval relevance = cosine similarity（越大越相关）。
+        """retrieval relevance = cosine similarity，**裁剪到 [0.0, 1.0]**（越大越相关）。
 
         这是 **retrieval relevance**，**不是** truth probability：0.91 只表示
         「这条 chunk 与问题更相关」，绝不表示「事实正确率 91%」。
 
         注意：SQL 侧用 pgvector 的 ``cosine_distance``（= 1 - similarity）排序取最近邻，
         因此 Python 侧必须换算回 similarity 才能与 ``min_score`` 阈值同一量纲。
+
+        裁剪到 ``[0, 1]`` 是 score contract 的一部分（负相似度 = 不相关 = 0），
+        保证阈值语义与 ``KnowledgeEvidenceRefDTO.score`` 的对外契约一致。
         """
         if chunk_embedding is None:
             return 0.0
@@ -347,7 +393,7 @@ class KnowledgeGroundingService:
         right_norm = sum(right[i] * right[i] for i in range(size)) ** 0.5
         if left_norm == 0 or right_norm == 0:
             return 0.0
-        return dot / (left_norm * right_norm)
+        return min(1.0, max(0.0, dot / (left_norm * right_norm)))
 
     @staticmethod
     def _deduplicate(items: list[KnowledgeEvidenceRefDTO]) -> list[KnowledgeEvidenceRefDTO]:
@@ -364,6 +410,22 @@ class KnowledgeGroundingService:
     def _stable_sort(items: list[KnowledgeEvidenceRefDTO]) -> list[KnowledgeEvidenceRefDTO]:
         """score desc → knowledge_base_id → chunk_id（deterministic）。"""
         return sorted(items, key=lambda item: (-item.score, item.knowledge_base_id, item.chunk_id))
+
+    @staticmethod
+    def _ordered_by_rerank(items: list[KnowledgeEvidenceRefDTO]) -> list[KnowledgeEvidenceRefDTO]:
+        """按 reranker 信号排序（rerank_score desc → kb_id → chunk_id），deterministic。
+
+        ``score``（阈值量纲）不参与这里的排序键，避免把 raw logit 混进 relevance 语义；
+        没有拿到 rerank_score 的条目退回用 cosine 排序。
+        """
+        return sorted(
+            items,
+            key=lambda item: (
+                -(item.rerank_score if item.rerank_score is not None else item.score),
+                item.knowledge_base_id,
+                item.chunk_id,
+            ),
+        )
 
 
 knowledge_grounding_service = KnowledgeGroundingService()

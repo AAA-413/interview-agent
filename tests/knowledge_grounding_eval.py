@@ -255,6 +255,69 @@ async def main() -> int:
     finally:
         settings.interview.knowledge_grounding_enabled = True
 
+    # 9. score contract：VECTOR / VECTOR_RERANK 必须同一量纲（不依赖 DB / 不做真实调用）
+    from app.modules.interview.evaluation.knowledge_grounding import KnowledgeGroundingService
+    from app.modules.knowledge_base.rerank_service import RerankService
+    from app.modules.knowledge_base.schemas import RagReferenceDTO
+
+    class _RawScoreReranker:
+        """模拟 CrossEncoder：raw 分数可 > 1，与 cosine 完全不同量纲。"""
+
+        enabled = True
+
+        async def rerank(self, _query, chunks, top_k, **_kwargs):
+            for chunk in chunks:
+                chunk.score = 4.5 if chunk.chunk_id == 2 else 0.05
+            return sorted(chunks, key=lambda item: item.score, reverse=True)[:top_k]
+
+    score_service = KnowledgeGroundingService(rerank_service=_RawScoreReranker())
+    refs = [
+        _ref().model_copy(update={"chunk_id": 1, "score": 0.72, "rank": 0}),
+        _ref().model_copy(update={"chunk_id": 2, "score": 0.30, "rank": 0}),
+    ]
+    ordered, method = await score_service._rerank_candidates("redis", [item.model_copy() for item in refs])
+    check("rerank only changes order", method == "VECTOR_RERANK" and [r.chunk_id for r in ordered] == [2, 1])
+    check("score stays bounded after rerank", all(0.0 <= r.score <= 1.0 for r in ordered))
+    check("raw rerank score kept separately", ordered[0].rerank_score == 4.5)
+    kept = [r for r in ordered if r.score >= settings.interview.knowledge_grounding_min_score]
+    check("threshold follows bounded relevance, not raw logit", [r.chunk_id for r in kept] == [1])
+
+    # 注意：用构造（走 validator）而不是 model_copy —— model_copy 不走校验
+    ref_kwargs = {
+        "evidence_id": "ke_a",
+        "knowledge_base_id": 1,
+        "chunk_id": 1,
+        "source_name": "KB#1",
+        "content_excerpt": CHUNK,
+        "rank": 1,
+        "content_hash": content_hash_of(CHUNK),
+    }
+    check("dto clamps out-of-range score", KnowledgeEvidenceRefDTO(**{**ref_kwargs, "score": 4.5}).score == 1.0)
+    check(
+        "dto clamps out-of-range retrieval_confidence",
+        KnowledgeGroundingDTO(retrieval_confidence=9.9).retrieval_confidence == 1.0,
+    )
+
+    class _BoomModel:
+        def predict(self, _pairs):
+            raise RuntimeError("boom")
+
+    real_rerank = RerankService.__new__(RerankService)
+    real_rerank.model_name, real_rerank.model, real_rerank._enabled = "fake", _BoomModel(), True
+    payload = [
+        RagReferenceDTO(
+            chunk_id=1, chunk_index=0, title="t", content="c", content_preview="c", score=0.5, source_name="KB#1"
+        )
+    ]
+    compat = await real_rerank.rerank("q", list(payload), 4)
+    check("real rerank keeps legacy silent fallback", compat == payload)
+    strict_raised = False
+    try:
+        await real_rerank.rerank("q", list(payload), 4, raise_on_error=True)
+    except RuntimeError:
+        strict_raised = True
+    check("real rerank strict mode propagates failure", strict_raised)
+
     passed = sum(1 for _, ok, _ in _results if ok)
     total = len(_results)
     for name, ok, detail in _results:

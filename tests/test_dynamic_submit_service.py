@@ -20,6 +20,7 @@ import json
 import pytest
 
 from app.common.exception import BusinessException
+from app.config import settings
 from app.modules.interview.dynamic_persistence_service import dynamic_interview_persistence_service as persistence
 from app.modules.interview.dynamic_service import (
     DynamicAnswerEvaluationService,
@@ -1238,3 +1239,57 @@ async def test_grounding_returns_not_applicable_keeps_snapshot_clean(monkeypatch
     evaluator = _StubHybridEvaluator()
     await _submit(_make_service(monkeypatch, evaluator), _FakeDb(), turn_id=1)
     assert evaluator.snapshot.knowledge_grounding is None
+
+
+async def test_answer_evaluator_disabled_skips_knowledge_retrieval(monkeypatch):
+    """PR #10 review：answer evaluator 总开关关闭 → 完全不检索 knowledge grounding。
+
+    semantic LLM 不会再跑，检索出来的 factual context 没有任何消费者；
+    若还去检索，``APP_INTERVIEW_ANSWER_EVALUATOR_ENABLED=false`` 就不再是
+    「直接回到规则评分」的完整低成本 rollback path。
+    """
+    session, topic, turns = _knowledge_topic(*_build_state())
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+    monkeypatch.setattr(settings.interview, "answer_evaluator_enabled", False)
+
+    calls: list = []
+
+    async def _must_not_run(snapshot):
+        calls.append(snapshot)
+        raise AssertionError("answer evaluator 关闭时不得检索 knowledge grounding")
+
+    _patch_grounding(monkeypatch, _must_not_run)
+
+    evaluator = _StubHybridEvaluator()
+    response = await _submit(_make_service(monkeypatch, evaluator), _FakeDb(), turn_id=1)
+
+    assert calls == [], "retriever 必须 0 次调用"
+    assert fake.turns[1].answer is not None, "answer 必须照常落库"
+    assert response.evaluation.evaluation_method == "HEURISTIC_FALLBACK"
+    assert response.evaluation.confidence == 0.35
+    assert evaluator.snapshot is not None
+    assert evaluator.snapshot.knowledge_grounding is None
+
+
+async def test_answer_evaluator_enabled_still_retrieves(monkeypatch):
+    """开关恢复后行为回到检索（避免上一条测试污染配置）。"""
+    session, topic, turns = _knowledge_topic(*_build_state())
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+    monkeypatch.setattr(settings.interview, "answer_evaluator_enabled", True)
+
+    calls: list = []
+
+    async def _retrieve(_snapshot):
+        calls.append(_snapshot)
+        return _grounding_ready()
+
+    _patch_grounding(monkeypatch, _retrieve)
+
+    evaluator = _StubHybridEvaluator()
+    await _submit(_make_service(monkeypatch, evaluator), _FakeDb(), turn_id=1)
+    assert len(calls) == 1
+    assert evaluator.snapshot.knowledge_grounding is not None

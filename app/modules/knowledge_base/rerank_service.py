@@ -43,7 +43,14 @@ class RerankService:
         """重排序是否启用"""
         return self._enabled
 
-    async def rerank(self, query: str, chunks: List[RagReferenceDTO], top_k: int) -> List[RagReferenceDTO]:
+    async def rerank(
+        self,
+        query: str,
+        chunks: List[RagReferenceDTO],
+        top_k: int,
+        *,
+        raise_on_error: bool = False,
+    ) -> List[RagReferenceDTO]:
         """
         使用 Cross-Encoder 模型重排序
 
@@ -51,12 +58,24 @@ class RerankService:
             query: 用户查询
             chunks: 候选文档片段
             top_k: 返回前 K 个结果
+            raise_on_error: 默认 False，保持 RAG 产品路径既有行为
+                （重排序失败 → 静默降级返回原始顺序）。设为 True 时不再吞异常 ——
+                调用方（如 PR5 Knowledge Grounding）需要知道 rerank 是否真的成功，
+                否则会把一次失败静默谎报成 ``VECTOR_RERANK``。
 
         Returns:
             重排序后的文档片段（按相关性降序）
+
+        Note:
+            ``chunk.score`` 被写成 **CrossEncoder 原始模型分数**，它**不是**
+            ``[0, 1]`` 的相关性概率，与 cosine similarity 不同量纲。需要 bounded
+            relevance 的调用方必须自己维护 score 域（见
+            ``app/modules/interview/evaluation/knowledge_grounding.py``）。
         """
         if not self._enabled or not self.model:
             logger.debug("重排序未启用，跳过")
+            if raise_on_error:
+                raise RuntimeError("rerank service is not available")
             return chunks[:top_k]
 
         if not chunks:
@@ -87,6 +106,10 @@ class RerankService:
             return reranked
 
         except Exception as e:
+            if raise_on_error:
+                # strict：把失败暴露给调用方，由调用方决定降级策略
+                logger.error(f"重排序失败（strict，向上抛出）: {e}")
+                raise
             logger.error(f"重排序失败: {e}，降级返回原始结果")
             return chunks[:top_k]
 

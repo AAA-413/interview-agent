@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
+import re
 
 import pytest
 
@@ -52,6 +54,7 @@ from app.modules.interview.schemas import (
     KnowledgeGroundingAssessmentDTO,
     KnowledgeGroundingDTO,
 )
+from app.modules.knowledge_base.schemas import RagReferenceDTO
 
 # ---------------------------------------------------------------------------
 # fixtures / fakes
@@ -108,7 +111,7 @@ class _FakeRerankService:
         self.error = error
         self.calls = 0
 
-    async def rerank(self, query, chunks, top_k):
+    async def rerank(self, query, chunks, top_k, **kwargs):
         self.calls += 1
         if self.error is not None:
             raise self.error
@@ -469,25 +472,106 @@ async def test_b6_graph_scope_kb_id_owner_bypass_blocked(monkeypatch):
     assert "knowledge_bases.id = " in str(session.statements[0])
 
 
-async def test_b7_graph_source_name_never_leaks_other_kb(monkeypatch):
-    """graph 检索出的 chunk 也必须来自已授权 KB（chunk 查询带 in_(owned_ids)）。"""
+def _literal_sql(stmt) -> str:
+    """把 statement 渲染成带字面量的单行 SQL，便于断言 IN (...) 里的具体 id。"""
+    try:
+        text = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+    except Exception:  # pragma: no cover - 极端 statement 无法 literal_binds
+        text = str(stmt)
+    return " ".join(text.split())
+
+
+def _parse_in_kb_ids(sql: str) -> set[int] | None:
+    """从 ``knowledge_chunks.knowledge_base_id IN (5, 7)`` 里取出允许的 kb id。
+
+    返回 ``None`` 表示语句里**根本没有** owned-KB 过滤（应视为「不过滤」，即泄漏）。
+    """
+    match = re.search(r"knowledge_chunks\.knowledge_base_id IN \(([^)]*)\)", sql)
+    if not match:
+        return None
+    return {int(item) for item in re.findall(r"\d+", match.group(1))}
+
+
+class _FakeEntity:
+    def __init__(self, name: str):
+        self.name = name
+
+
+class _FakeTriple:
+    def __init__(self, triple_id: int, subject: str, obj: str):
+        self.id = triple_id
+        self.subject_entity = _FakeEntity(subject)
+        self.object_entity = _FakeEntity(obj)
+
+
+class _GuardedGraphSession(_CapturingSession):
+    """迷你 DB：按 chunk 语句里 ``knowledge_base_id IN (...)`` 过滤返回的 chunk。
+
+    与直接给死结果不同 —— 如果被测代码忘了 owned-KB 过滤（SQL 里没有 IN），
+    这里会把**越权 KB** 的 chunk 一并返回，测试就能真正抓到泄漏，
+    而不是只断言「执行过一条 SQL」。
+    """
+
+    def __init__(self, result_sets: list[list], chunks_by_kb: dict[int, list]):
+        super().__init__(result_sets)
+        self.chunks_by_kb = chunks_by_kb
+
+    async def execute(self, stmt):
+        self.statements.append(stmt)
+        sql = _literal_sql(stmt)
+        if "knowledge_chunks" in sql:
+            allowed = _parse_in_kb_ids(sql)
+            leaked = [
+                chunk
+                for kb_id, chunks in self.chunks_by_kb.items()
+                if allowed is None or kb_id in allowed
+                for chunk in chunks
+            ]
+            return _FakeResult(leaked)
+        rows = self.result_sets.pop(0) if self.result_sets else []
+        return _FakeResult(rows)
+
+
+async def test_b7_graph_chunk_query_is_restricted_to_owned_kbs(monkeypatch):
+    """graph 检索出的 chunk 也必须来自已授权 KB。
+
+    旧版本这条测试是**假阳性**：``fake_two_hop`` 返回 ``[]``，``_graph_search`` 在
+    ``if not unique_triples: return []`` 处提前结束，那条 chunk SELECT 从未执行，
+    兜底断言 ``len(session.statements) >= 1`` 又恒真。
+
+    现在让 two_hop 返回一个真实 triple，强制走到 chunk SELECT，并用
+    ``_GuardedGraphSession`` 模拟「不过滤就泄漏」的 DB 语义。
+    """
     service = _cross_kb()
 
     async def fake_extract(_question):
         return ["Redis"]
 
     async def fake_two_hop(_db, entity_name, kb_id=None, kb_ids=None):
-        return []
+        assert kb_ids == [5], "跨 KB 时 triples 范围必须收敛到 owned KB 列表"
+        return [_FakeTriple(1, "Redis", "MULTI")]
 
     monkeypatch.setattr(service, "_extract_entities", fake_extract)
     monkeypatch.setattr(evaluation_guard_two_hop(monkeypatch), "query_two_hop", fake_two_hop)
-    session = _CapturingSession([[5]])
+
+    authorized = _FakeChunk(11, 5, "Redis MULTI 事务语义说明。")
+    unauthorized = _FakeChunk(99, 999, "Redis MULTI 是另一个用户的私有笔记。")
+    session = _GuardedGraphSession([[5]], {5: [authorized], 999: [unauthorized]})
     _patch_db(monkeypatch, session)
-    await service._graph_search(session, 7, "redis", 4)
-    assert (
-        "knowledge_chunks.knowledge_base_id IN" in str(session.statements[0]).replace("\n", " ")
-        or len(session.statements) >= 1
-    )
+
+    results = await service._graph_search(session, 7, "redis", 4)
+
+    # 1) 必须真的执行了「owned kb ids + chunk select」两条语句（不再是恒真兜底）
+    assert len(session.statements) == 2, f"应执行 owned_ids + chunk select，实际 {len(session.statements)}"
+    chunk_sql = _literal_sql(session.statements[-1])
+    assert "knowledge_chunks.knowledge_base_id IN" in chunk_sql, "chunk 查询必须限制在 owned KB 内"
+    assert "knowledge_chunks.knowledge_base_id IN (5)" in chunk_sql
+
+    # 2) 语义断言：越权 KB 的 chunk 绝不能出现在结果里
+    assert results, "授权 KB 的 chunk 应该被返回"
+    assert {item.chunk_id for item in results} == {11}
+    assert all(item.source_name != "KB#999" for item in results)
+    assert not any("另一个用户" in item.content for item in results)
 
 
 # ===========================================================================
@@ -1082,3 +1166,304 @@ def test_grounding_fingerprint_is_stable_and_content_sensitive():
     g3 = KnowledgeGroundingDTO(status=KNOWLEDGE_GROUNDING_READY, query="q", references=[ref_b])
     assert g1.fingerprint_parts() == g2.fingerprint_parts()
     assert g1.fingerprint_parts() != g3.fingerprint_parts()
+
+
+# ===========================================================================
+# R. Score contract —— VECTOR / VECTOR_RERANK 必须同一量纲
+# ===========================================================================
+
+
+def _unit(cosine: float) -> list[float]:
+    """与 query 向量 ``[1, 0]`` 的 cosine 恰好等于 ``cosine`` 的二维单位向量。"""
+    return [cosine, math.sqrt(max(0.0, 1.0 - cosine * cosine))]
+
+
+def _chunk_row_vec(chunk_id: int, kb_id: int, content: str, embedding, name: str = "Redis 官方学习笔记"):
+    return (chunk_id, kb_id, "Redis", content, embedding, name)
+
+
+def _rag_ref(chunk_id: int = 1) -> RagReferenceDTO:
+    return RagReferenceDTO(
+        chunk_id=chunk_id,
+        chunk_index=0,
+        title="Redis",
+        content="Redis MULTI starts a transaction block.",
+        content_preview="Redis MULTI starts a transaction block.",
+        score=0.5,
+        source_name="KB#1",
+    )
+
+
+async def test_r1_vector_cosine_above_threshold_is_ready(monkeypatch):
+    cosine = 0.72
+    assert cosine >= settings.interview.knowledge_grounding_min_score
+    service, _ = _service(
+        monkeypatch,
+        rows=[_chunk_row_vec(1, 1, CHUNK_A, _unit(cosine))],
+        sources=[1],
+        vector=_FakeVectorService(vector=[1.0, 0.0]),
+    )
+    grounding = await service.retrieve(_snapshot("KNOWLEDGE"))
+    assert grounding.status == KNOWLEDGE_GROUNDING_READY
+    ref = grounding.references[0]
+    assert ref.retrieval_method == "VECTOR"
+    assert ref.rerank_score is None
+    assert ref.score == pytest.approx(cosine, abs=1e-9)
+    assert grounding.retrieval_confidence == pytest.approx(cosine, abs=1e-9)
+
+
+async def test_r2_raw_cross_encoder_score_never_becomes_score_or_confidence(monkeypatch):
+    """Case R2：raw CrossEncoder score 可能 > 1，绝不能流进 score / retrieval_confidence。"""
+    service, _ = _service(
+        monkeypatch,
+        rows=[_chunk_row(1, 1, CHUNK_A)],
+        sources=[1],
+        rerank=_FakeRerankService(enabled=True, scores={1: 4.5}),
+        vector=_FakeVectorService(vector=[1.0, 0.0, 0.0]),
+    )
+    grounding = await service.retrieve(_snapshot("KNOWLEDGE"))
+    ref = grounding.references[0]
+    assert grounding.status == KNOWLEDGE_GROUNDING_READY
+    assert ref.retrieval_method == "VECTOR_RERANK"
+    assert ref.rerank_score == pytest.approx(4.5), "raw 分数应单独保存在 rerank_score"
+    assert 0.0 <= ref.score <= 1.0, f"score 必须 bounded，实际 {ref.score}"
+    assert 0.0 <= grounding.retrieval_confidence <= 1.0
+
+
+async def test_r3_threshold_follows_bounded_relevance_not_raw_logit(monkeypatch):
+    """Case R3：raw logit 与 cosine 冲突时，阈值必须按 cosine 判定。"""
+    rows = [
+        _chunk_row_vec(1, 1, CHUNK_A, _unit(0.72)),  # cosine 过阈值
+        _chunk_row_vec(2, 1, CHUNK_B, _unit(0.30)),  # cosine 不过阈值
+    ]
+    service, _ = _service(
+        monkeypatch,
+        rows=rows,
+        sources=[1],
+        # reranker 明确把 chunk 2 排在前面且给 4.5 分（raw 量纲完全不能比）
+        rerank=_FakeRerankService(enabled=True, scores={1: 0.05, 2: 4.5}),
+        vector=_FakeVectorService(vector=[1.0, 0.0]),
+    )
+    grounding = await service.retrieve(_snapshot("KNOWLEDGE"))
+    assert grounding.status == KNOWLEDGE_GROUNDING_READY
+    assert [r.chunk_id for r in grounding.references] == [1], "低 cosine 的 chunk 必须被 drop"
+    assert grounding.references[0].score == pytest.approx(0.72, abs=1e-9)
+
+
+async def test_r4_rerank_toggle_does_not_flip_ready_or_no_hit(monkeypatch):
+    """Case R4：同一明显相关 chunk，reranker 开关不得让 READY ↔ NO_HIT。"""
+    rows = [_chunk_row_vec(1, 1, CHUNK_A, _unit(0.72))]
+    off_service, _ = _service(
+        monkeypatch,
+        rows=list(rows),
+        sources=[1],
+        rerank=_FakeRerankService(enabled=False),
+        vector=_FakeVectorService(vector=[1.0, 0.0]),
+    )
+    off = await off_service.retrieve(_snapshot("KNOWLEDGE"))
+
+    on_service, _ = _service(
+        monkeypatch,
+        rows=list(rows),
+        sources=[1],
+        rerank=_FakeRerankService(enabled=True, scores={1: 3.0}),
+        vector=_FakeVectorService(vector=[1.0, 0.0]),
+    )
+    on = await on_service.retrieve(_snapshot("KNOWLEDGE"))
+
+    assert off.status == on.status == KNOWLEDGE_GROUNDING_READY
+    assert [r.evidence_id for r in off.references] == [r.evidence_id for r in on.references]
+    assert [r.score for r in off.references] == [r.score for r in on.references]
+    assert {r.retrieval_method for r in off.references} == {"VECTOR"}
+    assert {r.retrieval_method for r in on.references} == {"VECTOR_RERANK"}
+
+
+def test_score_contract_clamps_out_of_range_values():
+    """防御性契约：DTO 层永远不暴露越界的 score / retrieval_confidence。"""
+    assert KnowledgeEvidenceRefDTO(**{**_ref_kwargs(), "score": 4.5}).score == 1.0
+    assert KnowledgeEvidenceRefDTO(**{**_ref_kwargs(), "score": -2.0}).score == 0.0
+    assert KnowledgeGroundingDTO(retrieval_confidence=9.9).retrieval_confidence == 1.0
+    assert KnowledgeGroundingDTO(retrieval_confidence=-1.0).retrieval_confidence == 0.0
+
+
+def _ref_kwargs() -> dict:
+    return {
+        "evidence_id": "ke_a",
+        "knowledge_base_id": 1,
+        "chunk_id": 1,
+        "source_name": "KB#1",
+        "content_excerpt": CHUNK_A,
+        "rank": 1,
+        "content_hash": content_hash_of(CHUNK_A),
+    }
+
+
+# ===========================================================================
+# S. 真实 RerankService 语义（不是「fake 直接 raise」）
+# ===========================================================================
+
+
+class _BrokenCrossEncoder:
+    def predict(self, _pairs):
+        raise RuntimeError("cross encoder exploded")
+
+
+def _real_rerank_service(*, enabled: bool = True, model=None):
+    """真实 ``RerankService`` 实例，但绕开 ``__init__`` 的模型加载。"""
+    from app.modules.knowledge_base.rerank_service import RerankService
+
+    service = RerankService.__new__(RerankService)
+    service.model_name = "fake-cross-encoder"
+    service.model = model
+    service._enabled = enabled
+    return service
+
+
+async def test_real_rerank_service_default_mode_keeps_silent_fallback():
+    """普通 RAG 产品路径行为不变：rerank 失败 → 静默降级返回原始顺序。"""
+    service = _real_rerank_service(model=_BrokenCrossEncoder())
+    payload = [_rag_ref(1)]
+    result = await service.rerank("redis", list(payload), 4)
+    assert result == payload, "默认模式必须保持既有 fallback 行为"
+    assert result[0].score == 0.5, "fallback 不得改写 score"
+
+
+async def test_real_rerank_service_strict_mode_raises():
+    """strict 模式：真实 RerankService 内部 catch 的异常必须重新抛出。"""
+    service = _real_rerank_service(model=_BrokenCrossEncoder())
+    with pytest.raises(RuntimeError, match="cross encoder exploded"):
+        await service.rerank("redis", [_rag_ref(1)], 4, raise_on_error=True)
+
+
+async def test_real_rerank_service_strict_mode_raises_when_unavailable():
+    service = _real_rerank_service(enabled=False, model=None)
+    with pytest.raises(RuntimeError):
+        await service.rerank("redis", [_rag_ref(1)], 4, raise_on_error=True)
+
+
+async def test_real_rerank_failure_is_error_not_vector_rerank(monkeypatch):
+    """Grounding 走 strict：真实 reranker 失败必须是 ERROR，不得谎报 VECTOR_RERANK。"""
+    service, _ = _service(
+        monkeypatch,
+        rows=[_chunk_row(1, 1, CHUNK_A)],
+        sources=[1],
+        rerank=_real_rerank_service(model=_BrokenCrossEncoder()),
+    )
+    grounding = await service.retrieve(_snapshot("KNOWLEDGE"))
+    assert grounding.status == KNOWLEDGE_GROUNDING_ERROR
+    assert grounding.error_type == "RuntimeError"
+    assert grounding.references == []
+    assert grounding.retrieval_confidence == 0.0
+
+
+async def test_real_rerank_success_marks_vector_rerank(monkeypatch):
+    """正常路径：真实 RerankService + 可用 model → VECTOR_RERANK 且 score 仍 bounded。"""
+
+    class _RankingModel:
+        def predict(self, pairs):
+            return [7.5 for _ in pairs]
+
+    service, _ = _service(
+        monkeypatch,
+        rows=[_chunk_row(1, 1, CHUNK_A)],
+        sources=[1],
+        rerank=_real_rerank_service(model=_RankingModel()),
+        vector=_FakeVectorService(vector=[1.0, 0.0, 0.0]),
+    )
+    grounding = await service.retrieve(_snapshot("KNOWLEDGE"))
+    ref = grounding.references[0]
+    assert grounding.status == KNOWLEDGE_GROUNDING_READY
+    assert ref.retrieval_method == "VECTOR_RERANK"
+    assert ref.rerank_score == pytest.approx(7.5)
+    assert 0.0 <= ref.score <= 1.0
+
+
+async def test_legacy_rerank_signature_is_not_required(monkeypatch):
+    """strict 关键字是 opt-in：不带 kwargs 的旧式 reranker 替身仍能工作（仅排序）。"""
+
+    class _LegacyRerank:
+        enabled = True
+
+        async def rerank(self, query, chunks, top_k):
+            return chunks[:top_k]
+
+    service, _ = _service(monkeypatch, rows=[_chunk_row(1, 1, CHUNK_A)], sources=[1], rerank=_LegacyRerank())
+    # 旧签名不接受 raise_on_error → 会被 retrieve 统一降级为 ERROR（而不是静默谎报）
+    grounding = await service.retrieve(_snapshot("KNOWLEDGE"))
+    assert grounding.status == KNOWLEDGE_GROUNDING_ERROR
+
+
+# ===========================================================================
+# T. NO_SOURCE 必须在 embedding 之前确定
+# ===========================================================================
+
+
+async def test_no_source_is_decided_before_embedding(monkeypatch):
+    """用户没有任何 COMPLETED KB 时：NO_SOURCE，且一次 embedding 都不调用。
+
+    旧顺序（embedding → 再查 KB）会把语义正确的 NO_SOURCE 报成 ERROR，
+    还会白花一次 embedding。
+    """
+    vector = _FakeVectorService(error=RuntimeError("embedding provider down"))
+    service, session = _service(monkeypatch, rows=[_chunk_row(1, 1, CHUNK_A)], sources=[], vector=vector)
+    grounding = await service.retrieve(_snapshot("KNOWLEDGE"))
+    assert grounding.status == KNOWLEDGE_GROUNDING_NO_SOURCE
+    assert grounding.error_type is None
+    assert vector.calls == [], "没有知识库时不得调用 embedding"
+    assert len(session.statements) == 1, "只应执行 source availability 一条查询"
+
+
+async def test_source_check_uses_its_own_short_session(monkeypatch):
+    """source check 与 chunk retrieval 必须是**独立**的短 session。"""
+    live = {"count": 0}
+    sessions: list[_CapturingSession] = []
+    shared = _CapturingSession([[1], [_chunk_row(1, 1, CHUNK_A)]])
+
+    @contextlib.asynccontextmanager
+    async def _tracking_context():
+        # 每次 async with 都算一个独立的短 session；result_sets 顺序消费
+        sessions.append(shared)
+        live["count"] += 1
+        try:
+            yield shared
+        finally:
+            live["count"] -= 1
+
+    monkeypatch.setattr(database_module, "get_db_context", _tracking_context)
+    service = KnowledgeGroundingService(
+        rerank_service=_FakeRerankService(enabled=False), vector_service=_FakeVectorService()
+    )
+    grounding = await service.retrieve(_snapshot("KNOWLEDGE"))
+    assert grounding.status == KNOWLEDGE_GROUNDING_READY
+    assert len(sessions) == 2, "source check 与 retrieval 必须各用一个短 session"
+    assert live["count"] == 0, "两个 session 都必须已经关闭"
+
+
+async def test_retrieval_db_session_is_closed_before_rerank(monkeypatch):
+    """rerank 阶段不得持有任何 retrieval DB session。"""
+    live = {"count": 0}
+    shared = _CapturingSession([[1], [_chunk_row(1, 1, CHUNK_A)]])
+
+    @contextlib.asynccontextmanager
+    async def _tracking_context():
+        live["count"] += 1
+        try:
+            yield shared
+        finally:
+            live["count"] -= 1
+
+    monkeypatch.setattr(database_module, "get_db_context", _tracking_context)
+
+    observed: list[int] = []
+
+    class _ProbeRerank:
+        enabled = True
+
+        async def rerank(self, query, chunks, top_k, **kwargs):
+            observed.append(live["count"])
+            return chunks[:top_k]
+
+    service = KnowledgeGroundingService(rerank_service=_ProbeRerank(), vector_service=_FakeVectorService())
+    grounding = await service.retrieve(_snapshot("KNOWLEDGE"))
+    assert grounding.status == KNOWLEDGE_GROUNDING_READY
+    assert observed == [0], "rerank 时不能有任何 DB session 处于打开状态"

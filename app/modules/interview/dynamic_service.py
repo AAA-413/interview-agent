@@ -2585,18 +2585,26 @@ class DynamicInterviewService:
 
         ```text
         E0 snapshot
-          → 本 helper（grounding 检索：embedding → DB → rerank，全程无业务 transaction）
+          → 本 helper（grounding 检索：source check → embedding → DB → rerank，全程无业务 transaction）
           → E1 hybrid evaluator LLM
         ```
 
-        两个隔离点：
+        三个隔离点：
 
+        - ``answer_evaluator_enabled=False`` 时 semantic LLM 根本不会跑 —— 检索出来的
+          factual context 没有任何消费者，所以这里也必须短路，否则
+          ``APP_INTERVIEW_ANSWER_EVALUATOR_ENABLED=false`` 就不再是「回到规则评分」
+          的完整低成本 rollback path。
         - 复用**同一套** deterministic hard guard（``self.evaluator.detect_hard_guard``），
           与 evaluator 内部保持单一规则来源；明确 ``skip_semantic``（空回答 / 极短回答）
           时直接跳过检索，不给空回答白花 embedding 成本。
         - 检索失败一律降级为 ``status=ERROR``（或直接跳过），**绝不阻止 answer submit**。
         """
         try:
+            if not settings.interview.answer_evaluator_enabled:
+                # semantic evaluator 已关闭 → factual context 不会被消费 → 不检索
+                return snapshot
+
             if (snapshot.topic.question_type or "").upper() not in GROUNDED_QUESTION_TYPES:
                 # PROJECT / SYSTEM_DESIGN 不接 factual grounding：直接短路，
                 # **连 retriever 都不调用**（PROJECT 的问题是「有没有做过」，RAG 证明不了；
