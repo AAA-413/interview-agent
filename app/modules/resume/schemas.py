@@ -3,6 +3,10 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from app.common.model import AsyncTaskStatus
+from app.modules.resume.canonical.models import (
+    ResumeCanonicalProfileDTO,
+    ResumeCanonicalStatus,
+)
 
 
 class ScoreDetail(BaseModel):
@@ -35,6 +39,16 @@ class TechStack(BaseModel):
 
 
 class ResumeProfile(BaseModel):
+    """Legacy 简历画像（PR4 起定位为 **compatibility / display artifact**）。
+
+    保留原因：老数据、旧 API（``ResumeAnalysisResponse.profile``）、已有测试，
+    以及 canonical extraction 不可用时的兜底路径。
+
+    注意：**它不是 source-validated canonical facts**。当 canonical READY 时，
+    不应作为 interview 的事实来源 —— 事实来源只认
+    ``ResumeCanonicalProfileDTO``（每条 claim 都带校验过的简历原文 span）。
+    """
+
     projects: list[ProjectInfo] = []
     tech_stacks: list[TechStack] = []
     experience_level: str = "unknown"
@@ -92,3 +106,10 @@ class ResumeDetailDTO(BaseModel):
     analyze_status: AsyncTaskStatus = AsyncTaskStatus.PENDING
     analyze_error: str | None = None
     analyses: list[AnalysisHistoryDTO] = []
+
+    # ---- PR4：Canonical Resume（全部为 backward-compatible 默认值的附加字段） ----
+    canonical_profile: ResumeCanonicalProfileDTO | None = None
+    canonical_status: str = ResumeCanonicalStatus.NOT_EXTRACTED.value
+    canonical_schema_version: str | None = None
+    canonical_extract_error: str | None = None
+    canonical_extracted_at: datetime | None = None

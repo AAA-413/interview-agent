@@ -107,6 +107,12 @@ class ResumeSettings(BaseSettings):
         "text/markdown",
     ]
 
+    # ---- PR4：Canonical Resume 事实抽取 ----
+    # 关闭时跳过 canonical 抽取，继续原 Resume Grading；不能把 analyze 当失败。
+    canonical_extractor_enabled: bool = True
+    # canonical 超时不能让 background task 一直卡住
+    canonical_extractor_timeout_seconds: float = 30.0
+
 
 class GitHubSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="GITHUB_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
