@@ -36,7 +36,13 @@ from app.modules.interview.models import (
     TurnType,
 )
 from app.modules.interview.question_realizer import question_realizer
-from app.modules.interview.schemas import SubmitDynamicTurnAnswerRequest
+from app.modules.interview.schemas import (
+    KNOWLEDGE_GROUNDING_NOT_APPLICABLE,
+    KNOWLEDGE_GROUNDING_READY,
+    KnowledgeEvidenceRefDTO,
+    KnowledgeGroundingDTO,
+    SubmitDynamicTurnAnswerRequest,
+)
 from app.modules.interview.topic_state.models import initial_coverage_points
 from app.modules.interview.topic_state.tracker import topic_coverage_tracker
 
@@ -1060,3 +1066,175 @@ async def test_submit_passes_session_provider_to_transition_realizer(monkeypatch
     await _submit(_make_service(monkeypatch), _FakeDb(), turn_id=4)
 
     assert recorded["provider"] == "custom-provider"
+
+
+# ---------------- PR5：Knowledge Grounding 接入 submit 链路 ----------------
+
+
+def _knowledge_topic(session, topic, turns):
+    topic.question_type = "KNOWLEDGE"
+    topic.topic_key = "redis_transaction"
+    topic.topic_title = "Redis 事务"
+    topic.skill_key = "redis"
+    topic.main_question = "请讲清楚 Redis 事务的机制与边界。"
+    turns[0].question = topic.main_question
+    return session, topic, turns
+
+
+def _grounding_ready() -> KnowledgeGroundingDTO:
+    reference = KnowledgeEvidenceRefDTO(
+        evidence_id="ke_a",
+        knowledge_base_id=1,
+        chunk_id=2,
+        source_name="Redis 官方学习笔记",
+        title="Redis",
+        content_excerpt="Redis MULTI starts a transaction block and EXEC executes queued commands.",
+        score=0.91,
+        rank=1,
+        content_hash="deadbeef",
+    )
+    return KnowledgeGroundingDTO(
+        status=KNOWLEDGE_GROUNDING_READY, query="Redis 事务", references=[reference], retrieval_confidence=0.91
+    )
+
+
+def _patch_grounding(monkeypatch, handler):
+    from app.modules.interview.evaluation import knowledge_grounding as grounding_module
+
+    monkeypatch.setattr(grounding_module.knowledge_grounding_service, "retrieve", handler)
+
+
+async def test_knowledge_grounding_is_injected_into_evaluator_snapshot(monkeypatch):
+    """PR5：KNOWLEDGE 题在 E1 之前把 grounding 注入 snapshot。"""
+    session, topic, turns = _knowledge_topic(*_build_state())
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+
+    grounding = _grounding_ready()
+    calls: list = []
+
+    async def _retrieve(snapshot):
+        calls.append(snapshot)
+        return grounding
+
+    _patch_grounding(monkeypatch, _retrieve)
+
+    evaluator = _StubHybridEvaluator()
+    await _submit(_make_service(monkeypatch, evaluator), _FakeDb(), turn_id=1)
+
+    assert len(calls) == 1, "KNOWLEDGE 题必须检索一次"
+    assert evaluator.snapshot is not None
+    assert evaluator.snapshot.knowledge_grounding is not None
+    assert evaluator.snapshot.knowledge_grounding.references[0].evidence_id == "ke_a"
+
+
+async def test_project_topic_never_calls_knowledge_retriever(monkeypatch):
+    """PR5 §64：PROJECT 绝不能触发 Knowledge Retrieval。"""
+    session, topic, turns = _build_state()  # 默认 PROJECT
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+
+    async def _must_not_run(_snapshot):
+        raise AssertionError("PROJECT 不得调用 knowledge retriever")
+
+    _patch_grounding(monkeypatch, _must_not_run)
+
+    evaluator = _StubHybridEvaluator()
+    await _submit(_make_service(monkeypatch, evaluator), _FakeDb(), turn_id=1)
+    assert evaluator.snapshot is not None
+    assert evaluator.snapshot.knowledge_grounding is None
+
+
+async def test_empty_answer_skips_knowledge_retrieval(monkeypatch):
+    """PR5 §79：明确 skip_semantic（空回答）时不产生 embedding / retrieval 成本。"""
+    session, topic, turns = _knowledge_topic(*_build_state())
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+
+    async def _must_not_run(_snapshot):
+        raise AssertionError("空回答不得调用 knowledge retriever")
+
+    _patch_grounding(monkeypatch, _must_not_run)
+
+    evaluator = _StubHybridEvaluator()
+    await _submit(_make_service(monkeypatch, evaluator), _FakeDb(), turn_id=1, answer="   ")
+    assert evaluator.snapshot is not None
+    assert evaluator.snapshot.knowledge_grounding is None
+
+
+async def test_grounding_retrieval_runs_outside_business_transaction(monkeypatch):
+    """PR5 §56/§96：grounding 检索期间不持 turn/topic 锁、不写 answer/coverage。"""
+    session, topic, turns = _knowledge_topic(*_build_state())
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+    db = _FakeDb()
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    observed: dict = {}
+
+    async def _retrieve(_snapshot):
+        observed["topic_lock_reads"] = fake.topic_lock_reads
+        observed["coverage_writes"] = fake.coverage_writes
+        observed["lock_reads"] = fake.lock_reads
+        observed["answer"] = fake.turns[1].answer
+        started.set()
+        await release.wait()
+        return _grounding_ready()
+
+    _patch_grounding(monkeypatch, _retrieve)
+
+    service = _make_service(monkeypatch, _StubHybridEvaluator())
+    task = asyncio.create_task(_submit(service, db, turn_id=1))
+    await started.wait()
+    await asyncio.sleep(0)
+
+    assert observed == {"topic_lock_reads": 0, "coverage_writes": 0, "lock_reads": 0, "answer": None}
+    assert db.commits == 0, "grounding 期间不得产生业务提交"
+
+    release.set()
+    response = await task
+    assert response.decision.action == "FOLLOW_UP"
+    assert fake.topic_lock_reads == 1, "topic 锁只能在 grounding + evaluation 之后获取"
+
+
+async def test_grounding_error_does_not_block_submit(monkeypatch):
+    """PR5 §26：检索抛错 → answer 仍然提交成功，只是没有 grounding。"""
+    session, topic, turns = _knowledge_topic(*_build_state())
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+
+    async def _boom(_snapshot):
+        raise RuntimeError("retriever exploded")
+
+    _patch_grounding(monkeypatch, _boom)
+
+    evaluator = _StubHybridEvaluator()
+    response = await _submit(_make_service(monkeypatch, evaluator), _FakeDb(), turn_id=1)
+
+    assert response.decision.action == "FOLLOW_UP", "检索失败不得阻止提交与后续决策"
+    assert fake.turns[1].answer is not None, "answer 必须照常落库"
+    assert evaluator.snapshot is not None
+    assert evaluator.snapshot.knowledge_grounding is None
+
+
+async def test_grounding_returns_not_applicable_keeps_snapshot_clean(monkeypatch):
+    """retriever 明确返回 NOT_APPLICABLE 时不往 snapshot 塞 grounding。"""
+    session, topic, turns = _knowledge_topic(*_build_state())
+    fake = _MemoryPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+
+    async def _na(_snapshot):
+        return KnowledgeGroundingDTO(status=KNOWLEDGE_GROUNDING_NOT_APPLICABLE)
+
+    _patch_grounding(monkeypatch, _na)
+
+    evaluator = _StubHybridEvaluator()
+    await _submit(_make_service(monkeypatch, evaluator), _FakeDb(), turn_id=1)
+    assert evaluator.snapshot.knowledge_grounding is None

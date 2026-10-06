@@ -13,7 +13,12 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.modules.interview.schemas import DynamicTopicDTO, DynamicTurnDTO
+from app.modules.interview.schemas import (
+    KNOWLEDGE_VERDICT_INSUFFICIENT,
+    DynamicTopicDTO,
+    DynamicTurnDTO,
+    KnowledgeGroundingDTO,
+)
 
 # evaluator 版本：参与 SingleFlight key，改语义/权重/阈值时必须 bump
 #
@@ -22,9 +27,12 @@ from app.modules.interview.schemas import DynamicTopicDTO, DynamicTurnDTO
 # rubric dimension mapping。
 # v3（PR3）改变了 structured output schema 与 prompt 语义：新增 current-turn
 # coverage assessment（canonical coverage targets）。
+# v4（PR5）改变了 prompt（KNOWLEDGE_EVIDENCE）、structured output（knowledge_grounding）、
+# confidence 语义（grounded KNOWLEDGE 可解除 0.75 cap）与 SingleFlight 输入
+# （grounding fingerprint：KB 重新索引后必须换 key）。
 # SingleFlight 会把结果写入 Redis（result TTL 默认 600s），
 # 版本号不变时滚动部署期间新代码会读到旧 evaluator 写入的缓存结果。
-EVALUATOR_VERSION = "hybrid-evaluator-v3"
+EVALUATOR_VERSION = "hybrid-evaluator-v4"
 
 # ---------------- active dimensions & weights ----------------
 
@@ -158,11 +166,21 @@ class LLMCoverageAssessment(BaseModel):
     evidence_quotes: list[str] = Field(default_factory=list)
 
 
+class LLMKnowledgeGroundingAssessment(BaseModel):
+    """LLM 对「候选人回答 vs Knowledge Evidence」的语义判断（**未经校验**）。"""
+
+    verdict: str = KNOWLEDGE_VERDICT_INSUFFICIENT
+    evidence_ids: list[str] = Field(default_factory=list)
+    candidate_quotes: list[str] = Field(default_factory=list)
+
+
 class LLMEvaluationResult(BaseModel):
     dimensions: list[LLMDimensionAssessment] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
     # PR3：与 dimensions 共用同一次 structured output，不额外增加 LLM 调用
     coverage: list[LLMCoverageAssessment] = Field(default_factory=list)
+    # PR5：KNOWLEDGE 题的 factual grounding assessment（同为「软」字段）
+    knowledge_grounding: LLMKnowledgeGroundingAssessment | None = None
 
     @field_validator("coverage", mode="before")
     @classmethod
@@ -194,6 +212,24 @@ class LLMEvaluationResult(BaseModel):
                 continue
         return valid
 
+    @field_validator("knowledge_grounding", mode="before")
+    @classmethod
+    def _tolerate_malformed_grounding(cls, value):
+        """把 grounding 的结构性错误与 dimensions 的严格校验隔离（与 coverage 同一原则）。
+
+        ``knowledge_grounding`` 不是 dict / schema 非法 → 保守降级为 ``None``，
+        绝不能因此让整次 structured output 校验失败、把已经可信的 score 打成
+        ``HEURISTIC_FALLBACK`` —— 语义评估与知识溯源是两个独立失败域。
+        """
+        if value is None or isinstance(value, LLMKnowledgeGroundingAssessment):
+            return value
+        if not isinstance(value, dict):
+            return None
+        try:
+            return LLMKnowledgeGroundingAssessment.model_validate(value)
+        except Exception:
+            return None
+
 
 # ---------------- snapshot / guard ----------------
 
@@ -214,6 +250,10 @@ class EvaluationSnapshot(BaseModel):
     topic: DynamicTopicDTO
     turn: DynamicTurnDTO
     previous_turns: list[DynamicTurnDTO] = Field(default_factory=list)
+
+    #: PR5：E0 刚 load 出来时一定是 None；Grounding 完成后用 model_copy 注入，
+    #: 再交给 hybrid evaluator。仍然是 plain DTO，不带 ORM。
+    knowledge_grounding: KnowledgeGroundingDTO | None = None
 
 
 @dataclass(frozen=True)

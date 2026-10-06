@@ -580,8 +580,9 @@ async def test_single_flight_key_includes_evaluator_version(monkeypatch):
 
     assert single_flight.keys[0] != single_flight.keys[1], "evaluator 版本变化必须换 key"
 
-    # 当前版本号已 bump 到 v3（PR3 语义变更：coverage assessment 进入 structured output）
-    assert EVALUATOR_VERSION == "hybrid-evaluator-v3"
+    # 当前版本号已 bump 到 v4（PR5 语义变更：KNOWLEDGE_EVIDENCE 进 prompt、
+    # knowledge_grounding 进 structured output、grounded KNOWLEDGE 可解除 confidence cap）
+    assert EVALUATOR_VERSION == "hybrid-evaluator-v4"
 
 
 # ---------------- F. Failure / fallback ----------------

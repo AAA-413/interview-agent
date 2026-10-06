@@ -41,7 +41,9 @@ class CrossKBRagService:
         query_embedding = knowledge_base_vector_service.embed_text(rewritten_query)
 
         candidates = await self._vector_search(db, user_id, rewritten_query, top_k * 2)
-        graph_results = await self._graph_search(db, question, top_k, weight=0.5, query_embedding=query_embedding)
+        graph_results = await self._graph_search(
+            db, user_id, question, top_k, weight=0.5, query_embedding=query_embedding
+        )
         candidates.extend(graph_results)
         candidates = self._deduplicate(candidates)
 
@@ -97,6 +99,7 @@ class CrossKBRagService:
             )
             graph_results = await self._graph_search(
                 db,
+                user_id,
                 question,
                 top_k,
                 weight=0.5,
@@ -262,6 +265,7 @@ class CrossKBRagService:
         if use_graph:
             graph_results = await self._graph_search(
                 db,
+                user_id,
                 question,
                 top_k,
                 weight=graph_weight,
@@ -292,36 +296,25 @@ class CrossKBRagService:
         if query_embedding is None:
             query_embedding = knowledge_base_vector_service.embed_text(question)
 
+        # owner isolation（P0）：即使调用方给了 kb_id，也**必须**同时校验该 KB 属于
+        # 当前 user_id —— 不能因为「知道 kb_id」就跳过 owner check（否则构成 owner bypass）。
+        # 用一次 JOIN 同时取回 chunk 与 KB 名称，避免每个 chunk 再 db.get(KB) 的 N+1。
+        stmt = (
+            select(KnowledgeChunkEntity, KnowledgeBaseEntity.name)
+            .join(KnowledgeBaseEntity, KnowledgeChunkEntity.knowledge_base_id == KnowledgeBaseEntity.id)
+            .where(KnowledgeBaseEntity.user_id == user_id)
+            .where(KnowledgeBaseEntity.index_status == AsyncTaskStatus.COMPLETED)
+            .where(KnowledgeChunkEntity.embedding.isnot(None))
+        )
         if kb_id is not None:
-            stmt = (
-                select(KnowledgeChunkEntity)
-                .where(KnowledgeChunkEntity.knowledge_base_id == kb_id)
-                .where(KnowledgeChunkEntity.embedding.isnot(None))
-                .order_by(KnowledgeChunkEntity.embedding.cosine_distance(query_embedding))
-                .limit(top_k)
-            )
-        else:
-            stmt = (
-                select(KnowledgeChunkEntity)
-                .join(KnowledgeBaseEntity, KnowledgeChunkEntity.knowledge_base_id == KnowledgeBaseEntity.id)
-                .where(KnowledgeBaseEntity.user_id == user_id)
-                .where(KnowledgeBaseEntity.index_status == AsyncTaskStatus.COMPLETED)
-                .where(KnowledgeChunkEntity.embedding.isnot(None))
-                .order_by(KnowledgeChunkEntity.embedding.cosine_distance(query_embedding))
-                .limit(top_k)
-            )
+            stmt = stmt.where(KnowledgeBaseEntity.id == kb_id)
+        stmt = stmt.order_by(KnowledgeChunkEntity.embedding.cosine_distance(query_embedding)).limit(top_k)
 
         result = await db.execute(stmt)
-        chunks = list(result.scalars().all())
+        rows = list(result.all())
 
-        kb_names: dict[int, str] = {}
         references = []
-        for chunk in chunks:
-            kid = chunk.knowledge_base_id
-            if kid not in kb_names:
-                kb = await db.get(KnowledgeBaseEntity, kid)
-                kb_names[kid] = kb.name if kb else f"KB#{kid}"
-
+        for chunk, kb_name in rows:
             if chunk.embedding is not None:
                 distance = self._cosine_distance(query_embedding, chunk.embedding)
                 score = 1.0 - distance
@@ -336,29 +329,59 @@ class CrossKBRagService:
                     content=chunk.content or "",
                     content_preview=chunk.content_preview or (chunk.content or "")[:200],
                     score=score,
-                    source_name=kb_names[kid],
+                    source_name=kb_name or f"KB#{chunk.knowledge_base_id}",
                 )
             )
 
         return references
 
+    async def _owned_kb_ids(self, db: AsyncSession, user_id: int, scope_kb_id: int | None) -> list[int]:
+        """当前 user 名下的 KB id 列表；指定 scope_kb_id 时先验证归属。
+
+        越权的 scope_kb_id 直接返回 `[]`（等价于「没有可用知识库」），
+        而不是抛错 —— 调用方拿到空结果即可，不泄漏「该 KB 是否存在」。
+        """
+        stmt = (
+            select(KnowledgeBaseEntity.id)
+            .where(KnowledgeBaseEntity.user_id == user_id)
+            .where(KnowledgeBaseEntity.index_status == AsyncTaskStatus.COMPLETED)
+        )
+        if scope_kb_id is not None:
+            stmt = stmt.where(KnowledgeBaseEntity.id == scope_kb_id)
+        return [int(item) for item in (await db.execute(stmt)).scalars().all()]
+
     async def _graph_search(
         self,
         db: AsyncSession,
+        user_id: int,
         question: str,
         top_k: int,
         weight: float = 0.5,
         kb_id: int | None = None,
         query_embedding: list[float] | None = None,
     ) -> list[RagReferenceDTO]:
+        """图谱检索。**所有查询都被限制在当前 user 的 KB 内**。
+
+        旧实现有两个 owner bypass：跨 KB 时没有 user_id 条件（可能读到其它用户的
+        triples / chunks），指定 kb_id 时也只按 id 过滤而不校验归属。两者都已修掉。
+        """
         try:
+            owned_ids = await self._owned_kb_ids(db, user_id, kb_id)
+            if not owned_ids:
+                return []
+            # kb_id 已通过归属校验（_owned_kb_ids 里带上了 id 条件）
+            scoped_kb_id = kb_id
+            scoped_kb_ids = None if kb_id is not None else owned_ids
+
             entities = await self._extract_entities(question)
             if not entities:
                 return []
 
             all_triples = []
             for entity_name in entities:
-                triples = await knowledge_graph_persistence_service.query_two_hop(db, entity_name, kb_id=kb_id)
+                triples = await knowledge_graph_persistence_service.query_two_hop(
+                    db, entity_name, kb_id=scoped_kb_id, kb_ids=scoped_kb_ids
+                )
                 all_triples.extend(triples)
 
             seen = set()
@@ -382,9 +405,8 @@ class CrossKBRagService:
 
             from app.modules.knowledge_base.models import KnowledgeChunkEntity
 
-            stmt = select(KnowledgeChunkEntity)
-            if kb_id is not None:
-                stmt = stmt.where(KnowledgeChunkEntity.knowledge_base_id == kb_id)
+            # 检索范围同样限制在已授权的 KB 内，避免用图谱实体名把别的用户的 chunk 捞出来
+            stmt = select(KnowledgeChunkEntity).where(KnowledgeChunkEntity.knowledge_base_id.in_(owned_ids))
 
             sorted_names = sorted(graph_entity_names, key=len, reverse=True)[:10]
             conditions = [KnowledgeChunkEntity.content.ilike(f"%{name}%") for name in sorted_names]

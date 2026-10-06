@@ -81,6 +81,145 @@ class DynamicInterviewCreateRequest(BaseModel):
     llm_provider: str | None = Field(default=None, max_length=50)
 
 
+# ===========================================================================
+# PR5：Knowledge Grounding（KNOWLEDGE 题的外部 factual context）
+# ===========================================================================
+#
+# 语义边界：个人知识库**不是「世界真理数据库」**。PR5 只做到
+# 「grounded against retrieved knowledge corpus」，不是
+# 「certified objectively true」。
+# 这与 PR4「Canonical Resume 证明简历写了什么、不证明现实为真」是同一哲学。
+
+#: grounding 状态
+KNOWLEDGE_GROUNDING_NOT_APPLICABLE = "NOT_APPLICABLE"  # 非 KNOWLEDGE 题
+KNOWLEDGE_GROUNDING_DISABLED = "DISABLED"  # kill switch 关闭
+KNOWLEDGE_GROUNDING_NO_SOURCE = "NO_SOURCE"  # 用户没有 COMPLETED 知识库
+KNOWLEDGE_GROUNDING_NO_HIT = "NO_HIT"  # 有知识库但没有足够相关的 reference
+KNOWLEDGE_GROUNDING_READY = "READY"  # 有可信 retrieval references
+KNOWLEDGE_GROUNDING_ERROR = "ERROR"  # embedding / DB / rerank 异常
+
+KnowledgeGroundingStatusLiteral = Literal[
+    "NOT_APPLICABLE",
+    "DISABLED",
+    "NO_SOURCE",
+    "NO_HIT",
+    "READY",
+    "ERROR",
+]
+
+#: 相对候选回答与 Knowledge Evidence 的关系
+KNOWLEDGE_VERDICT_SUPPORTED = "SUPPORTED"
+KNOWLEDGE_VERDICT_PARTIAL = "PARTIAL"
+KNOWLEDGE_VERDICT_CONTRADICTED = "CONTRADICTED"
+KNOWLEDGE_VERDICT_INSUFFICIENT = "INSUFFICIENT"
+
+KnowledgeVerdictLiteral = Literal["SUPPORTED", "PARTIAL", "CONTRADICTED", "INSUFFICIENT"]
+
+#: **只有**这些 verdict 允许解除 KNOWLEDGE confidence cap ——
+#: 注意 CONTRADICTED 也在内：confidence 表示「我们对评分判断有多大把握」，
+#: 不是「候选人答得有多好」。候选人可以很确定地答错。
+GROUNDED_KNOWLEDGE_VERDICTS: frozenset[str] = frozenset(
+    {KNOWLEDGE_VERDICT_SUPPORTED, KNOWLEDGE_VERDICT_PARTIAL, KNOWLEDGE_VERDICT_CONTRADICTED}
+)
+
+#: 单条 knowledge excerpt 的最大字符数（直接截断，不做 LLM summarize ——
+#: summary 会再引入一层 hallucination）
+MAX_KNOWLEDGE_EXCERPT_CHARS = 1200
+#: grounding assessment 最多保留的 evidence ids / candidate quotes
+MAX_GROUNDING_EVIDENCE_IDS = 4
+MAX_GROUNDING_CANDIDATE_QUOTES = 2
+
+
+class KnowledgeEvidenceRefDTO(BaseModel):
+    """一条来自**当前用户**知识库的 source-backed 参考依据。
+
+    ``content_excerpt`` 必须逐字来自 ``KnowledgeChunkEntity.content`` 的前缀，
+    **不是** LLM 生成的摘要。``score`` 只表示 retrieval relevance，
+    **不是**「事实正确率」。
+    """
+
+    evidence_id: str = Field(min_length=1)
+
+    knowledge_base_id: int
+    chunk_id: int
+
+    source_name: str
+    title: str | None = None
+
+    content_excerpt: str
+
+    score: float
+    rank: int
+
+    content_hash: str
+
+    retrieval_method: Literal["VECTOR", "VECTOR_RERANK"] = "VECTOR"
+
+
+class KnowledgeGroundingAssessmentDTO(BaseModel):
+    """候选人本轮回答与 Knowledge Evidence 的关系（由 LLM 判断、代码校验）。"""
+
+    verdict: KnowledgeVerdictLiteral = KNOWLEDGE_VERDICT_INSUFFICIENT
+
+    evidence_ids: list[str] = Field(default_factory=list)
+    candidate_quotes: list[str] = Field(default_factory=list)
+
+    #: 只有「verdict ∈ {SUPPORTED, PARTIAL, CONTRADICTED}」且
+    #: 至少 1 个 valid evidence_id + 1 个 valid candidate quote 时才为 True
+    validated: bool = False
+
+
+class KnowledgeGroundingDTO(BaseModel):
+    """一次 KNOWLEDGE 回答的 grounding 结果（随该 turn 的 evaluation_json 冻结）。
+
+    即使之后用户重新索引知识库，旧 turn 的 factual evidence 仍然可解释。
+    """
+
+    status: KnowledgeGroundingStatusLiteral = KNOWLEDGE_GROUNDING_NOT_APPLICABLE
+
+    query: str = ""
+
+    references: list[KnowledgeEvidenceRefDTO] = Field(default_factory=list)
+
+    #: retrieval relevance（不是 truth probability）
+    retrieval_confidence: float = 0.0
+
+    latency_ms: int = 0
+
+    error_type: str | None = None
+
+    assessment: KnowledgeGroundingAssessmentDTO | None = None
+
+    def fingerprint_parts(self) -> tuple[str, ...]:
+        """SingleFlight 指纹：status + query + sorted(evidence_id, content_hash)。
+
+        必须把 KB 版本纳入 —— 否则用户重新索引知识库后，相同
+        question + answer 会错误命中旧 factual context 的评分缓存。
+        不放 raw content，避免 key 过长。
+        """
+        parts: list[str] = [self.status, self.query]
+        parts.extend(
+            f"{ref.evidence_id}:{ref.content_hash}"
+            for ref in sorted(self.references, key=lambda item: item.evidence_id)
+        )
+        return tuple(parts)
+
+    def is_validated_grounding(self) -> bool:
+        """是否满足解除 KNOWLEDGE confidence cap 的全部条件。"""
+        if self.status != KNOWLEDGE_GROUNDING_READY:
+            return False
+        if not self.references:
+            return False
+        assessment = self.assessment
+        if assessment is None or not assessment.validated:
+            return False
+        if assessment.verdict not in GROUNDED_KNOWLEDGE_VERDICTS:
+            return False
+        if not assessment.evidence_ids or not assessment.candidate_quotes:
+            return False
+        return True
+
+
 COVERAGE_STATUS_NOT_COVERED = "NOT_COVERED"
 COVERAGE_STATUS_PARTIAL = "PARTIAL"
 COVERAGE_STATUS_COVERED = "COVERED"
@@ -227,6 +366,12 @@ class DynamicTurnEvaluationDTO(BaseModel):
     # ---- PR3 新增：**当前这一轮回答**对 canonical coverage targets 的贡献 ----
     # 只描述 CURRENT CANDIDATE ANSWER；历史累计由 TopicCoverageTracker 负责。
     coverage_assessments: list[EvaluationCoverageAssessmentDTO] = Field(default_factory=list)
+
+    # ---- PR5 新增：KNOWLEDGE 题的 factual grounding（随本 turn 的 evaluation_json 冻结）----
+    # 默认 None，旧 evaluation_json 仍可解析，不需要 DB migration。
+    # 注意：Knowledge Evidence 与 ``evidence``（必须来自候选人回答）、
+    # ``topic.resume_evidence_refs``（简历事实）是三类**完全不同**的 provenance，禁止混用。
+    knowledge_grounding: KnowledgeGroundingDTO | None = None
 
 
 class DynamicDecisionDTO(BaseModel):

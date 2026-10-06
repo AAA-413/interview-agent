@@ -20,6 +20,10 @@ from app.modules.interview.context.builder import InterviewContextBuilder
 from app.modules.interview.context.models import FollowUpIntent, InterviewContext
 from app.modules.interview.dynamic_persistence_service import dynamic_interview_persistence_service
 from app.modules.interview.evaluation.hybrid_evaluator import HybridAnswerEvaluationService
+from app.modules.interview.evaluation.knowledge_grounding import (
+    GROUNDED_QUESTION_TYPES,
+    knowledge_grounding_service,
+)
 from app.modules.interview.evaluation.models import (
     FALLBACK_CONFIDENCE,
     GENERIC_CAP,
@@ -51,6 +55,8 @@ from app.modules.interview.models import (
 )
 from app.modules.interview.question_realizer import compose_utterance, question_realizer
 from app.modules.interview.schemas import (
+    KNOWLEDGE_GROUNDING_ERROR,
+    KNOWLEDGE_GROUNDING_NOT_APPLICABLE,
     DynamicDecisionDTO,
     DynamicInterviewCreateRequest,
     DynamicInterviewCreateResponse,
@@ -2574,11 +2580,66 @@ class DynamicInterviewService:
                 previous_turns=previous_turns,
             )
 
+    async def _retrieve_knowledge_grounding(self, snapshot: EvaluationSnapshot, answer: str) -> EvaluationSnapshot:
+        """PR5：KNOWLEDGE 题在 LLM 语义评分**之前**补上 factual context。
+
+        ```text
+        E0 snapshot
+          → 本 helper（grounding 检索：embedding → DB → rerank，全程无业务 transaction）
+          → E1 hybrid evaluator LLM
+        ```
+
+        两个隔离点：
+
+        - 复用**同一套** deterministic hard guard（``self.evaluator.detect_hard_guard``），
+          与 evaluator 内部保持单一规则来源；明确 ``skip_semantic``（空回答 / 极短回答）
+          时直接跳过检索，不给空回答白花 embedding 成本。
+        - 检索失败一律降级为 ``status=ERROR``（或直接跳过），**绝不阻止 answer submit**。
+        """
+        try:
+            if (snapshot.topic.question_type or "").upper() not in GROUNDED_QUESTION_TYPES:
+                # PROJECT / SYSTEM_DESIGN 不接 factual grounding：直接短路，
+                # **连 retriever 都不调用**（PROJECT 的问题是「有没有做过」，RAG 证明不了；
+                # SYSTEM_DESIGN 多是设计取舍，没有唯一 factual answer）。
+                return snapshot
+
+            guard = self.evaluator.detect_hard_guard(snapshot.topic, answer)
+            if guard.skip_semantic:
+                # 空回答 / 极短回答：连 embedding 都不做
+                return snapshot
+
+            start = time.perf_counter()
+            grounding = await knowledge_grounding_service.retrieve(snapshot)
+            await self._record_operation_metric(
+                session_entity_id=snapshot.session_entity_id,
+                user_id=snapshot.user_id,
+                llm_provider=snapshot.llm_provider,
+                operation_type="ANSWER_KNOWLEDGE_RETRIEVE",
+                topic_id=snapshot.topic.id,
+                turn_id=snapshot.turn.id,
+                latency_ms=self._latency_ms(start),
+                # NO_HIT / NO_SOURCE / DISABLED 都不是系统故障；只有 ERROR 才算失败
+                success=grounding.status != KNOWLEDGE_GROUNDING_ERROR,
+                error_type=grounding.error_type,
+            )
+            if grounding.status == KNOWLEDGE_GROUNDING_NOT_APPLICABLE:
+                return snapshot
+            return snapshot.model_copy(update={"knowledge_grounding": grounding})
+        except Exception as exc:  # 兜底：检索链路任何异常都不能影响提交
+            logger.warning(
+                "Knowledge grounding 检索异常，跳过 grounding: session=%s, turn=%s, error=%s",
+                snapshot.session_id,
+                snapshot.turn.id,
+                exc,
+            )
+            return snapshot
+
     async def _evaluate_answer(self, snapshot: EvaluationSnapshot, answer: str) -> DynamicTurnEvaluationDTO:
         """Hybrid 评分 + 独立 metric。评分失败一律降级，绝不抛出。"""
         start = time.perf_counter()
         outcome = None
         unexpected_error: str | None = None
+        snapshot = await self._retrieve_knowledge_grounding(snapshot, answer)
         try:
             outcome = await self.hybrid_evaluator.evaluate(snapshot, answer, llm_provider=snapshot.llm_provider)
         except Exception as exc:
