@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.base_persistence_service import safe_json_loads
@@ -19,6 +19,7 @@ from app.modules.interview.models import (
     SessionStatus,
     TopicStatus,
 )
+from app.modules.interview.observability import InterviewOperationType, normalize_operation_type
 from app.modules.interview.schemas import (
     DynamicTopicDTO,
     DynamicTurnDTO,
@@ -434,7 +435,7 @@ class DynamicInterviewPersistenceService:
         *,
         session_entity_id: int,
         user_id: int,
-        operation_type: str,
+        operation_type: InterviewOperationType | str,
         topic_id: int | None = None,
         turn_id: int | None = None,
         llm_provider: str | None = None,
@@ -452,7 +453,8 @@ class DynamicInterviewPersistenceService:
             topic_id=topic_id,
             turn_id=turn_id,
             user_id=user_id,
-            operation_type=operation_type,
+            # Enum / str 都接受，落库永远是历史字符串契约（不做 migration / rename）
+            operation_type=normalize_operation_type(operation_type),
             llm_provider=llm_provider,
             model_name=model_name,
             prompt_tokens=prompt_tokens,
@@ -466,6 +468,39 @@ class DynamicInterviewPersistenceService:
         db.add(entity)
         await db.flush()
         return entity
+
+    async def list_operation_metrics(
+        self, db: AsyncSession, session_entity_id: int
+    ) -> list[InterviewOperationMetricEntity]:
+        """一个 session 的全部 operation metric（diagnostics 只读用）。
+
+        调用方（service 层）必须**先**验证 session 归属，再调用本方法。
+        """
+        result = await db.execute(
+            select(InterviewOperationMetricEntity)
+            .where(InterviewOperationMetricEntity.session_id == session_entity_id)
+            .order_by(InterviewOperationMetricEntity.operation_type, InterviewOperationMetricEntity.id)
+        )
+        return list(result.scalars().all())
+
+    async def list_turn_evaluation_payloads(
+        self, db: AsyncSession, session_entity_id: int
+    ) -> list[tuple[str | None, bool]]:
+        """只取 ``(evaluation_json, 是否已作答)`` —— **从不加载候选人的回答文本**。
+
+        两点考虑：
+
+        - Privacy：diagnostics 只需要「这一轮有没有作答」这个布尔值，没有理由把
+          answer 全文读进内存再小心翼翼地不输出。
+        - Cost：一个 query 拿到全部轮次，不做 per-turn 查询。
+        """
+        answered = func.coalesce(func.length(InterviewTurnEntity.answer), 0) > 0
+        result = await db.execute(
+            select(InterviewTurnEntity.evaluation_json, answered)
+            .where(InterviewTurnEntity.session_id == session_entity_id)
+            .order_by(InterviewTurnEntity.topic_id, InterviewTurnEntity.turn_order)
+        )
+        return [(row[0], bool(row[1])) for row in result.all()]
 
     def topic_to_dto(self, entity: InterviewTopicEntity) -> DynamicTopicDTO:
         return DynamicTopicDTO(

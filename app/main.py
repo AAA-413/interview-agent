@@ -7,7 +7,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 import app.database as db_module
-from app.common.config_check import build_config_check_report, log_config_check_report
+from app.common.config_check import (
+    build_config_check_report,
+    build_public_config_health,
+    collect_secret_values,
+    log_config_check_report,
+)
 from app.common.exception_handlers import register_exception_handlers
 from app.config import settings
 from app.database import close_db, init_db, init_engine
@@ -124,14 +129,20 @@ async def lifespan(app: FastAPI):
         pass
 
 
-# 公开路径前缀（不需要认证）
-PUBLIC_PATHS = (
-    "/api/auth/login",
-    "/api/auth/register",
-    "/api/health",
-    "/docs",
-    "/redoc",
-    "/openapi.json",
+# 公开路径（**精确匹配**，不需要认证）
+#
+# PR6 起从 `startswith` 改成集合精确匹配。原因：`startswith("/api/health")` 会把
+# `/api/health/config`（含 PostgreSQL/Redis host:port 与缺失配置清单）也一起放行，
+# `/api/auth/loginXYZ` 之类的路径同样会绕过认证。精确匹配没有这个前缀绕过面。
+PUBLIC_EXACT_PATHS = frozenset(
+    {
+        "/api/auth/login",
+        "/api/auth/register",
+        "/api/health",
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+    }
 )
 
 
@@ -139,8 +150,8 @@ async def auth_middleware(request: Request, call_next):
     """全局认证中间件"""
     path = request.url.path
 
-    # 公开路径不需要认证
-    if any(path.startswith(p) for p in PUBLIC_PATHS):
+    # 公开路径不需要认证（精确匹配，避免前缀绕过）
+    if path in PUBLIC_EXACT_PATHS:
         return await call_next(request)
 
     # OPTIONS 请求不需要认证（CORS 预检）
@@ -195,14 +206,26 @@ def create_app() -> FastAPI:
 
     @app.get("/api/health")
     async def health_check():
+        """Liveness only —— 进程活着就返回 UP。
+
+        刻意**不**检查 DB / Redis / LLM / Embedding：
+        依赖不可用不等于进程该被重启，而且 health 自己不应该变成昂贵的外部调用。
+        配置诊断在 ``/api/health/config``（需要认证）。
+        """
         return {"status": "UP", "service": settings.app_name}
 
     @app.get("/api/health/config")
     async def config_health_check():
+        """配置诊断（**需要认证**；生产模式下只返回聚合计数）。"""
         report = getattr(app.state, "config_report", None)
         if report is None:
             report = build_config_check_report(settings)
-        return report.model_dump()
+        public = build_public_config_health(
+            report,
+            debug=settings.debug,
+            secrets=collect_secret_values(settings),
+        )
+        return public.model_dump()
 
     return app
 

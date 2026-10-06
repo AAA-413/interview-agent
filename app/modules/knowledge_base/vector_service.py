@@ -200,7 +200,27 @@ class KnowledgeBaseVectorService:
         return dot / (left_norm * right_norm)
 
     def embed_text(self, text: str) -> list[float]:
-        """生成文本向量"""
+        """生成文本向量。
+
+        Embedding fallback policy（PR6）
+        ------------------------------
+        ```text
+        strict_config=False（开发 / 默认）
+            真实 provider 失败 → hash fallback（保持既有行为，向后兼容）
+
+        strict_config=True（生产 strict）
+            真实 provider 失败 → raise EmbeddingFailedException（fail closed）
+            绝不写入 hash 向量
+        ```
+
+        为什么 strict 必须 fail closed：旧 KB 是用**真实** embedding 建的，如果某次
+        API 抖动后悄悄改写成 hash 向量，新 query 与旧 KB 就落在互不兼容的向量空间里，
+        检索会静默失效 —— 这比直接报错危险得多。
+
+        strict 下也**不允许永久降级**：失败后 ``_use_real_embedding`` 保持 True，
+        下一次请求仍会尝试真实 provider。strict 的语义是 fail closed，
+        不是 fail once then 永久 hash（否则一次瞬时抖动会把整个进程变成 hash 模式）。
+        """
         if not self._use_real_embedding:
             return self._embed_with_hash(text)
 
@@ -208,18 +228,26 @@ class KnowledgeBaseVectorService:
             try:
                 return self._embed_with_zhipu(text)
             except Exception as e:
-                logger.warning("智谱 Embedding 调用失败，降级到哈希向量: %s", e)
-                self._use_real_embedding = False
-                return self._embed_with_hash(text)
+                return self._handle_real_embedding_failure(text, "智谱", e)
         elif self._text_embedding:
             try:
                 return self._embed_with_api(text)
             except Exception as e:
-                logger.warning("DashScope Embedding 调用失败，降级到哈希向量: %s", e)
-                self._use_real_embedding = False
-                return self._embed_with_hash(text)
+                return self._handle_real_embedding_failure(text, "DashScope", e)
         else:
             return self._embed_with_hash(text)
+
+    def _handle_real_embedding_failure(self, text: str, provider_label: str, error: Exception) -> list[float]:
+        """真实 provider 失败时的统一收口：strict 抛错，非 strict 降级。"""
+        if settings.strict_config:
+            logger.error("%s Embedding 调用失败（strict：fail closed，不写 hash 向量）: %s", provider_label, error)
+            if isinstance(error, EmbeddingFailedException):
+                raise error
+            raise EmbeddingFailedException(f"{provider_label} Embedding 调用失败: {error}") from error
+
+        logger.warning("%s Embedding 调用失败，降级到哈希向量: %s", provider_label, error)
+        self._use_real_embedding = False
+        return self._embed_with_hash(text)
 
     def _embed_with_zhipu(self, text: str) -> list[float]:
         """使用智谱 Embedding-3 API（截断到 1536 维匹配 pgvector 列定义）"""

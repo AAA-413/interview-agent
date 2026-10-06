@@ -53,6 +53,7 @@ from app.modules.interview.models import (
     TopicStatus,
     TurnType,
 )
+from app.modules.interview.observability import InterviewOperationType, normalize_operation_type
 from app.modules.interview.question_realizer import compose_utterance, question_realizer
 from app.modules.interview.schemas import (
     KNOWLEDGE_GROUNDING_ERROR,
@@ -2447,7 +2448,7 @@ class DynamicInterviewService:
                 structured_jd = await self._track_operation(
                     bg_db,
                     session,
-                    "JD_PARSE",
+                    InterviewOperationType.JD_PARSE,
                     lambda: jd_parse_service.parse(request.jd_text, request.target_role, request.skill_id),
                 )
                 recent_topics = await dynamic_interview_persistence_service.list_recent_topic_keys(bg_db, user_id)
@@ -2456,7 +2457,7 @@ class DynamicInterviewService:
                 topics, plan_summary = await self._track_operation(
                     bg_db,
                     session,
-                    "TOPIC_PLAN",
+                    InterviewOperationType.TOPIC_PLAN,
                     lambda: self.plan_service.build_plan(
                         request,
                         structured_jd,
@@ -2515,7 +2516,7 @@ class DynamicInterviewService:
             await self._track_operation(
                 bg_db,
                 session,
-                "MAIN_QUESTION_GENERATE",
+                InterviewOperationType.MAIN_QUESTION_GENERATE,
                 lambda: dynamic_interview_persistence_service.create_turn(
                     bg_db,
                     session_entity_id=session.id,
@@ -2622,7 +2623,7 @@ class DynamicInterviewService:
                 session_entity_id=snapshot.session_entity_id,
                 user_id=snapshot.user_id,
                 llm_provider=snapshot.llm_provider,
-                operation_type="ANSWER_KNOWLEDGE_RETRIEVE",
+                operation_type=InterviewOperationType.ANSWER_KNOWLEDGE_RETRIEVE,
                 topic_id=snapshot.topic.id,
                 turn_id=snapshot.turn.id,
                 latency_ms=self._latency_ms(start),
@@ -2672,7 +2673,7 @@ class DynamicInterviewService:
             session_entity_id=snapshot.session_entity_id,
             user_id=snapshot.user_id,
             llm_provider=snapshot.llm_provider,
-            operation_type="ANSWER_EVALUATE",
+            operation_type=InterviewOperationType.ANSWER_EVALUATE,
             topic_id=snapshot.topic.id,
             turn_id=snapshot.turn.id,
             latency_ms=self._latency_ms(start),
@@ -2686,7 +2687,7 @@ class DynamicInterviewService:
                 session_entity_id=snapshot.session_entity_id,
                 user_id=snapshot.user_id,
                 llm_provider=snapshot.llm_provider,
-                operation_type="ANSWER_EVALUATE_LLM",
+                operation_type=InterviewOperationType.ANSWER_EVALUATE_LLM,
                 topic_id=snapshot.topic.id,
                 turn_id=snapshot.turn.id,
                 latency_ms=self._latency_ms(start),
@@ -2846,7 +2847,7 @@ class DynamicInterviewService:
                 coach_hint = await self._track_operation(
                     db,
                     session,
-                    "COACH_HINT_GENERATE",
+                    InterviewOperationType.COACH_HINT_GENERATE,
                     lambda: self.evaluator.coach_hint(topic, evaluation),
                     topic_id=topic_entity.id,
                     turn_id=turn.id,
@@ -3129,7 +3130,7 @@ class DynamicInterviewService:
     async def _run_realizer_outside_transaction(
         self,
         session: InterviewSessionEntity,
-        operation_type: str,
+        operation_type: InterviewOperationType | str,
         invoke,
         *,
         topic_id: int,
@@ -3161,7 +3162,7 @@ class DynamicInterviewService:
             error_type = exc.__class__.__name__
             logger.warning(
                 "%s 失败，使用兜底: session_id=%s, turn_id=%s, error=%s",
-                operation_type,
+                normalize_operation_type(operation_type),
                 session.session_id,
                 turn_id,
                 exc,
@@ -3187,7 +3188,7 @@ class DynamicInterviewService:
         session_entity_id: int,
         user_id: int,
         llm_provider: str | None,
-        operation_type: str,
+        operation_type: InterviewOperationType | str,
         topic_id: int | None,
         turn_id: int | None,
         latency_ms: int,
@@ -3207,7 +3208,7 @@ class DynamicInterviewService:
                     metric_db,
                     session_entity_id=session_entity_id,
                     user_id=user_id,
-                    operation_type=operation_type,
+                    operation_type=normalize_operation_type(operation_type),
                     topic_id=topic_id,
                     turn_id=turn_id,
                     llm_provider=llm_provider,
@@ -3217,7 +3218,14 @@ class DynamicInterviewService:
                 )
                 await metric_db.commit()
         except Exception as exc:
-            logger.warning("记录 %s metric 失败（独立 session，不影响主链路）: %s", operation_type, exc)
+            # metric 永远不属于 correctness path：只 warn，不抛，也不再写一条
+            # 「metric 写失败」的 metric（否则失败会递归）。CancelledError 不是 Exception，
+            # 会照常向上传播。
+            logger.warning(
+                "记录 %s metric 失败（独立 session，不影响主链路）: %s",
+                normalize_operation_type(operation_type),
+                exc,
+            )
 
     @staticmethod
     async def _safe_rollback(db: AsyncSession) -> None:
@@ -3245,7 +3253,7 @@ class DynamicInterviewService:
         """
         realized = await self._run_realizer_outside_transaction(
             session,
-            "FOLLOW_UP_REALIZE",
+            InterviewOperationType.FOLLOW_UP_REALIZE,
             lambda: question_realizer.realize_follow_up(context, decision, llm_provider=session.llm_provider),
             topic_id=topic_id,
             turn_id=turn_id,
@@ -3288,7 +3296,7 @@ class DynamicInterviewService:
         )
         return await self._run_realizer_outside_transaction(
             session,
-            "TOPIC_TRANSITION_REALIZE",
+            InterviewOperationType.TOPIC_TRANSITION_REALIZE,
             lambda: question_realizer.realize_topic_transition(context, llm_provider=session.llm_provider),
             topic_id=topic_id,
             turn_id=turn_id,
@@ -3362,7 +3370,7 @@ class DynamicInterviewService:
         report = await self._track_operation(
             db,
             session,
-            "REPORT_GENERATE",
+            InterviewOperationType.REPORT_GENERATE,
             lambda: self.report_service.build_report(session, topics, turns),
         )
         await dynamic_interview_persistence_service.save_report(
@@ -3379,7 +3387,7 @@ class DynamicInterviewService:
         self,
         db: AsyncSession,
         session: InterviewSessionEntity,
-        operation_type: str,
+        operation_type: InterviewOperationType | str,
         operation,
         *,
         topic_id: int | None = None,

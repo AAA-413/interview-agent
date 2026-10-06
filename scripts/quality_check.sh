@@ -20,5 +20,8 @@ echo "== Ruff format check =="
 echo "== Pytest =="
 .venv/bin/pytest -q
 
+echo "== Interview Release Gate =="
+PYTHONPATH=. .venv/bin/python scripts/interview_release_gate.py
+
 echo "== Frontend build =="
 (cd frontend && npm run build)

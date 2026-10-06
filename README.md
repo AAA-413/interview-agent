@@ -86,7 +86,38 @@ npm run dev
 ./scripts/quality_check.sh
 ```
 
-该脚本会依次执行 Python 编译检查、全量 Ruff 检查、Ruff 格式检查、pytest 基础测试和前端生产构建。
+该脚本会依次执行 Python 编译检查、全量 Ruff 检查、Ruff 格式检查、pytest 基础测试、
+Interview Release Gate（确定性 eval 汇总）和前端生产构建。
+
+只跑发布门禁（三个 deterministic eval，全部 fake / stub，不调用任何外部 API）：
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/interview_release_gate.py
+```
+
+输出示例：
+
+```text
+Interview Release Gate
+
+quality_baseline_eval.py      PASS 105/107
+conversation_pipeline_eval.py PASS 19/19
+knowledge_grounding_eval.py   PASS 27/27
+
+FINAL: PASS
+```
+
+任一 eval 非 0（或超时）时脚本 exit 1；CI 的 Backend Quality 会运行完全同一个 gate
+（本地与 CI 一套命令，不做两套）。
+
+### 面试引擎不变量
+
+面试主链（Planning / Answer / 评分 / Coverage / Resume Evidence / Knowledge Grounding）
+的**不变量清单、决策归属、事务边界与故障域矩阵**见：
+
+[docs/interview-engine-invariants.md](docs/interview-engine-invariants.md)
+
+改动主链前建议先过一遍这张清单 —— CI 的 release gate 与 failure matrix 就是照它写的。
 
 ## 功能模块
 

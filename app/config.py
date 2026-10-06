@@ -1,4 +1,12 @@
+from typing import Literal
+
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: 支持的 embedding provider。
+#: PR6 起是**严格 Literal**：`AI_EMBEDDING_PROVIDER=zhhipu` 这类 typo 会在 settings
+#: 解析阶段直接报错，而不是静默掉进「两个分支都不匹配 → 悄悄走 hash 向量」的路径。
+EmbeddingProvider = Literal["zhipu", "dashscope"]
 
 
 class DatabaseSettings(BaseSettings):
@@ -44,7 +52,8 @@ class AiSettings(BaseSettings):
     structured_retry_use_repair_prompt: bool = True
     embedding_model: str = "text-embedding-v2"
     embedding_api_key: str = ""  # Embedding API 单独配置（默认使用 bailian_api_key）
-    embedding_provider: str = "zhipu"  # zhipu | dashscope
+    # zhipu | dashscope —— 严格枚举，防止 typo 静默降级
+    embedding_provider: EmbeddingProvider = "zhipu"
     zhipu_api_key: str = ""  # 智谱 API key
 
 
@@ -85,22 +94,38 @@ class InterviewSettings(BaseSettings):
     # LLM 追问/转场生成开关：关闭后链路自动回退到规则模板，保证面试不中断
     question_realizer_enabled: bool = True
     # 单次 QuestionRealizer 的超时上限（秒），超时即回退模板，避免卡住答题链路
-    question_realizer_timeout_seconds: float = 25.0
+    question_realizer_timeout_seconds: float = Field(default=25.0, gt=0)
     # Hybrid Answer Evaluator（LLM 语义评分）：关闭时直接走 heuristic fallback，不是错误
     answer_evaluator_enabled: bool = True
     # 单次 answer evaluation 的超时上限（秒），超时即回退 heuristic
-    answer_evaluator_timeout_seconds: float = 12.0
+    answer_evaluator_timeout_seconds: float = Field(default=12.0, gt=0)
 
     # ---- PR5：Knowledge Grounding（只给 KNOWLEDGE 题提供 factual context）----
     # 关闭时 KNOWLEDGE 回到未 grounding 语义（confidence 仍 cap 0.75），不是错误
     knowledge_grounding_enabled: bool = True
     # 整个 grounding 检索（embedding + DB + rerank）的超时上限（秒）
-    knowledge_grounding_timeout_seconds: float = 6.0
+    knowledge_grounding_timeout_seconds: float = Field(default=6.0, gt=0)
     # vector recall 候选数 → rerank → top_k
-    knowledge_grounding_candidate_k: int = 12
-    knowledge_grounding_top_k: int = 4
+    knowledge_grounding_candidate_k: int = Field(default=12, ge=1)
+    knowledge_grounding_top_k: int = Field(default=4, ge=1)
     # factual grading 比普通知识库 QA 更保守：低于该分直接 drop（全部 drop → NO_HIT）
-    knowledge_grounding_min_score: float = 0.60
+    knowledge_grounding_min_score: float = Field(default=0.60, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _validate_grounding_budget(self) -> "InterviewSettings":
+        """candidate_k 必须 >= top_k。
+
+        否则「先 recall N 条再 rerank 取 top_k」在配置层面就是自相矛盾的：
+        recall 出来的候选比最终要返回的还少。这里直接让 settings 解析失败，
+        而不是在运行时用 ``max(...)`` 把配置错误悄悄盖掉 —— 错误配置要尽早炸。
+        """
+        if self.knowledge_grounding_candidate_k < self.knowledge_grounding_top_k:
+            raise ValueError(
+                "knowledge_grounding_candidate_k "
+                f"({self.knowledge_grounding_candidate_k}) 必须 >= "
+                f"knowledge_grounding_top_k ({self.knowledge_grounding_top_k})"
+            )
+        return self
 
 
 class ResumeSettings(BaseSettings):
@@ -122,7 +147,7 @@ class ResumeSettings(BaseSettings):
     # 关闭时跳过 canonical 抽取，继续原 Resume Grading；不能把 analyze 当失败。
     canonical_extractor_enabled: bool = True
     # canonical 超时不能让 background task 一直卡住
-    canonical_extractor_timeout_seconds: float = 30.0
+    canonical_extractor_timeout_seconds: float = Field(default=30.0, gt=0)
 
 
 class GitHubSettings(BaseSettings):
