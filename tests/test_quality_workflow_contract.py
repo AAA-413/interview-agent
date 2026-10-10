@@ -6,8 +6,14 @@
 1. quality.yml 的 trigger 与 backend steps 契约 —— 谁把 main 从 trigger 里删掉、
    或把 release gate 从 CI 里摘掉，pytest 直接失败（不靠人眼 review）。
 2. interview_release_gate.py 的 wrapper 语义 —— 全 PASS → exit 0；
-   任一 FAIL / timeout → exit 1；子进程用 sys.executable；失败输出不泄漏 secret。
+   任一 FAIL / timeout / summary 不合格 → exit 1；子进程用 sys.executable；
+   失败输出不泄漏 secret。
 ```
+
+> 注：PR #11 review round 1 起，Release Gate 的判据变成了
+> 「returncode == 0 **且** 契约内 summary 达到冻结基线」。本文件只保留 wrapper
+> 层面的语义；summary / 基线 / 脱敏的完整回归矩阵在
+> ``tests/test_release_gate_baseline.py``。
 
 wrapper 测试用 mock subprocess，**不真的跑三套 eval**（那属于 release gate 自己的职责，
 由 CI 的 Interview Release Gate step 真实执行）。
@@ -185,7 +191,8 @@ def test_release_gate_uses_current_python(monkeypatch):
 
     def _fake_run(cmd, **_kwargs):
         recorded["argv0"] = cmd[0]
-        return subprocess.CompletedProcess(cmd, 0, stdout="1/1", stderr="")
+        # PR #11 review round 1 起，exit 0 不足以通过：还必须给出契约内的 summary
+        return subprocess.CompletedProcess(cmd, 0, stdout="Overall: 105/107 passed (98.1%)\n", stderr="")
 
     monkeypatch.setattr(gate_module.subprocess, "run", _fake_run)
     assert gate_module.main(["tests/quality_baseline_eval.py"]) == 0
@@ -193,11 +200,17 @@ def test_release_gate_uses_current_python(monkeypatch):
 
 
 def test_release_gate_passes_when_all_children_pass(monkeypatch, capsys):
+    outputs = {
+        "tests/quality_baseline_eval.py": "Overall: 105/107 passed (98.1%)\n",
+        "tests/conversation_pipeline_eval.py": "Conversation Pipeline Contract Eval: 19/19 passed\n",
+        "tests/knowledge_grounding_eval.py": "Knowledge Grounding Eval: 27/27 passed\n",
+    }
+
     def _fake_run(cmd, **_kwargs):
-        return subprocess.CompletedProcess(cmd, 0, stdout="Eval: 5/5 passed", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout=outputs[cmd[1]], stderr="")
 
     monkeypatch.setattr(gate_module.subprocess, "run", _fake_run)
-    exit_code = gate_module.main(["a.py", "b.py"])
+    exit_code = gate_module.main(list(gate_module.EVAL_SCRIPTS))
 
     out = capsys.readouterr().out
     assert exit_code == 0
@@ -206,17 +219,23 @@ def test_release_gate_passes_when_all_children_pass(monkeypatch, capsys):
 
 
 def test_release_gate_fails_when_any_child_fails(monkeypatch, capsys):
+    outputs = {
+        "tests/quality_baseline_eval.py": "Overall: 105/107 passed (98.1%)\n",
+        "tests/conversation_pipeline_eval.py": "Conversation Pipeline Contract Eval: 18/19 passed\n",
+        "tests/knowledge_grounding_eval.py": "Knowledge Grounding Eval: 27/27 passed\n",
+    }
+
     def _fake_run(cmd, **_kwargs):
-        code = 1 if cmd[1] == "bad.py" else 0
-        return subprocess.CompletedProcess(cmd, code, stdout="Eval: 1/2 passed", stderr="boom")
+        code = 1 if cmd[1] == "tests/conversation_pipeline_eval.py" else 0
+        return subprocess.CompletedProcess(cmd, code, stdout=outputs[cmd[1]], stderr="boom")
 
     monkeypatch.setattr(gate_module.subprocess, "run", _fake_run)
-    exit_code = gate_module.main(["good.py", "bad.py"])
+    exit_code = gate_module.main(list(gate_module.EVAL_SCRIPTS))
 
     out = capsys.readouterr().out
     assert exit_code == 1
     assert "FINAL: FAIL" in out
-    assert "bad.py" in out
+    assert "tests/conversation_pipeline_eval.py" in out
     assert "boom" in out, "失败时必须打印 stderr tail 便于诊断"
 
 
@@ -225,7 +244,7 @@ def test_release_gate_fails_on_timeout(monkeypatch, capsys):
         raise subprocess.TimeoutExpired(cmd=cmd, timeout=gate_module.EVAL_TIMEOUT_SECONDS)
 
     monkeypatch.setattr(gate_module.subprocess, "run", _fake_run)
-    exit_code = gate_module.main(["slow.py"])
+    exit_code = gate_module.main(["tests/quality_baseline_eval.py"])
 
     out = capsys.readouterr().out
     assert exit_code == 1

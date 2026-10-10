@@ -544,6 +544,264 @@ async def test_phase1_midway_failure_commits_nothing(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Phase 1 原子性（事务语义版）
+# ---------------------------------------------------------------------------
+#
+# 上面那个测试只断言了 ``db.commits == 0``。但 ``_MemoryPersistence`` 是直接改内存
+# 状态的 fake，异常发生时它并不会模拟真实数据库事务回滚，所以：
+#
+#     没有 commit  ≠  没有发生部分持久化
+#
+# 下面这组测试补上事务语义：写操作立即生效（read-your-writes，与同一 transaction 内
+# 的 ORM 行为一致），同时记录 undo log；``rollback()`` 时整体还原，``commit()`` 时清空
+# undo log（变更转为永久）。于是「Phase 1 失败后库里到底留下了什么」变成对**最终持久化
+# 状态**的直接断言。
+
+_TURN_TRACKED_ATTRS = (
+    "answer",
+    "ability_score",
+    "feedback",
+    "signals_json",
+    "evaluation_json",
+    "decision_action",
+    "decision_json",
+    "coach_hint_json",
+    "question",
+)
+_TOPIC_TRACKED_ATTRS = ("turn_count", "best_score", "final_score", "coverage_state_json", "status")
+_SESSION_TRACKED_ATTRS = ("current_topic_id",)
+
+
+class _TransactionalPersistence(_MemoryPersistence):
+    """带 undo log 的事务化 persistence 替身。
+
+    - 写操作立即改实体（保证同一事务内的读能看到自己的写）
+    - 首次触碰某实体时记一份快照进 undo log
+    - ``rollback()`` → 还原快照 + 删除本事务内新建的行
+    - ``commit()``   → 清空 undo log（变更转为永久）
+    """
+
+    def __init__(self, session, topics, turns):
+        super().__init__(session, topics, turns)
+        self._undo: list[tuple[object, dict, list[str]]] = []
+        self._created_turns: list[int] = []
+        self.committed = 0
+        self.rolled_back = 0
+
+    # ---- undo log ----
+    def _snapshot(self, entity, attrs: tuple[str, ...]) -> None:
+        if any(entity is tracked for tracked, _values, _missing in self._undo):
+            return
+        present = {attr: getattr(entity, attr) for attr in attrs if hasattr(entity, attr)}
+        missing = [attr for attr in attrs if not hasattr(entity, attr)]
+        self._undo.append((entity, present, missing))
+
+    def commit(self) -> None:
+        """事务提交：变更转为永久，undo log 清空。"""
+        self.committed += 1
+        self._undo.clear()
+        self._created_turns.clear()
+
+    def rollback(self) -> None:
+        """事务回滚：还原所有被本事务改过的实体，并删除本事务新建的行。"""
+        self.rolled_back += 1
+        for entity, values, missing in reversed(self._undo):
+            for attr, value in values.items():
+                setattr(entity, attr, value)
+            for attr in missing:
+                if hasattr(entity, attr):
+                    delattr(entity, attr)
+        self._undo.clear()
+
+        for turn_id in self._created_turns:
+            self.turns.pop(turn_id, None)
+        if self._created_turns:
+            self._next_turn_id = max(self.turns) + 1
+        self._created_turns.clear()
+
+    # ---- 写操作（立即生效 + 记 undo log）----
+    async def save_turn_answer(self, _db, turn, **kwargs):
+        self._snapshot(turn, _TURN_TRACKED_ATTRS)
+        await super().save_turn_answer(_db, turn, **kwargs)
+
+    async def update_topic_after_answer(self, _db, topic, **kwargs):
+        self._snapshot(topic, _TOPIC_TRACKED_ATTRS)
+        await super().update_topic_after_answer(_db, topic, **kwargs)
+
+    async def create_turn(self, _db, **kwargs):
+        entity = await super().create_turn(_db, **kwargs)
+        self._created_turns.append(entity.id)
+        return entity
+
+    async def activate_topic(self, _db, topic_id, session_entity_id):
+        self._snapshot(self.session, _SESSION_TRACKED_ATTRS)
+        for topic in self.topics.values():
+            self._snapshot(topic, _TOPIC_TRACKED_ATTRS)
+        await super().activate_topic(_db, topic_id, session_entity_id)
+
+    async def update_turn_question(self, _db, turn, question):
+        self._snapshot(turn, _TURN_TRACKED_ATTRS)
+        await super().update_turn_question(_db, turn, question)
+
+    async def update_turn_decision(self, _db, turn, decision):
+        self._snapshot(turn, _TURN_TRACKED_ATTRS)
+        await super().update_turn_decision(_db, turn, decision)
+
+
+class _TransactionalDb(_FakeDb):
+    """把 commit / rollback 接到 persistence 的事务语义上。"""
+
+    def __init__(self, persistence: _TransactionalPersistence):
+        super().__init__()
+        self.persistence = persistence
+
+    async def commit(self):
+        self.commits += 1
+        self.persistence.commit()
+
+    async def rollback(self):
+        self.rollbacks += 1
+        self.persistence.rollback()
+
+
+def _turn_row(fake: _MemoryPersistence, turn_id: int) -> dict:
+    turn = fake.reload_turn(turn_id)
+    return {
+        "answer": turn["answer"],
+        "ability_score": turn["ability_score"],
+        "evaluation": turn["evaluation"],
+        "decision": turn["decision"],
+        "question": turn["question"],
+    }
+
+
+def _topic_row(fake: _MemoryPersistence, topic_id: int) -> dict:
+    topic = fake.reload_topic(topic_id)
+    return {
+        "turn_count": topic["turn_count"],
+        "best_score": topic["best_score"],
+        "final_score": topic["final_score"],
+        "coverage_state": topic["coverage_state"],
+        "status": topic["status"],
+    }
+
+
+def _raw_state(fake: _MemoryPersistence, turn_id: int = 1, topic_id: int = 1) -> dict:
+    """直接读实体列（绕开 DTO 的 None/0 归一），用于精确比对持久化状态。"""
+    turn = fake.turns[turn_id]
+    topic = fake.topics[topic_id]
+    return {
+        "turn": {attr: getattr(turn, attr, None) for attr in _TURN_TRACKED_ATTRS},
+        "topic": {attr: getattr(topic, attr, None) for attr in _TOPIC_TRACKED_ATTRS},
+    }
+
+
+class _Phase1ExplodingPersistence(_TransactionalPersistence):
+    """在 Phase 1 的 create_turn 阶段炸掉（前两个写操作已经执行）。"""
+
+    def __init__(self, session, topics, turns):
+        super().__init__(session, topics, turns)
+        self.write_calls: list[str] = []
+
+    async def save_turn_answer(self, _db, turn, **kwargs):
+        self.write_calls.append("save_turn_answer")
+        await super().save_turn_answer(_db, turn, **kwargs)
+
+    async def update_topic_after_answer(self, _db, topic, **kwargs):
+        self.write_calls.append("update_topic_after_answer")
+        await super().update_topic_after_answer(_db, topic, **kwargs)
+
+    async def create_turn(self, _db, **kwargs):
+        self.write_calls.append("create_turn")
+        raise RuntimeError("phase1 exploded while creating next turn")
+
+
+async def test_phase1_midway_failure_leaves_no_partial_state_after_rollback(monkeypatch):
+    """Phase 1 中途失败并回滚后，持久化状态必须与提交前**逐字段一致**。
+
+    断言的是失败后的库内状态，而不是 ``db.commits`` 的调用次数。
+    """
+    session, topic, turns = _build_state()
+    fake = _Phase1ExplodingPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+    db = _TransactionalDb(fake)
+
+    before_turn = _turn_row(fake, 1)
+    before_topic = _topic_row(fake, 1)
+    before_raw = _raw_state(fake)
+    turn_ids_before = set(fake.turns)
+
+    with pytest.raises(RuntimeError, match="phase1 exploded"):
+        await _submit(_make_service(monkeypatch), db, turn_id=1)
+
+    # 非空转校验：前两个写操作确实执行过，并且它们真的改动了内存状态
+    # （否则「回滚后没变化」这个断言是白送的）。
+    assert fake.write_calls == ["save_turn_answer", "update_topic_after_answer", "create_turn"]
+    raw_after_failure = _raw_state(fake)
+    assert raw_after_failure["turn"]["answer"] == STRONG_ANSWER, "失败前 answer 已被写入当前事务"
+    assert raw_after_failure["topic"]["turn_count"] == 1, "失败前 topic.turn_count 已被推进"
+    assert raw_after_failure != before_raw
+
+    # 模拟 endpoint / session 上下文在异常路径上的事务收尾
+    await db.rollback()
+
+    assert db.commits == 0, "Phase 1 中途失败绝不能产生提交"
+    assert db.rollbacks == 1
+
+    # ---- 逐字段断言：没有任何部分持久化 ----
+    assert _raw_state(fake) == before_raw, "回滚后所有受跟踪列必须与提交前逐字段一致"
+    assert _turn_row(fake, 1) == before_turn
+    assert _topic_row(fake, 1) == before_topic
+
+    after = _raw_state(fake)
+    assert after["turn"]["answer"] is None, "answer 不落库"
+    assert after["turn"]["ability_score"] is None, "ability_score 不落库"
+    assert after["turn"]["evaluation_json"] is None, "evaluation_json 不落库"
+    assert after["turn"]["decision_json"] is None, "decision 不落库"
+    assert after["turn"]["decision_action"] is None
+    assert after["turn"]["coach_hint_json"] is None
+
+    assert not after["topic"]["turn_count"], "topic.turn_count 不增加"
+    assert after["topic"]["best_score"] is None
+    assert after["topic"]["final_score"] is None
+    assert after["topic"]["coverage_state_json"] is None, "coverage 不推进"
+
+    assert set(fake.turns) == turn_ids_before, "next turn 不创建"
+    assert len(fake.turns) == 1
+
+
+async def test_phase1_commit_persists_everything_atomically(monkeypatch):
+    """对照组：成功路径下 Phase 1 的所有改动在 commit 后**全部**可见。
+
+    与上一个测试合起来才能说明「要么全有、要么全无」——单看失败路径无法排除
+    「其实一个字段都没写」这种平凡解释。
+    """
+    session, topic, turns = _build_state()
+    fake = _TransactionalPersistence(session, [topic], turns)
+    _install(monkeypatch, fake)
+    _patch_db_context(monkeypatch, _FakeSessionFactory())
+    db = _TransactionalDb(fake)
+
+    response = await _submit(_make_service(monkeypatch), db, turn_id=1)
+
+    # Phase 1 一次 + Phase 3 一次（realizer 成功后回写最终问题）
+    assert db.commits >= 1
+    assert fake.committed == db.commits
+    assert fake._undo == [], "commit 之后不应残留 undo log"
+
+    turn = fake.reload_turn(1)
+    topic_dto = fake.reload_topic(1)
+    assert turn["answer"] == STRONG_ANSWER
+    assert turn["ability_score"] == response.evaluation.ability_score
+    assert turn["evaluation"] is not None
+    assert turn["decision"] is not None
+    assert topic_dto["turn_count"] == 1
+    assert topic_dto["coverage_state"] is not None
+    assert len(fake.turns) == 2, "success 路径应当创建了 next turn"
+
+
+# ---------------------------------------------------------------------------
 # §93：Phase 1 golden state snapshot
 # ---------------------------------------------------------------------------
 

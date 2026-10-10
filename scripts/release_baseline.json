@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "frozen_at": "2026-10-10",
+  "note": [
+    "Release Gate 的确定性质量底线（frozen baseline）。",
+    "只允许通过显式修改本文件来调整；任何一次调整都必须能在 PR diff 里被 review 看到。",
+    "禁止为了制造 PASS 而调低 min_passed / min_total 或调高 max_failed。",
+    "三个约束同时生效（缺一不可）：",
+    "  total   >= min_total   防止删除检查项 / 删除失败样例来粉饰",
+    "  passed  >= min_passed  防止质量本身退化",
+    "  failed  <= max_failed  防止新增「简单检查」把已有基线回归盖过去"
+  ],
+  "evals": {
+    "tests/quality_baseline_eval.py": {
+      "label": "quality_baseline_eval",
+      "min_passed": 105,
+      "min_total": 107,
+      "max_failed": 2
+    },
+    "tests/conversation_pipeline_eval.py": {
+      "label": "conversation_pipeline_eval",
+      "min_passed": 19,
+      "min_total": 19,
+      "max_failed": 0
+    },
+    "tests/knowledge_grounding_eval.py": {
+      "label": "knowledge_grounding_eval",
+      "min_passed": 27,
+      "min_total": 27,
+      "max_failed": 0
+    }
+  }
+}

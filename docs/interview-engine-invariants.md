@@ -238,8 +238,31 @@ CONTRADICTED 也可解除 cap（confidence = 我们对判断的把握，不是�
 metric 永远不属于 correctness path（写失败只 warning，不递归写 metric）
 diagnostics 是只读聚合：不重算 score、不重跑 evaluator / retrieval、不改 session
 diagnostics 只返回聚合元数据，不返回任何用户文本
-strict_config=True 时 embedding 真实失败 → fail closed，绝不写 hash 向量
+strict_config=True 时 embedding 不可用 → fail closed，绝不写 hash 向量
+  · 「不可用」包括四类：运行时调用失败 / 凭证缺失 / SDK 不可用 / 已处于 degraded 状态
+  · 前三类在 __init__ 阶段就会判定，且**不**改 _use_real_embedding、**不**切换 provider
+  · 不变式由 embed_text() 自己守住，不能只依赖启动时的 config_check
 strict 下失败**不**永久 flip provider（下一次仍尝试真实 provider）
+strict 下不允许静默切换 provider（选了 zhipu 却缺 Key 时不得改用 DashScope）
+```
+
+### Release Gate 判据（PR #11 review round 1 收紧）
+
+```text
+每个 eval 必须同时满足两件**互相独立**的事：
+  1. returncode == 0
+  2. 输出里存在契约内的正式 summary 行，且 >= scripts/release_baseline.json 的冻结基线
+
+只满足 1 是 fail-open：quality_baseline_eval 只在 pass rate < 75% 才 exit 1，
+所以 105/107 与 85/107 都是 exit 0；无输出也可能 exit 0。
+
+NO_SUMMARY / MALFORMED_SUMMARY / INVALID_SUMMARY / UNKNOWN_CONTRACT / BELOW_BASELINE
+一律 → FINAL: FAIL
+
+基线三条约束（缺一不可）：
+  total  >= min_total     防止删除检查项 / 删除失败样例来粉饰
+  passed >= min_passed    防止质量本身退化
+  failed <= max_failed    防止新增简单检查把已有基线回归盖过去
 ```
 
 ---

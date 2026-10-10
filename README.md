@@ -100,15 +100,37 @@ PYTHONPATH=. .venv/bin/python scripts/interview_release_gate.py
 ```text
 Interview Release Gate
 
-quality_baseline_eval.py      PASS 105/107
-conversation_pipeline_eval.py PASS 19/19
-knowledge_grounding_eval.py   PASS 27/27
+quality_baseline_eval        PASS 105/107
+conversation_pipeline_eval   PASS 19/19
+knowledge_grounding_eval     PASS 27/27
 
 FINAL: PASS
 ```
 
-任一 eval 非 0（或超时）时脚本 exit 1；CI 的 Backend Quality 会运行完全同一个 gate
-（本地与 CI 一套命令，不做两套）。
+判据是**两件互相独立的事**，缺一不可：
+
+1. 子脚本正常完成（`returncode == 0`）；
+2. 子脚本确实跑了，且输出里存在**该 eval 契约内的正式 summary 行**，并且达到
+   `scripts/release_baseline.json` 里冻结的质量基线。
+
+只有第 1 条是不够的：`quality_baseline_eval` 只在 pass rate < 75% 时才 exit 1，
+所以 105/107 与 85/107 的退出码都是 0；完全不输出也可能是 0。第 2 条把
+`NO_SUMMARY` / `MALFORMED_SUMMARY` / `INVALID_SUMMARY` / `UNKNOWN_CONTRACT` /
+`BELOW_BASELINE` 一律判为 FAIL。
+
+冻结基线同时约束三件事，缺一不可：
+
+```text
+total  >= min_total     防止删除检查项 / 删除失败样例来粉饰
+passed >= min_passed    防止质量本身退化
+failed <= max_failed    防止新增「简单检查」把已有基线回归盖过去
+```
+
+基线只能通过显式修改 `scripts/release_baseline.json` 来调整，并且
+`tests/test_release_gate_baseline.py` 会把数值钉死 —— 想调低就必须同时改测试，
+改动一定出现在 PR diff 里。
+
+CI 的 Backend Quality 会运行完全同一个 gate（本地与 CI 一套命令，不做两套）。
 
 ### 面试引擎不变量
 
