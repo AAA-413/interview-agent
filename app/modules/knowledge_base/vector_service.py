@@ -30,31 +30,81 @@ class ChunkBuildResult:
 
 
 class KnowledgeBaseVectorService:
+    """文本向量化服务。
+
+    Embedding provider 解析规则（PR6 / PR #11 review round 1 收紧）
+    ---------------------------------------------------------------
+    ```text
+    provider == "zhipu" 且 AI_ZHIPU_API_KEY 存在
+        → 使用智谱 Embedding-3
+
+    strict_config=True 且上面不成立
+        → 不降级、不切换 provider；记录 _init_failure，embed_text() fail closed
+          （**尤其**不允许「选了 zhipu 但缺 Key」时静默改用 DashScope）
+
+    strict_config=False 且上面不成立
+        → 保持既有兼容行为：尝试 DashScope，SDK / Key 不可用则降级 hash
+    ```
+
+    为什么 strict 必须在**初始化阶段**就收口：``embed_text()`` 的第一段判断是
+    ``if not self._use_real_embedding: return self._embed_with_hash(text)``。
+    如果初始化时因为缺凭证把 ``_use_real_embedding`` 置成 False，那么即便
+    ``strict_config=True``，调用方拿到的仍然是 hash 向量 —— 绕过了
+    ``_handle_real_embedding_failure()`` 的 fail-closed 收口。
+    """
+
     def __init__(self):
         self._use_real_embedding = True
         self._embedding_provider = settings.ai.embedding_provider  # "zhipu" | "dashscope"
         self._zhipu_api_key = settings.ai.zhipu_api_key
+        self._text_embedding = None
+        #: 初始化阶段就发现「真实 provider 不可用」的原因；strict 下据此 fail closed
+        self._init_failure: str | None = None
 
         if self._embedding_provider == "zhipu" and self._zhipu_api_key:
             logger.info("向量化服务初始化: 使用智谱 Embedding-3 (截断到 %d 维)", EMBEDDING_DIMENSIONS)
-        else:
-            # 回退到 DashScope
-            try:
-                from dashscope import TextEmbedding
+            return
 
-                self._text_embedding = TextEmbedding
-                api_key = settings.ai.embedding_api_key or settings.ai.bailian_api_key
-                if not api_key or api_key.startswith("your-"):
-                    self._use_real_embedding = False
-                    logger.warning("Embedding API key 未配置，降级为哈希向量 (%d维)", EMBEDDING_DIMENSIONS)
-                else:
-                    logger.info(
-                        "向量化服务初始化: 使用阿里云百炼 Embedding API (text-embedding-v2, %d维)", EMBEDDING_DIMENSIONS
-                    )
-            except ImportError:
-                self._text_embedding = None
-                self._use_real_embedding = False
-                logger.warning("dashscope not installed, fallback to hash vector (%d-dim)", EMBEDDING_DIMENSIONS)
+        if settings.strict_config and self._embedding_provider == "zhipu":
+            # strict：拒绝静默切换到用户没有选择的 provider，也拒绝降级 hash
+            self._init_failure = "AI_ZHIPU_API_KEY 未配置，strict 模式拒绝回退到 DashScope"
+            logger.error("strict: 智谱 Embedding Key 缺失，拒绝静默切换 provider / 降级为 hash 向量")
+            return
+
+        self._init_dashscope()
+
+    def _init_dashscope(self) -> None:
+        """解析 DashScope 分支。strict 下不可用只记录原因，由 embed_text() fail closed。"""
+        try:
+            from dashscope import TextEmbedding
+
+            self._text_embedding = TextEmbedding
+        except ImportError:
+            self._text_embedding = None
+            self._degrade_or_fail(
+                reason="dashscope SDK 不可用（未安装）",
+                fallback_log="dashscope not installed, fallback to hash vector (%d-dim)",
+            )
+            return
+
+        api_key = settings.ai.embedding_api_key or settings.ai.bailian_api_key
+        if not api_key or api_key.startswith("your-"):
+            self._degrade_or_fail(
+                reason="Embedding API Key 未配置",
+                fallback_log="Embedding API key 未配置，降级为哈希向量 (%d维)",
+            )
+            return
+
+        logger.info("向量化服务初始化: 使用阿里云百炼 Embedding API (text-embedding-v2, %d维)", EMBEDDING_DIMENSIONS)
+
+    def _degrade_or_fail(self, *, reason: str, fallback_log: str) -> None:
+        """strict → 只记录原因（不降级、不改 provider 状态）；非 strict → 保持旧降级行为。"""
+        if settings.strict_config:
+            self._init_failure = reason
+            logger.error("strict: %s，拒绝降级为 hash 向量", reason)
+            return
+        self._use_real_embedding = False
+        logger.warning(fallback_log, EMBEDDING_DIMENSIONS)
 
     def split_text(
         self, text: str, *, chunk_size: int = 900, overlap: int = 120, doc_type: str = "general"
@@ -200,7 +250,40 @@ class KnowledgeBaseVectorService:
         return dot / (left_norm * right_norm)
 
     def embed_text(self, text: str) -> list[float]:
-        """生成文本向量"""
+        """生成文本向量。
+
+        Embedding fallback policy（PR6 + PR #11 review round 1）
+        -------------------------------------------------------
+        ```text
+        strict_config=False（开发 / 默认）
+            真实 provider 失败 → hash fallback（保持既有行为，向后兼容）
+
+        strict_config=True（生产 strict）
+            以下**任一**情况 → raise EmbeddingFailedException（fail closed）
+              1. 真实 provider 调用失败
+              2. 真实 provider 凭证缺失（初始化阶段发现）
+              3. 真实 provider SDK 不可用（初始化阶段发现）
+              4. service 已处于 degraded hash 状态
+            绝不写入 hash 向量，也绝不永久改变 provider 状态
+        ```
+
+        为什么 strict 必须 fail closed：旧 KB 是用**真实** embedding 建的，如果某次
+        API 抖动后悄悄改写成 hash 向量，新 query 与旧 KB 就落在互不兼容的向量空间里，
+        检索会静默失效 —— 这比直接报错危险得多。
+
+        strict 下也**不允许永久降级**：失败后 ``_use_real_embedding`` 保持 True，
+        下一次请求仍会尝试真实 provider。strict 的语义是 fail closed，
+        不是 fail once then 永久 hash（否则一次瞬时抖动会把整个进程变成 hash 模式）。
+
+        注意：不变式由 ``embed_text()`` 自己守住，**不能只依赖启动时的 config_check** ——
+        settings 可以在运行时被改（例如测试、动态配置），启动检查覆盖不到那一刻。
+        """
+        if settings.strict_config:
+            if self._init_failure is not None:
+                raise EmbeddingFailedException(f"strict 模式下 Embedding 不可用: {self._init_failure}")
+            if not self._use_real_embedding:
+                raise EmbeddingFailedException("strict 模式下 Embedding 服务已处于降级状态，拒绝返回 hash 向量")
+
         if not self._use_real_embedding:
             return self._embed_with_hash(text)
 
@@ -208,18 +291,30 @@ class KnowledgeBaseVectorService:
             try:
                 return self._embed_with_zhipu(text)
             except Exception as e:
-                logger.warning("智谱 Embedding 调用失败，降级到哈希向量: %s", e)
-                self._use_real_embedding = False
-                return self._embed_with_hash(text)
+                return self._handle_real_embedding_failure(text, "智谱", e)
         elif self._text_embedding:
             try:
                 return self._embed_with_api(text)
             except Exception as e:
-                logger.warning("DashScope Embedding 调用失败，降级到哈希向量: %s", e)
-                self._use_real_embedding = False
-                return self._embed_with_hash(text)
-        else:
-            return self._embed_with_hash(text)
+                return self._handle_real_embedding_failure(text, "DashScope", e)
+
+        # 没有任何可用的真实 provider。正常初始化路径下 strict 已在上方收口；
+        # 这里再挡一次，避免 __new__ 构造 / 后续重构绕过早检查而悄悄落 hash。
+        if settings.strict_config:
+            raise EmbeddingFailedException("strict 模式下没有可用的真实 Embedding provider，拒绝返回 hash 向量")
+        return self._embed_with_hash(text)
+
+    def _handle_real_embedding_failure(self, text: str, provider_label: str, error: Exception) -> list[float]:
+        """真实 provider 失败时的统一收口：strict 抛错，非 strict 降级。"""
+        if settings.strict_config:
+            logger.error("%s Embedding 调用失败（strict：fail closed，不写 hash 向量）: %s", provider_label, error)
+            if isinstance(error, EmbeddingFailedException):
+                raise error
+            raise EmbeddingFailedException(f"{provider_label} Embedding 调用失败: {error}") from error
+
+        logger.warning("%s Embedding 调用失败，降级到哈希向量: %s", provider_label, error)
+        self._use_real_embedding = False
+        return self._embed_with_hash(text)
 
     def _embed_with_zhipu(self, text: str) -> list[float]:
         """使用智谱 Embedding-3 API（截断到 1536 维匹配 pgvector 列定义）"""

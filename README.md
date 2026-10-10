@@ -86,7 +86,60 @@ npm run dev
 ./scripts/quality_check.sh
 ```
 
-该脚本会依次执行 Python 编译检查、全量 Ruff 检查、Ruff 格式检查、pytest 基础测试和前端生产构建。
+该脚本会依次执行 Python 编译检查、全量 Ruff 检查、Ruff 格式检查、pytest 基础测试、
+Interview Release Gate（确定性 eval 汇总）和前端生产构建。
+
+只跑发布门禁（三个 deterministic eval，全部 fake / stub，不调用任何外部 API）：
+
+```bash
+PYTHONPATH=. .venv/bin/python scripts/interview_release_gate.py
+```
+
+输出示例：
+
+```text
+Interview Release Gate
+
+quality_baseline_eval        PASS 105/107
+conversation_pipeline_eval   PASS 19/19
+knowledge_grounding_eval     PASS 27/27
+
+FINAL: PASS
+```
+
+判据是**两件互相独立的事**，缺一不可：
+
+1. 子脚本正常完成（`returncode == 0`）；
+2. 子脚本确实跑了，且输出里存在**该 eval 契约内的正式 summary 行**，并且达到
+   `scripts/release_baseline.json` 里冻结的质量基线。
+
+只有第 1 条是不够的：`quality_baseline_eval` 只在 pass rate < 75% 时才 exit 1，
+所以 105/107 与 85/107 的退出码都是 0；完全不输出也可能是 0。第 2 条把
+`NO_SUMMARY` / `MALFORMED_SUMMARY` / `INVALID_SUMMARY` / `UNKNOWN_CONTRACT` /
+`BELOW_BASELINE` 一律判为 FAIL。
+
+冻结基线同时约束三件事，缺一不可：
+
+```text
+total  >= min_total     防止删除检查项 / 删除失败样例来粉饰
+passed >= min_passed    防止质量本身退化
+failed <= max_failed    防止新增「简单检查」把已有基线回归盖过去
+```
+
+基线只能通过显式修改 `scripts/release_baseline.json` 来调整，并且
+`tests/test_release_gate_baseline.py` 会把数值钉死 —— 想调低就必须同时改测试，
+改动一定出现在 PR diff 里。
+
+CI 的 Backend Quality 会运行完全同一个 gate（本地与 CI 一套命令，不做两套）。
+
+### 面试引擎不变量
+
+面试主链（Planning / Answer / 评分 / Coverage / Resume Evidence / Knowledge Grounding）
+的**不变量清单、决策归属、事务边界与故障域矩阵**见：
+
+[docs/interview-engine-invariants.md](docs/interview-engine-invariants.md)
+
+改动主链前建议先过一遍这张清单 —— CI 的 release gate 与 failure matrix 就是照它写的。
 
 ## 功能模块
 

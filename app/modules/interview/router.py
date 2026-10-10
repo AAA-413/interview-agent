@@ -14,6 +14,7 @@ from app.modules.interview.dynamic_persistence_service import dynamic_interview_
 from app.modules.interview.dynamic_service import dynamic_interview_service
 from app.modules.interview.history_service import interview_history_service
 from app.modules.interview.jd_parse_service import jd_parse_service
+from app.modules.interview.observability import DynamicSessionDiagnosticsDTO, interview_diagnostics_service
 from app.modules.interview.persistence_service import interview_persistence_service
 from app.modules.interview.project_drill_schemas import (
     ProjectDrillDTO,
@@ -112,6 +113,23 @@ async def get_dynamic_report(
 ):
     report = await dynamic_interview_service.get_report(db, session_id, user_id)
     return Result.success(report)
+
+
+@router.get(
+    "/dynamic-sessions/{session_id}/diagnostics",
+    response_model=Result[DynamicSessionDiagnosticsDTO],
+)
+async def get_dynamic_session_diagnostics(
+    session_id: str,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """只读诊断视图：聚合 metadata，**不返回任何用户文本**。
+
+    owner-scoped：别人的 session 走 ``find_session_or_throw`` 的 not-found 语义。
+    """
+    diagnostics = await interview_diagnostics_service.get_session_diagnostics(db, session_id, user_id)
+    return Result.success(diagnostics)
 
 
 @router.get(

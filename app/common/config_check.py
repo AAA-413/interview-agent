@@ -25,6 +25,88 @@ class ConfigCheckReportDTO(BaseModel):
         return any(issue.severity == "ERROR" for issue in self.issues)
 
 
+class PublicConfigIssueDTO(BaseModel):
+    """对外暴露的 issue（已 redact）。"""
+
+    severity: ConfigSeverity
+    key: str
+    message: str
+
+
+class PublicConfigHealthDTO(BaseModel):
+    """``/api/health/config`` 的对外形状。
+
+    PR6 起这个 endpoint **需要认证**，并且 production（``debug=False``）只返回聚合
+    计数 —— config report 里包含 `PostgreSQL host:port` / `Redis host:port` /
+    「哪些内部配置缺失」这类信息，没有理由匿名暴露给公网。
+    """
+
+    status: Literal["OK", "WARN", "ERROR"]
+    strict: bool
+    issue_count: int
+    #: debug=False 时为 None；debug=True 时是已脱敏的 issue 列表
+    issues: list[PublicConfigIssueDTO] | None = None
+
+
+#: 敏感值被替换成的占位符
+SECRET_MASK = "***"
+
+
+def collect_secret_values(settings: Settings) -> tuple[str, ...]:
+    """收集所有「有可能出现在 issue.message 里」的敏感值，用于兜底 redact。
+
+    只用于**删除**敏感值，不用于输出。长度 < 4 的短串跳过，避免把普通词误伤。
+    """
+    candidates = [
+        settings.ai.bailian_api_key,
+        settings.ai.zhipu_api_key,
+        settings.ai.embedding_api_key,
+        settings.database.password,
+        settings.redis.password,
+        settings.storage.access_key,
+        settings.storage.secret_key,
+    ]
+    return tuple(value for value in candidates if value and len(value) >= 4)
+
+
+def redact_secrets(text: str, secrets: tuple[str, ...]) -> str:
+    """兜底：万一 message 里拼进了密钥，也要先抹掉再对外返回。"""
+    redacted = text
+    for secret in secrets:
+        if secret and secret in redacted:
+            redacted = redacted.replace(secret, SECRET_MASK)
+    return redacted
+
+
+def build_public_config_health(
+    report: ConfigCheckReportDTO,
+    *,
+    debug: bool,
+    secrets: tuple[str, ...] = (),
+) -> PublicConfigHealthDTO:
+    """把内部 config report 收敛成可对外返回的最小信息。
+
+    - ``debug=False``（production）→ 只有 status / strict / issue_count
+    - ``debug=True`` → 额外返回已脱敏的 ``severity / key / message``
+    """
+    issues: list[PublicConfigIssueDTO] | None = None
+    if debug:
+        issues = [
+            PublicConfigIssueDTO(
+                severity=issue.severity,
+                key=issue.key,
+                message=redact_secrets(issue.message, secrets),
+            )
+            for issue in report.issues
+        ]
+    return PublicConfigHealthDTO(
+        status=report.status,
+        strict=report.strict,
+        issue_count=len(report.issues),
+        issues=issues,
+    )
+
+
 def build_config_check_report(settings: Settings, check_ports: bool = True) -> ConfigCheckReportDTO:
     issues: list[ConfigIssueDTO] = []
 
@@ -59,7 +141,9 @@ def build_config_check_report(settings: Settings, check_ports: bool = True) -> C
     if settings.ai.embedding_provider == "zhipu" and _looks_missing(settings.ai.zhipu_api_key):
         issues.append(
             ConfigIssueDTO(
-                severity="WARN",
+                # strict 下 embedding key 缺失是**启动级**错误：provider=zhipu 却没有 key，
+                # 向量化会直接失败（strict 模式下更是 fail closed），必须尽早暴露。
+                severity="ERROR" if settings.strict_config else "WARN",
                 key="AI_ZHIPU_API_KEY",
                 message="Embedding Provider 为 zhipu，但智谱 Key 未配置，知识库索引会降级或失败。",
             )
@@ -70,7 +154,7 @@ def build_config_check_report(settings: Settings, check_ports: bool = True) -> C
     ):
         issues.append(
             ConfigIssueDTO(
-                severity="WARN",
+                severity="ERROR" if settings.strict_config else "WARN",
                 key="AI_EMBEDDING_API_KEY",
                 message="Embedding Key 未配置，知识库向量化会降级或失败。",
             )
